@@ -1,10 +1,34 @@
 import { autoUpdater, UpdateInfo } from 'electron-updater';
 import { BrowserWindow, dialog } from 'electron';
+import { execSync } from 'child_process';
 
 let mainWindow: BrowserWindow | null = null;
+let updatesDisabled = false;
+
+const checkMsiInstallation = (): boolean => {
+  if (process.platform !== 'win32') {
+    return false;
+  }
+
+  try {
+    const result = execSync(
+      'reg query "HKCU\\Software\\CONV2" /v DisableAutoUpdates',
+      { encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] }
+    );
+    return result.includes('0x1') || result.includes('REG_DWORD    1');
+  } catch {
+    return false;
+  }
+};
 
 export const initUpdater = (window: BrowserWindow): void => {
   mainWindow = window;
+  updatesDisabled = checkMsiInstallation();
+
+  if (updatesDisabled) {
+    console.log('Auto-updates disabled: MSI/Enterprise installation detected');
+    return;
+  }
 
   autoUpdater.autoDownload = false;
   autoUpdater.autoInstallOnAppQuit = true;
@@ -73,7 +97,23 @@ export const initUpdater = (window: BrowserWindow): void => {
 };
 
 export const checkForUpdates = (): void => {
+  if (updatesDisabled) {
+    if (mainWindow) {
+      dialog.showMessageBox(mainWindow, {
+        type: 'info',
+        title: 'Updates Disabled',
+        message: 'Auto-updates are disabled for this installation.\n\nThis is an enterprise/MSI deployment. Please contact your IT administrator for updates.',
+        buttons: ['OK'],
+      });
+    }
+    return;
+  }
+
   autoUpdater.checkForUpdates();
+};
+
+export const isUpdateDisabled = (): boolean => {
+  return updatesDisabled;
 };
 
 const sendStatusToWindow = (message: string): void => {

@@ -119,6 +119,11 @@
           <button class="btn btn-secondary btn-xs full-width" id="checkUpdateBtn">Check for Updates</button>
         </div>
 
+        <div class="setting-item">
+          <label>Credits & Licenses</label>
+          <button class="btn btn-secondary btn-xs full-width" id="viewCreditsBtn">View Credits</button>
+        </div>
+
         <div class="setting-item setting-danger">
           <label>Reset Settings</label>
           <button class="btn btn-danger btn-xs full-width" id="resetSettingsBtn">Reset & Restart</button>
@@ -127,6 +132,23 @@
 
       <div class="version-info">
         <span id="versionInfo">CONV2 v0.0.1</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-overlay" id="creditsModal">
+    <div class="modal credits-modal">
+      <div class="modal-header">
+        <h2>Licenses & Credits</h2>
+        <button class="modal-close" id="closeCredits">&times;</button>
+      </div>
+      <div class="credits-body">
+        <p class="credits-description">
+          Generated via <code>npm run licenses</code>. Includes production dependencies and bundled assets such as Twemoji (CC-BY 4.0).
+        </p>
+        <div class="licenses-list" id="licensesList">
+          <div class="license-item">Loading credits...</div>
+        </div>
       </div>
     </div>
   </div>

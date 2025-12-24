@@ -1,3 +1,7 @@
+interface ElectronFile extends File {
+  path: string;
+}
+
 interface Preset {
   id: string;
   name: string;
@@ -28,6 +32,22 @@ interface ModalOptions {
   confirmClass?: string;
   onConfirm?: () => void;
   onCancel?: () => void;
+}
+
+interface LicenseCrawlerEntry {
+  licenses: string | string[];
+  repository?: string;
+  licenseUrl?: string;
+  url?: string;
+  license?: string;
+}
+
+interface LicenseDisplayEntry {
+  name: string;
+  license: string;
+  link?: string;
+  note?: string;
+  isSpecial?: boolean;
 }
 
 let selectedFile: string | null = null;
@@ -68,6 +88,10 @@ const elements = {
   versionInfo: document.getElementById('versionInfo') as HTMLSpanElement,
   ffmpegWarning: document.getElementById('ffmpegWarning') as HTMLDivElement,
   dynamicModal: document.getElementById('dynamicModal') as HTMLDivElement,
+  viewCreditsBtn: document.getElementById('viewCreditsBtn') as HTMLButtonElement,
+  creditsModal: document.getElementById('creditsModal') as HTMLDivElement,
+  closeCredits: document.getElementById('closeCredits') as HTMLButtonElement,
+  licensesList: document.getElementById('licensesList') as HTMLDivElement,
 };
 
 const formatFileSize = (bytes: number): string => {
@@ -127,6 +151,122 @@ const showModal = (options: ModalOptions): void => {
   }, { once: true });
 
   modal.classList.add('visible');
+};
+
+const buildLicenseEntries = (data: Record<string, LicenseCrawlerEntry> | null): LicenseDisplayEntry[] => {
+  const entries: LicenseDisplayEntry[] = [
+    {
+      name: 'Twemoji assets',
+      license: 'CC-BY 4.0',
+      link: 'https://github.com/jdecked/twemoji',
+      note: 'Emoji artwork by Twitter and other contributors (used under CC-BY 4.0).',
+      isSpecial: true,
+    },
+  ];
+
+  if (!data || typeof data !== 'object') {
+    return entries;
+  }
+
+  const packageEntries = Object.entries(data)
+    .filter(([pkg]) => typeof pkg === 'string')
+    .map(([pkg, info]) => {
+      const entryInfo = (typeof info === 'object' && info !== null)
+        ? info as LicenseCrawlerEntry
+        : { licenses: String(info) as string };
+
+      const licenses = Array.isArray(entryInfo.licenses)
+        ? entryInfo.licenses.join(', ')
+        : entryInfo.licenses || entryInfo.license || 'Unknown';
+
+      const link = entryInfo.repository || entryInfo.licenseUrl || entryInfo.url;
+
+      return {
+        name: pkg,
+        license: licenses,
+        link,
+      } as LicenseDisplayEntry;
+    })
+    .sort((a, b) => a.name.localeCompare(b.name));
+
+  return [entries[0], ...packageEntries];
+};
+
+const renderLicenses = (entries: LicenseDisplayEntry[]): void => {
+  if (!elements.licensesList) return;
+
+  elements.licensesList.innerHTML = '';
+
+  entries.forEach((entry) => {
+    const item = document.createElement('div');
+    item.className = `license-item${entry.isSpecial ? ' license-highlight' : ''}`;
+
+    const header = document.createElement('div');
+    header.className = 'license-header';
+
+    const nameEl = document.createElement('div');
+    nameEl.className = 'license-name';
+    nameEl.textContent = entry.name;
+
+    const badge = document.createElement('span');
+    badge.className = 'license-badge';
+    badge.textContent = entry.license;
+
+    header.appendChild(nameEl);
+    header.appendChild(badge);
+    item.appendChild(header);
+
+    if (entry.note || entry.link) {
+      const meta = document.createElement('div');
+      meta.className = 'license-meta';
+
+      if (entry.link && /^https?:\/\//i.test(entry.link)) {
+        const linkBtn = document.createElement('button');
+        linkBtn.className = 'btn btn-xs license-link';
+        linkBtn.textContent = 'View source';
+        linkBtn.addEventListener('click', () => window.electronAPI.openExternal(entry.link!));
+        meta.appendChild(linkBtn);
+      }
+
+      if (entry.note) {
+        const note = document.createElement('span');
+        note.className = 'license-note';
+        note.textContent = entry.note;
+        meta.prepend(note);
+      }
+
+      item.appendChild(meta);
+    }
+
+    elements.licensesList.appendChild(item);
+  });
+};
+
+const openCreditsModal = async (): Promise<void> => {
+  elements.settingsModal.classList.remove('visible');
+  elements.creditsModal.classList.add('visible');
+  elements.licensesList.innerHTML = '<div class="license-item">Loading credits...</div>';
+
+  try {
+    const data = await window.electronAPI.getLicenses();
+    const hasLicenses = !!data && typeof data === 'object' && Object.keys(data as Record<string, unknown>).length > 0;
+    const entries = buildLicenseEntries(data as Record<string, LicenseCrawlerEntry> | null);
+    renderLicenses(entries);
+
+    if (!hasLicenses) {
+      const warning = document.createElement('div');
+      warning.className = 'license-item license-error';
+      warning.textContent = 'licenses.json is missing or empty. Run "npm run licenses" before packaging to include dependency credits.';
+      elements.licensesList.appendChild(warning);
+    }
+  } catch {
+    elements.licensesList.innerHTML =
+      '<div class="license-item license-error">Unable to load licenses.json. Run "npm run licenses" to generate it.</div>';
+  }
+};
+
+const closeCreditsModal = (): void => {
+  elements.creditsModal.classList.remove('visible');
 };
 
 const init = async () => {
@@ -218,6 +358,9 @@ const setupKeyboardShortcuts = () => {
       if (elements.dynamicModal.classList.contains('visible')) {
         elements.dynamicModal.classList.remove('visible');
       }
+      if (elements.creditsModal.classList.contains('visible')) {
+        closeCreditsModal();
+      }
     }
 
     // Ctrl/Cmd + O - open file
@@ -229,7 +372,8 @@ const setupKeyboardShortcuts = () => {
     // Enter - start conversion (when file selected and not converting)
     if (e.key === 'Enter' && !e.ctrlKey && !e.metaKey) {
       const isModalOpen = elements.settingsModal.classList.contains('visible') ||
-                          elements.dynamicModal.classList.contains('visible');
+                          elements.dynamicModal.classList.contains('visible') ||
+                          elements.creditsModal.classList.contains('visible');
       if (!isModalOpen && selectedFile && !isConverting && !elements.convertBtn.disabled) {
         startConversion();
       }
@@ -258,14 +402,14 @@ const setupEventListeners = () => {
     elements.dropZone.classList.remove('dragover');
     const files = e.dataTransfer?.files;
     if (files && files.length > 0) {
-      handleFileSelect(files[0].path);
+      handleFileSelect((files[0] as ElectronFile).path);
     }
   });
 
   elements.fileInput.addEventListener('change', () => {
     const files = elements.fileInput.files;
     if (files && files.length > 0) {
-      handleFileSelect(files[0].path);
+      handleFileSelect((files[0] as ElectronFile).path);
     }
   });
 
@@ -300,6 +444,20 @@ const setupEventListeners = () => {
   elements.settingsModal.addEventListener('click', (e) => {
     if (e.target === elements.settingsModal) {
       elements.settingsModal.classList.remove('visible');
+    }
+  });
+
+  elements.viewCreditsBtn.addEventListener('click', () => {
+    openCreditsModal();
+  });
+
+  elements.closeCredits.addEventListener('click', () => {
+    closeCreditsModal();
+  });
+
+  elements.creditsModal.addEventListener('click', (e) => {
+    if (e.target === elements.creditsModal) {
+      closeCreditsModal();
     }
   });
 

@@ -49,12 +49,28 @@ const saveSettings = (): void => {
   }
 };
 
+const getLicensesFilePath = (): string | null => {
+  const appPath = app.getAppPath();
+  const candidates = [
+    path.join(appPath, 'licenses.json'),
+    path.join(process.cwd(), 'licenses.json'),
+  ];
+
+  for (const candidate of candidates) {
+    if (fs.existsSync(candidate)) {
+      return candidate;
+    }
+  }
+
+  return null;
+};
+
 const createWindow = (): void => {
   Menu.setApplicationMenu(null);
 
   mainWindow = new BrowserWindow({
     width: 900,
-    height: 800,
+    height: 900,
     minWidth: 600,
     minHeight: 500,
     webPreferences: {
@@ -219,6 +235,12 @@ ipcMain.handle('open-path', async (_, filePath: string) => {
   shell.showItemInFolder(filePath);
 });
 
+ipcMain.handle('open-external', async (_, url: string) => {
+  if (url) {
+    await shell.openExternal(url);
+  }
+});
+
 ipcMain.handle('get-system-theme', () => {
   return nativeTheme.shouldUseDarkColors ? 'dark' : 'light';
 });
@@ -232,4 +254,19 @@ ipcMain.handle('reset-settings', () => {
 ipcMain.handle('restart-app', () => {
   app.relaunch();
   app.exit(0);
+});
+
+ipcMain.handle('get-licenses', () => {
+  const licensePath = getLicensesFilePath();
+  if (!licensePath) {
+    return null;
+  }
+
+  try {
+    const data = fs.readFileSync(licensePath, 'utf-8');
+    return JSON.parse(data);
+  } catch (err) {
+    console.error('Failed to read licenses.json:', err);
+    return null;
+  }
 });

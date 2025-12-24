@@ -16,16 +16,61 @@
   "scripts": {
     "build": "tsc && npm run copy-assets",
     "copy-assets": "node -e \"const fs=require('fs');const path=require('path');['index.html','main.css'].forEach(f=>fs.copyFileSync(path.join('src/renderer',f),path.join('dist/renderer',f)))\"",
+    "build:cleanup": "node -e \"const fs=require('fs');['release','dist'].forEach(d=>{if(fs.existsSync(d))fs.rmSync(d,{recursive:true})})\"",
     "watch": "tsc -w",
     "start": "npm run build && electron .",
-    "dev": "npm run build && electron .",
-    "build:win": "npm run build && electron-builder --win",
-    "build:mac": "npm run build && electron-builder --mac",
+    "dev": "npm run build && electron . --enable-logging",
+
+    "build:win": "npm run build && electron-builder --win nsis portable msi",
+    "build:win:x64": "npm run build && electron-builder --win --x64 nsis portable msi",
+    "build:win:arm64": "npm run build && electron-builder --win --arm64 nsis portable msi",
+    "build:win:nsis": "npm run build && electron-builder --win nsis",
+    "build:win:portable": "npm run build && electron-builder --win portable",
+    "build:win:msi": "npm run build && electron-builder --win msi",
+
+    "build:mac": "npm run build && dotenv-cli -- electron-builder --mac --universal",
+    "build:mac:dev": "npm run build && electron-builder --mac --universal -c.mac.notarize=false",
+    "build:mac:mas": "npm run build && dotenv-cli -- electron-builder --mac mas",
+
     "build:linux": "npm run build && electron-builder --linux",
-    "build:flatpak": "npm run build && electron-builder --linux flatpak"
+    "build:linux:x64": "npm run build && electron-builder --linux --x64",
+    "build:linux:arm64": "npm run build && electron-builder --linux --arm64",
+    "build:linux:appimage": "npm run build && electron-builder --linux AppImage",
+    "build:linux:deb": "npm run build && electron-builder --linux deb",
+    "build:linux:rpm": "npm run build && electron-builder --linux rpm",
+    "build:linux:native": "cross-env USE_SYSTEM_FPM=true npm run build:linux",
+
+    "build:flatpak": "npm run build && electron-builder --linux flatpak",
+    "flatpak:build": "flatpak-builder --force-clean --user --install build-dir com.burnttoasters.conv2.yml",
+    "flatpak:run": "flatpak run com.burnttoasters.conv2",
+    "flatpak:bundle": "flatpak build-bundle ~/.local/share/flatpak/repo release/CONV2-Linux.flatpak com.burnttoasters.conv2",
+    "flatpak:clean": "rm -rf build-dir .flatpak-builder",
+
+    "patch:beta": "node -e \"let h=require('fs').readFileSync('src/renderer/index.html','utf8');h=h.replace('icon.png','icon-beta.png').replace('</h1>','</h1><span class=\\\"beta-label\\\">Beta</span>');require('fs').writeFileSync('src/renderer/index.html',h)\"",
+    "restore:release": "git checkout src/renderer/index.html",
+
+    "release:win": "npm run build && electron-builder --win nsis portable msi --publish always && npm run sign:gpg",
+    "release:win:x64": "npm run build && electron-builder --win --x64 nsis portable msi --publish always && npm run sign:gpg",
+    "release:win:arm64": "npm run build && electron-builder --win --arm64 nsis portable msi --publish always && npm run sign:gpg",
+    "release:mac": "npm run build && dotenv-cli -- electron-builder --mac --universal --publish always && npm run sign:gpg",
+    "release:linux": "npm run build && electron-builder --linux --publish always && npm run flatpak:bundle && npm run sign:gpg",
+    "release:linux:native": "cross-env USE_SYSTEM_FPM=true npm run release:linux",
+    "release:all": "npm run release:win && npm run release:mac && npm run release:linux",
+
+    "release:beta:win": "npm run patch:beta && cross-env IS_BETA=true npm run release:win && npm run restore:release",
+    "release:beta:mac": "npm run patch:beta && cross-env IS_BETA=true npm run release:mac && npm run restore:release",
+    "release:beta:linux": "npm run patch:beta && cross-env IS_BETA=true npm run release:linux && npm run restore:release",
+
+    "sign:gpg": "node build/gpg-sign.js",
+    "licenses": "npm run licenses:prod",
+    "licenses:prod": "npx npm-license-crawler --production --json licenses.json"
   },
   "devDependencies": {
+    "@electron/notarize": "^3.0.0",
     "@types/node": "^25.0.3",
+    "cross-env": "^7.0.3",
+    "dotenv": "^16.4.5",
+    "dotenv-cli": "^7.4.2",
     "electron": "^39.2.7",
     "electron-builder": "^26.0.12",
     "typescript": "^5.3.0"
@@ -36,84 +81,116 @@
   "build": {
     "appId": "com.burnttoasters.conv2",
     "productName": "CONV2",
+    "artifactName": "${productName}-${os}-${arch}.${ext}",
     "directories": {
-      "output": "release"
+      "output": "release",
+      "buildResources": "assets"
     },
     "files": [
       "dist/**/*",
-      "assets/**/*"
+      "assets/**/*",
+      "licenses.json"
+    ],
+    "extraResources": [
+      {
+        "from": "assets/twemoji",
+        "to": "twemoji"
+      }
     ],
     "win": {
       "target": [
         {
           "target": "nsis",
-          "arch": [
-            "x64",
-            "arm64"
-          ]
+          "arch": ["x64", "arm64"]
         },
         {
           "target": "portable",
-          "arch": [
-            "x64",
-            "arm64"
-          ]
+          "arch": ["x64", "arm64"]
+        },
+        {
+          "target": "msi",
+          "arch": ["x64", "arm64"]
         }
       ],
-      "icon": "assets/icon.ico"
+      "icon": "assets/icon.ico",
+      "artifactName": "${productName}-Win-${arch}.${ext}"
     },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "CONV2"
+    },
+    "msi": {
+      "perMachine": true,
+      "runAfterFinish": false
+    },
+    "msiProjectCreated": "build/msi-hook.js",
     "mac": {
       "target": [
         {
           "target": "dmg",
-          "arch": [
-            "universal"
-          ]
+          "arch": ["universal"]
         },
         {
           "target": "zip",
-          "arch": [
-            "universal"
-          ]
+          "arch": ["universal"]
         }
       ],
-      "icon": "assets/icon-mac.png"
+      "icon": "assets/icon-mac.png",
+      "artifactName": "${productName}-macOS-${arch}.${ext}",
+      "category": "public.app-category.video",
+      "hardenedRuntime": true,
+      "gatekeeperAssess": false,
+      "entitlements": "build/entitlements.mac.plist",
+      "entitlementsInherit": "build/entitlements.mac.plist",
+      "notarize": false
+    },
+    "mas": {
+      "entitlements": "build/entitlements.mas.plist",
+      "entitlementsInherit": "build/entitlements.mas.inherit.plist",
+      "provisioningProfile": "build/embedded.provisionprofile"
+    },
+    "dmg": {
+      "backgroundColor": "#0d0d0d",
+      "iconSize": 80,
+      "contents": [
+        {
+          "x": 130,
+          "y": 220
+        },
+        {
+          "x": 410,
+          "y": 220,
+          "type": "link",
+          "path": "/Applications"
+        }
+      ]
     },
     "linux": {
       "target": [
         {
           "target": "AppImage",
-          "arch": [
-            "x64",
-            "arm64"
-          ]
+          "arch": ["x64", "arm64"]
         },
         {
           "target": "deb",
-          "arch": [
-            "x64",
-            "arm64"
-          ]
+          "arch": ["x64", "arm64"]
         },
         {
           "target": "rpm",
-          "arch": [
-            "x64",
-            "arm64"
-          ]
-        },
-        {
-          "target": "flatpak",
-          "arch": [
-            "x64",
-            "arm64"
-          ]
+          "arch": ["x64", "arm64"]
         }
       ],
       "icon": "assets/icon.png",
       "category": "AudioVideo",
+      "artifactName": "${productName}-Linux-${arch}.${ext}",
       "desktop": {
-        "MimeType": "video/mp4;video/x-matroska;video/avi;video/quicktime;video/x-ms-wmv;video/x-flv;video/webm;video/x-m4v;video/mpeg;video/3gpp;"
+        "Name": "CONV2",
+        "Comment": "Cross-platform FFMPEG GUI for video conversion",
+        "Keywords": "video;convert;ffmpeg;transcode;encode;av1;h264;h265;hevc"
       }
     },
     "flatpak": {
@@ -135,6 +212,7 @@
         "--env=ELECTRON_OZONE_PLATFORM_HINT=auto"
       ]
     },
+    "afterSign": "build/notarize.js",
     "publish": {
       "provider": "github",
       "owner": "BurntToasters",

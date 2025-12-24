@@ -503,6 +503,10 @@ select:focus {
   padding: 20px;
 }
 
+.credits-modal {
+  max-width: 640px;
+}
+
 @keyframes modalIn {
   from { opacity: 0; transform: scale(0.95) translateY(10px); }
   to { opacity: 1; transform: scale(1) translateY(0); }
@@ -562,6 +566,103 @@ select:focus {
   display: flex;
   gap: 12px;
   justify-content: flex-end;
+}
+
+.credits-body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.credits-description {
+  font-size: 13px;
+  color: var(--text-secondary);
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 12px;
+  line-height: 1.5;
+}
+
+.credits-description code {
+  background: var(--bg-secondary);
+  border-radius: var(--radius-sm);
+  padding: 2px 6px;
+  color: var(--text-primary);
+  border: 1px solid var(--border);
+}
+
+.licenses-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-height: 360px;
+  overflow-y: auto;
+}
+
+.license-item {
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 12px 14px;
+}
+
+.license-highlight {
+  border-color: var(--accent);
+  box-shadow: 0 4px 16px var(--accent-glow);
+}
+
+.license-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.license-name {
+  font-weight: 600;
+  color: var(--text-primary);
+  word-break: break-word;
+}
+
+.license-badge {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 4px 8px;
+  color: var(--text-secondary);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.license-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+  flex-wrap: wrap;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.license-note {
+  color: var(--text-muted);
+}
+
+.license-link {
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  border: 1px solid var(--border);
+}
+
+.license-link:hover {
+  border-color: var(--border-hover);
+  background: var(--bg-elevated);
+}
+
+.license-error {
+  border-color: var(--error);
+  color: var(--error);
 }
 
 .settings-grid {
@@ -736,4 +837,19 @@ select:focus {
   height: 6px;
   background: var(--border-hover);
   border-radius: 2px;
+}
+
+.beta-label {
+  display: inline-block;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  padding: 3px 8px;
+  margin-left: 8px;
+  background: var(--warning-bg);
+  color: var(--warning);
+  border: 1px solid var(--warning);
+  border-radius: var(--radius-sm);
+  vertical-align: middle;
 }

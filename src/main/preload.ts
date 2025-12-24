@@ -67,6 +67,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   // Open external
   openPath: (path: string): Promise<void> => ipcRenderer.invoke('open-path', path),
+  openExternal: (url: string): Promise<void> => ipcRenderer.invoke('open-external', url),
 
   // Theme
   getSystemTheme: (): Promise<'dark' | 'light'> => ipcRenderer.invoke('get-system-theme'),
@@ -77,6 +78,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // Reset & Restart
   resetSettings: (): Promise<AppSettings> => ipcRenderer.invoke('reset-settings'),
   restartApp: (): Promise<void> => ipcRenderer.invoke('restart-app'),
+
+  // Licenses
+  getLicenses: (): Promise<Record<string, unknown> | null> => ipcRenderer.invoke('get-licenses'),
 });
 
 declare global {
@@ -98,10 +102,12 @@ declare global {
       checkFFmpeg: () => Promise<boolean>;
       getVersion: () => Promise<string>;
       openPath: (path: string) => Promise<void>;
+      openExternal: (url: string) => Promise<void>;
       getSystemTheme: () => Promise<'dark' | 'light'>;
       onThemeChange: (callback: (theme: 'dark' | 'light') => void) => void;
       resetSettings: () => Promise<AppSettings>;
       restartApp: () => Promise<void>;
+      getLicenses: () => Promise<Record<string, unknown> | null>;
     };
   }
 }
