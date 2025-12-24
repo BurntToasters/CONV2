@@ -1,0 +1,12 @@
+[Desktop Entry]
+Name=CONV2
+Comment=Cross-platform FFMPEG GUI for quick video conversion
+Exec=conv2 %U
+Icon=com.burnttoasters.conv2
+Terminal=false
+Type=Application
+Categories=AudioVideo;Video;AudioVideoEditing;
+Keywords=video;convert;ffmpeg;transcode;encode;av1;h264;h265;hevc;
+MimeType=video/mp4;video/x-matroska;video/avi;video/quicktime;video/x-ms-wmv;video/x-flv;video/webm;video/x-m4v;video/mpeg;video/3gpp;
+StartupWMClass=conv2
+StartupNotify=true

@@ -1,0 +1,77 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>com.burnttoasters.conv2</id>
+  <name>CONV2</name>
+  <summary>Cross-platform FFMPEG GUI for quick video conversion</summary>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>MPL-2.0</project_license>
+  <developer id="com.burnttoasters">
+    <name>BurntToasters</name>
+  </developer>
+
+  <description>
+    <p>
+      CONV2 is a modern, user-friendly video converter that harnesses the power of FFmpeg
+      to convert your videos quickly and efficiently. With support for hardware acceleration
+      and a variety of presets, converting videos has never been easier.
+    </p>
+    <p>Features:</p>
+    <ul>
+      <li>Multiple conversion presets: AV1, H.264, H.265/HEVC, Remux, and Audio extraction</li>
+      <li>Hardware acceleration support: NVIDIA NVENC, AMD AMF, Intel Quick Sync</li>
+      <li>Drag and drop file selection</li>
+      <li>Real-time progress with ETA and speed indicators</li>
+      <li>Light and dark theme support</li>
+      <li>Configurable output directory</li>
+    </ul>
+  </description>
+
+  <launchable type="desktop-id">com.burnttoasters.conv2.desktop</launchable>
+
+  <url type="homepage">https://github.com/BurntToasters/CONV2</url>
+  <url type="bugtracker">https://github.com/BurntToasters/CONV2/issues</url>
+  <url type="vcs-browser">https://github.com/BurntToasters/CONV2</url>
+
+  <categories>
+    <category>AudioVideo</category>
+    <category>Video</category>
+    <category>AudioVideoEditing</category>
+  </categories>
+
+  <keywords>
+    <keyword>video</keyword>
+    <keyword>convert</keyword>
+    <keyword>ffmpeg</keyword>
+    <keyword>transcode</keyword>
+    <keyword>encode</keyword>
+    <keyword>av1</keyword>
+    <keyword>h264</keyword>
+    <keyword>h265</keyword>
+    <keyword>hevc</keyword>
+  </keywords>
+
+  <provides>
+    <binary>conv2</binary>
+  </provides>
+
+  <content_rating type="oars-1.1" />
+
+  <releases>
+    <release version="0.0.1" date="2024-12-24">
+      <description>
+        <p>Initial release</p>
+        <ul>
+          <li>12 conversion presets for various formats</li>
+          <li>GPU acceleration support</li>
+          <li>Modern UI with dark and light themes</li>
+          <li>Progress tracking with ETA</li>
+        </ul>
+      </description>
+    </release>
+  </releases>
+
+  <branding>
+    <color type="primary" scheme_preference="light">#7c3aed</color>
+    <color type="primary" scheme_preference="dark">#8b5cf6</color>
+  </branding>
+</component>

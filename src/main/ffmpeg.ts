@@ -17,6 +17,15 @@ export interface ConversionResult {
   error?: string;
 }
 
+export interface VideoInfo {
+  duration: number;
+  size: number;
+  width: number;
+  height: number;
+  codec: string;
+  format: string;
+}
+
 let currentProcess: ChildProcess | null = null;
 
 export const checkFFmpegInstalled = async (): Promise<boolean> => {
@@ -27,6 +36,50 @@ export const checkFFmpegInstalled = async (): Promise<boolean> => {
     });
     process.on('error', () => {
       resolve(false);
+    });
+  });
+};
+
+export const getVideoInfo = async (inputPath: string): Promise<VideoInfo> => {
+  return new Promise((resolve, reject) => {
+    const args = [
+      '-v', 'quiet',
+      '-print_format', 'json',
+      '-show_format',
+      '-show_streams',
+      inputPath
+    ];
+
+    const process = spawn('ffprobe', args, { shell: true });
+    let output = '';
+
+    process.stdout.on('data', (data) => {
+      output += data.toString();
+    });
+
+    process.on('close', (code) => {
+      if (code === 0) {
+        try {
+          const data = JSON.parse(output);
+          const videoStream = data.streams?.find((s: { codec_type: string }) => s.codec_type === 'video');
+          resolve({
+            duration: parseFloat(data.format?.duration || '0'),
+            size: parseInt(data.format?.size || '0'),
+            width: videoStream?.width || 0,
+            height: videoStream?.height || 0,
+            codec: videoStream?.codec_name || 'unknown',
+            format: data.format?.format_name || 'unknown',
+          });
+        } catch {
+          reject(new Error('Failed to parse video info'));
+        }
+      } else {
+        reject(new Error('Failed to get video info'));
+      }
+    });
+
+    process.on('error', (err) => {
+      reject(err);
     });
   });
 };

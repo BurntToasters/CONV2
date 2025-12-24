@@ -640,3 +640,100 @@ select:focus {
 #dynamicModal .modal-actions {
   justify-content: center;
 }
+
+.file-info-content {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.file-info .filename {
+  font-weight: 600;
+  word-break: break-all;
+  font-size: 14px;
+  color: var(--text-primary);
+}
+
+.file-details {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.option-hint {
+  display: block;
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-top: 6px;
+}
+
+.progress-info {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-top: 12px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  font-weight: 500;
+}
+
+.progress-left,
+.progress-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.progress-separator {
+  color: var(--text-muted);
+}
+
+#progressEta {
+  color: var(--accent);
+}
+
+#progressSpeed {
+  color: var(--text-muted);
+}
+
+.status-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 16px;
+}
+
+.status-row .status-message {
+  margin-top: 0;
+  flex: 1;
+}
+
+.status-row .status-message.visible {
+  display: flex;
+  align-items: center;
+}
+
+.keyboard-hints {
+  display: flex;
+  justify-content: center;
+  gap: 16px;
+  margin-top: 32px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
+}
+
+.keyboard-hints span {
+  font-size: 11px;
+  color: var(--text-muted);
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.keyboard-hints span::before {
+  content: '';
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  background: var(--border-hover);
+  border-radius: 2px;
+}

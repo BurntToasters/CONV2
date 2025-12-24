@@ -14,7 +14,7 @@
         <img src="../../assets/icon.png" alt="CONV2">
         <h1>CONV2</h1>
       </div>
-      <button class="settings-btn" id="settingsBtn" title="Settings">
+      <button class="settings-btn" id="settingsBtn" title="Settings (Ctrl+,)">
         <img src="../../assets/twemoji/2699.svg" alt="Settings">
       </button>
     </header>
@@ -32,10 +32,10 @@
     </div>
 
     <div class="card file-info" id="fileInfo">
-      <div class="file-info-header">
-        <span>Selected File</span>
+      <div class="file-info-content">
+        <span class="filename" id="fileName"></span>
+        <span class="file-details" id="fileDetails"></span>
       </div>
-      <span class="filename" id="fileName"></span>
     </div>
 
     <div class="options-panel">
@@ -46,11 +46,12 @@
       <div class="option-group">
         <label for="gpuSelect">Hardware Acceleration</label>
         <select id="gpuSelect">
-          <option value="cpu">CPU (Software)</option>
-          <option value="nvidia">NVIDIA (NVENC)</option>
-          <option value="amd">AMD (AMF)</option>
-          <option value="intel">Intel (Quick Sync)</option>
+          <option value="cpu" title="Uses CPU for encoding. Slower but always available.">CPU (Software)</option>
+          <option value="nvidia" title="NVIDIA NVENC. Requires NVIDIA GPU with NVENC support.">NVIDIA (NVENC)</option>
+          <option value="amd" title="AMD AMF. Requires AMD GPU with AMF support.">AMD (AMF)</option>
+          <option value="intel" title="Intel Quick Sync. Requires Intel CPU/GPU with QSV support.">Intel (Quick Sync)</option>
         </select>
+        <span class="option-hint">Select GPU for faster encoding if available</span>
       </div>
     </div>
 
@@ -64,12 +65,28 @@
         <div class="progress-fill" id="progressFill"></div>
       </div>
       <div class="progress-info">
-        <span id="progressPercent">0%</span>
-        <span id="progressTime">00:00:00</span>
+        <div class="progress-left">
+          <span id="progressPercent">0%</span>
+          <span class="progress-separator">•</span>
+          <span id="progressTime">00:00:00</span>
+        </div>
+        <div class="progress-right">
+          <span id="progressSpeed"></span>
+          <span id="progressEta"></span>
+        </div>
       </div>
     </div>
 
-    <div class="status-message" id="statusMessage"></div>
+    <div class="status-row">
+      <div class="status-message" id="statusMessage"></div>
+      <button class="btn btn-secondary btn-xs" id="showInFolderBtn" style="display: none;">Show in Folder</button>
+    </div>
+
+    <div class="keyboard-hints">
+      <span>Ctrl+O Open</span>
+      <span>Enter Convert</span>
+      <span>Esc Close</span>
+    </div>
   </div>
 
   <div class="modal-overlay" id="settingsModal">

@@ -1,0 +1,82 @@
+app-id: com.burnttoasters.conv2
+runtime: org.freedesktop.Platform
+runtime-version: '24.08'
+sdk: org.freedesktop.Sdk
+base: org.electronjs.Electron2.BaseApp
+base-version: '24.08'
+sdk-extensions:
+  - org.freedesktop.Sdk.Extension.node22
+command: conv2
+
+finish-args:
+  - --share=ipc
+  - --socket=x11
+  - --socket=wayland
+  - --socket=pulseaudio
+  - --device=dri
+  - --share=network
+  - --filesystem=home
+  - --filesystem=xdg-videos
+  - --filesystem=xdg-download
+  - --env=ELECTRON_OZONE_PLATFORM_HINT=auto
+
+build-options:
+  append-path: /usr/lib/sdk/node22/bin
+  env:
+    NPM_CONFIG_LOGLEVEL: info
+
+modules:
+  - name: ffmpeg
+    cleanup:
+      - /include
+      - /lib/pkgconfig
+      - /share/ffmpeg
+    config-opts:
+      - --disable-doc
+      - --disable-static
+      - --enable-shared
+      - --enable-gpl
+      - --enable-version3
+      - --enable-nonfree
+      - --enable-libx264
+      - --enable-libx265
+      - --enable-libsvtav1
+      - --enable-libvpx
+      - --enable-libopus
+      - --enable-libvorbis
+      - --enable-libmp3lame
+      - --enable-libfdk-aac
+      - --enable-vaapi
+      - --enable-vdpau
+    sources:
+      - type: archive
+        url: https://ffmpeg.org/releases/ffmpeg-7.0.tar.xz
+        sha256: 4426a94dd2c814945623f68f2f86b71e0d5080c2c1f85453a0a06c8e68238e82
+
+  - name: conv2
+    buildsystem: simple
+    build-options:
+      env:
+        XDG_CACHE_HOME: /run/build/conv2/flatpak-node/cache
+        npm_config_cache: /run/build/conv2/flatpak-node/npm-cache
+        npm_config_offline: 'true'
+    build-commands:
+      - npm install --offline
+      - npm run build
+      - |
+        install -Dm755 conv2.sh /app/bin/conv2
+        mkdir -p /app/lib/conv2
+        cp -r dist /app/lib/conv2/
+        cp -r assets /app/lib/conv2/
+        cp -r node_modules /app/lib/conv2/
+        cp package.json /app/lib/conv2/
+
+      - install -Dm644 com.burnttoasters.conv2.desktop /app/share/applications/com.burnttoasters.conv2.desktop
+      - install -Dm644 com.burnttoasters.conv2.metainfo.xml /app/share/metainfo/com.burnttoasters.conv2.metainfo.xml
+      - install -Dm644 assets/icon.png /app/share/icons/hicolor/256x256/apps/com.burnttoasters.conv2.png
+      - install -Dm644 assets/icon.png /app/share/icons/hicolor/512x512/apps/com.burnttoasters.conv2.png
+    sources:
+      - type: git
+        url: https://github.com/BurntToasters/CONV2.git
+        branch: main
+      - generated-sources.json

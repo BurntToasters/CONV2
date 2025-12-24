@@ -11,6 +11,15 @@ interface AppSettings {
   theme: 'system' | 'dark' | 'light';
 }
 
+interface VideoInfo {
+  duration: number;
+  size: number;
+  width: number;
+  height: number;
+  codec: string;
+  format: string;
+}
+
 interface ModalOptions {
   title: string;
   message: string;
@@ -22,9 +31,12 @@ interface ModalOptions {
 }
 
 let selectedFile: string | null = null;
+let selectedFileInfo: VideoInfo | null = null;
 let isConverting = false;
 let settings: AppSettings;
 let presets: Preset[] = [];
+let conversionStartTime = 0;
+let lastOutputPath = '';
 
 const elements = {
   dropZone: document.getElementById('dropZone') as HTMLDivElement,
@@ -32,6 +44,7 @@ const elements = {
   browseBtn: document.getElementById('browseBtn') as HTMLButtonElement,
   fileInfo: document.getElementById('fileInfo') as HTMLDivElement,
   fileName: document.getElementById('fileName') as HTMLSpanElement,
+  fileDetails: document.getElementById('fileDetails') as HTMLSpanElement,
   presetSelect: document.getElementById('presetSelect') as HTMLSelectElement,
   gpuSelect: document.getElementById('gpuSelect') as HTMLSelectElement,
   convertBtn: document.getElementById('convertBtn') as HTMLButtonElement,
@@ -40,7 +53,10 @@ const elements = {
   progressFill: document.getElementById('progressFill') as HTMLDivElement,
   progressPercent: document.getElementById('progressPercent') as HTMLSpanElement,
   progressTime: document.getElementById('progressTime') as HTMLSpanElement,
+  progressEta: document.getElementById('progressEta') as HTMLSpanElement,
+  progressSpeed: document.getElementById('progressSpeed') as HTMLSpanElement,
   statusMessage: document.getElementById('statusMessage') as HTMLDivElement,
+  showInFolderBtn: document.getElementById('showInFolderBtn') as HTMLButtonElement,
   settingsBtn: document.getElementById('settingsBtn') as HTMLButtonElement,
   settingsModal: document.getElementById('settingsModal') as HTMLDivElement,
   closeSettings: document.getElementById('closeSettings') as HTMLButtonElement,
@@ -54,6 +70,23 @@ const elements = {
   dynamicModal: document.getElementById('dynamicModal') as HTMLDivElement,
 };
 
+const formatFileSize = (bytes: number): string => {
+  if (bytes === 0) return '0 B';
+  const k = 1024;
+  const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
+  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
+};
+
+const formatDuration = (seconds: number): string => {
+  const h = Math.floor(seconds / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  const s = Math.floor(seconds % 60);
+  if (h > 0) return `${h}h ${m}m ${s}s`;
+  if (m > 0) return `${m}m ${s}s`;
+  return `${s}s`;
+};
+
 const showModal = (options: ModalOptions): void => {
   const modal = elements.dynamicModal;
   const titleEl = modal.querySelector('.modal-header h2') as HTMLElement;
@@ -65,7 +98,6 @@ const showModal = (options: ModalOptions): void => {
   bodyEl.textContent = options.message;
   confirmBtn.textContent = options.confirmText || 'Confirm';
   cancelBtn.textContent = options.cancelText || 'Cancel';
-
   confirmBtn.className = `btn btn-sm ${options.confirmClass || 'btn-primary'}`;
 
   const cleanup = () => {
@@ -104,6 +136,7 @@ const init = async () => {
   await loadVersion();
   await applyTheme();
   setupEventListeners();
+  setupKeyboardShortcuts();
 };
 
 const checkFFmpeg = async () => {
@@ -175,6 +208,35 @@ const applyTheme = async () => {
   });
 };
 
+const setupKeyboardShortcuts = () => {
+  document.addEventListener('keydown', (e) => {
+    // Escape - close modals
+    if (e.key === 'Escape') {
+      if (elements.settingsModal.classList.contains('visible')) {
+        elements.settingsModal.classList.remove('visible');
+      }
+      if (elements.dynamicModal.classList.contains('visible')) {
+        elements.dynamicModal.classList.remove('visible');
+      }
+    }
+
+    // Ctrl/Cmd + O - open file
+    if ((e.ctrlKey || e.metaKey) && e.key === 'o') {
+      e.preventDefault();
+      elements.fileInput.click();
+    }
+
+    // Enter - start conversion (when file selected and not converting)
+    if (e.key === 'Enter' && !e.ctrlKey && !e.metaKey) {
+      const isModalOpen = elements.settingsModal.classList.contains('visible') ||
+                          elements.dynamicModal.classList.contains('visible');
+      if (!isModalOpen && selectedFile && !isConverting && !elements.convertBtn.disabled) {
+        startConversion();
+      }
+    }
+  });
+};
+
 const setupEventListeners = () => {
   elements.dropZone.addEventListener('click', () => elements.fileInput.click());
   elements.browseBtn.addEventListener('click', (e) => {
@@ -220,6 +282,12 @@ const setupEventListeners = () => {
 
   elements.convertBtn.addEventListener('click', startConversion);
   elements.cancelBtn.addEventListener('click', cancelConversion);
+
+  elements.showInFolderBtn?.addEventListener('click', () => {
+    if (lastOutputPath) {
+      window.electronAPI.openPath(lastOutputPath);
+    }
+  });
 
   elements.settingsBtn.addEventListener('click', () => {
     elements.settingsModal.classList.add('visible');
@@ -272,6 +340,23 @@ const setupEventListeners = () => {
     elements.progressFill.style.width = `${progress.percent}%`;
     elements.progressPercent.textContent = `${progress.percent.toFixed(1)}%`;
     elements.progressTime.textContent = progress.time;
+
+    // Calculate ETA
+    if (progress.percent > 0 && conversionStartTime > 0) {
+      const elapsed = (Date.now() - conversionStartTime) / 1000;
+      const estimatedTotal = elapsed / (progress.percent / 100);
+      const remaining = estimatedTotal - elapsed;
+      if (remaining > 0 && remaining < 86400) {
+        elements.progressEta.textContent = `ETA: ${formatDuration(remaining)}`;
+      }
+    }
+
+    // Show speed
+    if (progress.fps > 0) {
+      elements.progressSpeed.textContent = `${progress.fps.toFixed(1)} fps`;
+    } else if (progress.speed !== 'N/A') {
+      elements.progressSpeed.textContent = progress.speed;
+    }
   });
 
   window.electronAPI.onConversionComplete((result) => {
@@ -281,22 +366,44 @@ const setupEventListeners = () => {
     elements.cancelBtn.style.display = 'none';
 
     if (result.success) {
-      showStatus('success', `Conversion complete! Click to open folder.`);
-      elements.statusMessage.onclick = () => window.electronAPI.openPath(result.outputPath);
-      elements.statusMessage.style.cursor = 'pointer';
+      lastOutputPath = result.outputPath;
+      showStatus('success', 'Conversion complete!');
+      elements.showInFolderBtn.style.display = 'inline-flex';
     } else {
       showStatus('error', `Conversion failed: ${result.error}`);
-      elements.statusMessage.style.cursor = 'default';
+      elements.showInFolderBtn.style.display = 'none';
     }
   });
 };
 
-const handleFileSelect = (filePath: string) => {
+const handleFileSelect = async (filePath: string) => {
   selectedFile = filePath;
   const fileName = filePath.split(/[/\\]/).pop() || filePath;
   elements.fileName.textContent = fileName;
+
+  // Get file info
+  const info = await window.electronAPI.getFileInfo(filePath);
+  if (info) {
+    selectedFileInfo = info;
+    const details: string[] = [];
+    details.push(formatFileSize(info.size));
+    if (info.width && info.height) {
+      details.push(`${info.width}x${info.height}`);
+    }
+    if (info.codec && info.codec !== 'unknown') {
+      details.push(info.codec.toUpperCase());
+    }
+    if (info.duration > 0) {
+      details.push(formatDuration(info.duration));
+    }
+    elements.fileDetails.textContent = details.join(' • ');
+  } else {
+    elements.fileDetails.textContent = '';
+  }
+
   elements.fileInfo.classList.add('visible');
   elements.convertBtn.disabled = false;
+  elements.showInFolderBtn.style.display = 'none';
   hideStatus();
 };
 
@@ -304,12 +411,16 @@ const startConversion = async () => {
   if (!selectedFile) return;
 
   isConverting = true;
+  conversionStartTime = Date.now();
   elements.convertBtn.disabled = true;
   elements.cancelBtn.style.display = 'inline-flex';
   elements.progressContainer.classList.add('visible');
   elements.progressFill.style.width = '0%';
   elements.progressPercent.textContent = '0%';
   elements.progressTime.textContent = '00:00:00';
+  elements.progressEta.textContent = '';
+  elements.progressSpeed.textContent = '';
+  elements.showInFolderBtn.style.display = 'none';
   hideStatus();
 
   const presetId = elements.presetSelect.value;

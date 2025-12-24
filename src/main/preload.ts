@@ -15,10 +15,20 @@ export interface AppSettings {
   theme: 'system' | 'dark' | 'light';
 }
 
+export interface VideoInfo {
+  duration: number;
+  size: number;
+  width: number;
+  height: number;
+  codec: string;
+  format: string;
+}
+
 contextBridge.exposeInMainWorld('electronAPI', {
   // File operations
   selectFile: (): Promise<string | null> => ipcRenderer.invoke('select-file'),
   selectOutputDirectory: (): Promise<string | null> => ipcRenderer.invoke('select-output-directory'),
+  getFileInfo: (filePath: string): Promise<VideoInfo | null> => ipcRenderer.invoke('get-file-info', filePath),
 
   // Conversion
   startConversion: (inputPath: string, presetId: string): Promise<void> =>
@@ -74,6 +84,7 @@ declare global {
     electronAPI: {
       selectFile: () => Promise<string | null>;
       selectOutputDirectory: () => Promise<string | null>;
+      getFileInfo: (filePath: string) => Promise<VideoInfo | null>;
       startConversion: (inputPath: string, presetId: string) => Promise<void>;
       cancelConversion: () => Promise<void>;
       onConversionProgress: (callback: (progress: ConversionProgress) => void) => void;

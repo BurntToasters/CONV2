@@ -2,8 +2,11 @@ import { app, BrowserWindow, ipcMain, dialog, nativeTheme, shell, Menu } from 'e
 import * as path from 'path';
 import * as fs from 'fs';
 import { presets, getPresetById, GPUVendor } from './presets';
-import { convertVideo, cancelConversion, checkFFmpegInstalled } from './ffmpeg';
+import { convertVideo, cancelConversion, checkFFmpegInstalled, getVideoInfo } from './ffmpeg';
 import { initUpdater, checkForUpdates } from './updater';
+
+let isConversionActive = false;
+let lastOutputPath = '';
 
 interface AppSettings {
   outputDirectory: string;
@@ -73,6 +76,26 @@ const createWindow = (): void => {
     mainWindow = null;
   });
 
+  mainWindow.on('close', (e) => {
+    if (isConversionActive) {
+      e.preventDefault();
+      dialog.showMessageBox(mainWindow!, {
+        type: 'warning',
+        title: 'Conversion in Progress',
+        message: 'A conversion is currently running. Are you sure you want to quit?',
+        buttons: ['Cancel', 'Quit Anyway'],
+        defaultId: 0,
+        cancelId: 0,
+      }).then((result) => {
+        if (result.response === 1) {
+          cancelConversion();
+          isConversionActive = false;
+          mainWindow?.destroy();
+        }
+      });
+    }
+  });
+
   initUpdater(mainWindow);
 
   nativeTheme.on('updated', () => {
@@ -127,6 +150,7 @@ ipcMain.handle('start-conversion', async (_, inputPath: string, presetId: string
   }
 
   const outputDir = settings.outputDirectory || path.dirname(inputPath);
+  isConversionActive = true;
 
   const result = await convertVideo(
     inputPath,
@@ -138,11 +162,27 @@ ipcMain.handle('start-conversion', async (_, inputPath: string, presetId: string
     }
   );
 
+  isConversionActive = false;
+  lastOutputPath = result.outputPath;
   mainWindow?.webContents.send('conversion-complete', result);
 });
 
 ipcMain.handle('cancel-conversion', () => {
   cancelConversion();
+  isConversionActive = false;
+});
+
+ipcMain.handle('get-file-info', async (_, filePath: string) => {
+  try {
+    const info = await getVideoInfo(filePath);
+    const stats = fs.statSync(filePath);
+    return {
+      ...info,
+      size: stats.size,
+    };
+  } catch {
+    return null;
+  }
 });
 
 ipcMain.handle('get-presets', () => {
