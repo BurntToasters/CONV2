@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; script-src 'self'">
+  <title>CONV2</title>
+  <link rel="stylesheet" href="main.css">
+</head>
+<body>
+  <div class="container">
+    <header>
+      <div class="logo">
+        <img src="../../assets/icon.png" alt="CONV2">
+        <h1>CONV2</h1>
+      </div>
+      <button class="settings-btn" id="settingsBtn" title="Settings">
+        <img src="../../assets/twemoji/2699.svg" alt="Settings">
+      </button>
+    </header>
+
+    <div class="ffmpeg-warning" id="ffmpegWarning" style="display: none;">
+      <h3>FFmpeg Not Found</h3>
+      <p>Please install FFmpeg and add it to your system PATH to use CONV2.</p>
+    </div>
+
+    <div class="drop-zone" id="dropZone">
+      <img src="../../assets/twemoji/1f4c1.svg" alt="Folder">
+      <p>Drag and drop a video file here</p>
+      <button class="btn btn-secondary" id="browseBtn">Browse Files</button>
+      <input type="file" id="fileInput" accept="video/*" hidden>
+    </div>
+
+    <div class="card file-info" id="fileInfo">
+      <div class="file-info-header">
+        <span>Selected File</span>
+      </div>
+      <span class="filename" id="fileName"></span>
+    </div>
+
+    <div class="options-panel">
+      <div class="option-group">
+        <label for="presetSelect">Conversion Preset</label>
+        <select id="presetSelect"></select>
+      </div>
+      <div class="option-group">
+        <label for="gpuSelect">Hardware Acceleration</label>
+        <select id="gpuSelect">
+          <option value="cpu">CPU (Software)</option>
+          <option value="nvidia">NVIDIA (NVENC)</option>
+          <option value="amd">AMD (AMF)</option>
+          <option value="intel">Intel (Quick Sync)</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="convert-section">
+      <button class="btn btn-primary" id="convertBtn" disabled>Convert</button>
+      <button class="btn btn-secondary" id="cancelBtn" style="display: none;">Cancel</button>
+    </div>
+
+    <div class="progress-container" id="progressContainer">
+      <div class="progress-bar">
+        <div class="progress-fill" id="progressFill"></div>
+      </div>
+      <div class="progress-info">
+        <span id="progressPercent">0%</span>
+        <span id="progressTime">00:00:00</span>
+      </div>
+    </div>
+
+    <div class="status-message" id="statusMessage"></div>
+  </div>
+
+  <div class="modal-overlay" id="settingsModal">
+    <div class="modal settings-modal">
+      <div class="modal-header">
+        <h2>Settings</h2>
+        <button class="modal-close" id="closeSettings">&times;</button>
+      </div>
+
+      <div class="settings-grid">
+        <div class="setting-item">
+          <label>Theme</label>
+          <select id="themeSelect">
+            <option value="system">System</option>
+            <option value="dark">Dark</option>
+            <option value="light">Light</option>
+          </select>
+        </div>
+
+        <div class="setting-item">
+          <label>Output Directory</label>
+          <div class="setting-control">
+            <span class="output-path" id="outputPath">Same as input file</span>
+            <button class="btn btn-secondary btn-xs" id="outputDirBtn">Change</button>
+          </div>
+        </div>
+
+        <div class="setting-item">
+          <label>Updates</label>
+          <button class="btn btn-secondary btn-xs full-width" id="checkUpdateBtn">Check for Updates</button>
+        </div>
+
+        <div class="setting-item setting-danger">
+          <label>Reset Settings</label>
+          <button class="btn btn-danger btn-xs full-width" id="resetSettingsBtn">Reset & Restart</button>
+        </div>
+      </div>
+
+      <div class="version-info">
+        <span id="versionInfo">CONV2 v0.0.1</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-overlay" id="dynamicModal">
+    <div class="modal">
+      <div class="modal-header">
+        <h2>Title</h2>
+      </div>
+      <div class="modal-body">
+        <p>Message</p>
+      </div>
+      <div class="modal-actions">
+        <button class="btn btn-secondary btn-sm" id="modalCancel">Cancel</button>
+        <button class="btn btn-primary btn-sm" id="modalConfirm">Confirm</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="renderer.js"></script>
+</body>
+</html>

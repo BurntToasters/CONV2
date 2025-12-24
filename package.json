@@ -1,0 +1,74 @@
+{
+  "name": "conv2",
+  "version": "0.0.1",
+  "description": "A cross platform FFMPEG GUI front-end making it easy for quick video conversion!",
+  "homepage": "https://github.com/BurntToasters/CONV2#readme",
+  "bugs": {
+    "url": "https://github.com/BurntToasters/CONV2/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/BurntToasters/CONV2.git"
+  },
+  "license": "MPL-2.0",
+  "author": "BurntToasters",
+  "main": "dist/main/main.js",
+  "scripts": {
+    "build": "tsc && npm run copy-assets",
+    "copy-assets": "node -e \"const fs=require('fs');const path=require('path');['index.html','main.css'].forEach(f=>fs.copyFileSync(path.join('src/renderer',f),path.join('dist/renderer',f)))\"",
+    "watch": "tsc -w",
+    "start": "npm run build && electron .",
+    "dev": "npm run build && electron .",
+    "build:win": "npm run build && electron-builder --win",
+    "build:mac": "npm run build && electron-builder --mac",
+    "build:linux": "npm run build && electron-builder --linux"
+  },
+  "devDependencies": {
+    "@types/node": "^20.10.0",
+    "electron": "^28.0.0",
+    "electron-builder": "^24.9.1",
+    "typescript": "^5.3.0"
+  },
+  "dependencies": {
+    "electron-updater": "^6.1.7"
+  },
+  "build": {
+    "appId": "com.burnttoasters.conv2",
+    "productName": "CONV2",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "assets/**/*"
+    ],
+    "win": {
+      "target": [
+        { "target": "nsis", "arch": ["x64", "arm64"] },
+        { "target": "portable", "arch": ["x64", "arm64"] }
+      ],
+      "icon": "assets/icon.ico"
+    },
+    "mac": {
+      "target": [
+        { "target": "dmg", "arch": ["universal"] },
+        { "target": "zip", "arch": ["universal"] }
+      ],
+      "icon": "assets/icon-mac.png"
+    },
+    "linux": {
+      "target": [
+        { "target": "AppImage", "arch": ["x64", "arm64"] },
+        { "target": "deb", "arch": ["x64", "arm64"] },
+        { "target": "rpm", "arch": ["x64", "arm64"] },
+        { "target": "flatpak", "arch": ["x64", "arm64"] }
+      ],
+      "icon": "assets/icon.png"
+    },
+    "publish": {
+      "provider": "github",
+      "owner": "BurntToasters",
+      "repo": "CONV2"
+    }
+  }
+}
