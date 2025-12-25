@@ -1,0 +1,10 @@
+
+
+  Square44x44Logo.png                           - 44x44 pixels
+  Square44x44Logo.targetsize-44_altform-unplated.png - 44x44 pixels (unplated variant)
+  Square71x71Logo.png                           - 71x71 pixels
+  Square150x150Logo.png                         - 150x150 pixels
+  Square310x310Logo.png                         - 310x310 pixels
+  Wide310x150Logo.png                           - 310x150 pixels
+  StoreLogo.png                                 - 50x50 pixels
+
