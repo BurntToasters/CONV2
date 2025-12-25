@@ -1,4 +1,4 @@
-export type GPUVendor = 'nvidia' | 'amd' | 'intel' | 'cpu';
+export type GPUVendor = 'nvidia' | 'amd' | 'intel' | 'apple' | 'cpu';
 
 export interface Preset {
   id: string;
@@ -15,18 +15,21 @@ const getVideoEncoder = (codec: 'h264' | 'h265' | 'av1', gpu: GPUVendor): string
       nvidia: 'h264_nvenc',
       amd: 'h264_amf',
       intel: 'h264_qsv',
+      apple: 'h264_videotoolbox',
       cpu: 'libx264',
     },
     h265: {
       nvidia: 'hevc_nvenc',
       amd: 'hevc_amf',
       intel: 'hevc_qsv',
+      apple: 'hevc_videotoolbox',
       cpu: 'libx265',
     },
     av1: {
       nvidia: 'av1_nvenc',
       amd: 'av1_amf',
       intel: 'av1_qsv',
+      apple: 'libsvtav1', // No AV1 hardware encoding support in ffmpeg for Apple Silicon yet
       cpu: 'libsvtav1',
     },
   };

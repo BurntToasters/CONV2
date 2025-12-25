@@ -1,5 +1,6 @@
 import { spawn, ChildProcess } from 'child_process';
 import * as path from 'path';
+import * as fs from 'fs';
 import { GPUVendor, Preset } from './presets';
 
 export interface ConversionProgress {
@@ -27,6 +28,7 @@ export interface VideoInfo {
 }
 
 let currentProcess: ChildProcess | null = null;
+let currentOutputPath: string | null = null;
 
 export const checkFFmpegInstalled = async (): Promise<boolean> => {
   return new Promise((resolve) => {
@@ -149,10 +151,12 @@ export const convertVideo = async (
   outputDir: string,
   preset: Preset,
   gpu: GPUVendor,
-  onProgress: (progress: ConversionProgress) => void
+  onProgress: (progress: ConversionProgress) => void,
+  onLog?: (message: string) => void
 ): Promise<ConversionResult> => {
   const inputBasename = path.basename(inputPath, path.extname(inputPath));
   const outputPath = path.join(outputDir, `${inputBasename}_converted.${preset.extension}`);
+  currentOutputPath = outputPath;
 
   let totalDuration = 0;
   try {
@@ -162,6 +166,10 @@ export const convertVideo = async (
   }
 
   const args = ['-y', '-progress', 'pipe:1', ...preset.getArgs(inputPath, outputPath, gpu)];
+  
+  if (onLog) {
+    onLog(`Running command: ffmpeg ${args.join(' ')}\n`);
+  }
 
   return new Promise((resolve) => {
     currentProcess = spawn('ffmpeg', args, { shell: true });
@@ -169,7 +177,10 @@ export const convertVideo = async (
     let errorOutput = '';
 
     currentProcess.stdout?.on('data', (data) => {
-      const lines = data.toString().split('\n');
+      const output = data.toString();
+      if (onLog) onLog(output);
+      
+      const lines = output.split('\n');
       for (const line of lines) {
         if (line.includes('out_time_ms=')) {
           const timeMs = parseInt(line.split('=')[1]);
@@ -189,6 +200,7 @@ export const convertVideo = async (
 
     currentProcess.stderr?.on('data', (data) => {
       const line = data.toString();
+      if (onLog) onLog(line);
       errorOutput += line;
 
       const progress = parseProgress(line, totalDuration);
@@ -199,6 +211,7 @@ export const convertVideo = async (
 
     currentProcess.on('close', (code) => {
       currentProcess = null;
+      currentOutputPath = null;
       if (code === 0) {
         resolve({ success: true, outputPath });
       } else {
@@ -208,6 +221,7 @@ export const convertVideo = async (
 
     currentProcess.on('error', (err) => {
       currentProcess = null;
+      currentOutputPath = null;
       resolve({ success: false, outputPath, error: err.message });
     });
   });
@@ -217,6 +231,15 @@ export const cancelConversion = (): void => {
   if (currentProcess) {
     currentProcess.kill('SIGTERM');
     currentProcess = null;
+
+    if (currentOutputPath && fs.existsSync(currentOutputPath)) {
+      try {
+        fs.unlinkSync(currentOutputPath);
+      } catch (err) {
+        console.error('Failed to delete partial file:', err);
+      }
+    }
+    currentOutputPath = null;
   }
 };
 

@@ -11,8 +11,9 @@ interface Preset {
 
 interface AppSettings {
   outputDirectory: string;
-  gpu: 'nvidia' | 'amd' | 'intel' | 'cpu';
+  gpu: 'nvidia' | 'amd' | 'intel' | 'apple' | 'cpu';
   theme: 'system' | 'dark' | 'light';
+  showDebugOutput: boolean;
 }
 
 interface VideoInfo {
@@ -92,6 +93,13 @@ const elements = {
   creditsModal: document.getElementById('creditsModal') as HTMLDivElement,
   closeCredits: document.getElementById('closeCredits') as HTMLButtonElement,
   licensesList: document.getElementById('licensesList') as HTMLDivElement,
+  debugOutputCheck: document.getElementById('debugOutputCheck') as HTMLInputElement,
+  showLogsBtn: document.getElementById('showLogsBtn') as HTMLButtonElement,
+  logsModal: document.getElementById('logsModal') as HTMLDivElement,
+  closeLogs: document.getElementById('closeLogs') as HTMLButtonElement,
+  logsContent: document.getElementById('logsContent') as HTMLPreElement,
+  clearLogsBtn: document.getElementById('clearLogsBtn') as HTMLButtonElement,
+  copyLogsBtn: document.getElementById('copyLogsBtn') as HTMLButtonElement,
 };
 
 const formatFileSize = (bytes: number): string => {
@@ -271,12 +279,29 @@ const closeCreditsModal = (): void => {
 
 const init = async () => {
   await checkFFmpeg();
+  await checkPlatform();
   await loadSettings();
   await loadPresets();
   await loadVersion();
   await applyTheme();
   setupEventListeners();
   setupKeyboardShortcuts();
+};
+
+const checkPlatform = async () => {
+  const platform = await window.electronAPI.getPlatform();
+  if (platform === 'darwin') {
+    const option = document.createElement('option');
+    option.value = 'apple';
+    option.textContent = 'Apple Silicon (VideoToolbox)';
+    option.title = 'Apple VideoToolbox. Requires Apple Silicon (M1/M2/M3) or Intel Mac with T2.';
+    // Insert after CPU
+    if (elements.gpuSelect.children.length > 0) {
+      elements.gpuSelect.insertBefore(option, elements.gpuSelect.children[1]);
+    } else {
+      elements.gpuSelect.appendChild(option);
+    }
+  }
 };
 
 const checkFFmpeg = async () => {
@@ -291,6 +316,14 @@ const loadSettings = async () => {
   settings = await window.electronAPI.getSettings();
   elements.gpuSelect.value = settings.gpu;
   elements.themeSelect.value = settings.theme;
+  elements.debugOutputCheck.checked = settings.showDebugOutput;
+  
+  if (settings.showDebugOutput) {
+    elements.showLogsBtn.style.display = 'inline-block';
+  } else {
+    elements.showLogsBtn.style.display = 'none';
+  }
+
   if (settings.outputDirectory) {
     elements.outputPath.textContent = settings.outputDirectory;
   } else {
@@ -424,8 +457,26 @@ const setupEventListeners = () => {
     await applyTheme();
   });
 
-  elements.convertBtn.addEventListener('click', startConversion);
-  elements.cancelBtn.addEventListener('click', cancelConversion);
+  elements.debugOutputCheck.addEventListener('change', async () => {
+    settings.showDebugOutput = elements.debugOutputCheck.checked;
+    await window.electronAPI.saveSettings({ showDebugOutput: settings.showDebugOutput });
+    elements.showLogsBtn.style.display = settings.showDebugOutput ? 'inline-block' : 'none';
+  });
+
+  elements.convertBtn.addEventListener('click', () => {
+    if (isConverting) {
+      showModal({
+        title: 'Cancel Conversion',
+        message: 'Are you sure you want to cancel the conversion? The partial file will be deleted.',
+        confirmText: 'Yes, Cancel',
+        cancelText: 'No, Continue',
+        confirmClass: 'btn-danger',
+        onConfirm: cancelConversion
+      });
+    } else {
+      startConversion();
+    }
+  });
 
   elements.showInFolderBtn?.addEventListener('click', () => {
     if (lastOutputPath) {
@@ -445,6 +496,34 @@ const setupEventListeners = () => {
     if (e.target === elements.settingsModal) {
       elements.settingsModal.classList.remove('visible');
     }
+  });
+
+  // Logs listeners
+  elements.showLogsBtn.addEventListener('click', () => {
+    elements.logsModal.classList.add('visible');
+  });
+
+  elements.closeLogs.addEventListener('click', () => {
+    elements.logsModal.classList.remove('visible');
+  });
+
+  elements.logsModal.addEventListener('click', (e) => {
+    if (e.target === elements.logsModal) {
+      elements.logsModal.classList.remove('visible');
+    }
+  });
+
+  elements.clearLogsBtn.addEventListener('click', () => {
+    elements.logsContent.textContent = '';
+  });
+
+  elements.copyLogsBtn.addEventListener('click', () => {
+    navigator.clipboard.writeText(elements.logsContent.textContent || '');
+    const originalText = elements.copyLogsBtn.textContent;
+    elements.copyLogsBtn.textContent = 'Copied!';
+    setTimeout(() => {
+      elements.copyLogsBtn.textContent = originalText;
+    }, 2000);
   });
 
   elements.viewCreditsBtn.addEventListener('click', () => {
@@ -498,6 +577,11 @@ const setupEventListeners = () => {
     elements.progressFill.style.width = `${progress.percent}%`;
     elements.progressPercent.textContent = `${progress.percent.toFixed(1)}%`;
     elements.progressTime.textContent = progress.time;
+    
+    // Update convert button; show progress
+    elements.convertBtn.textContent = `Converting... ${Math.floor(progress.percent)}%`;
+    elements.convertBtn.style.background = `linear-gradient(90deg, var(--primary-color) ${progress.percent}%, var(--bg-secondary) ${progress.percent}%)`;
+    elements.convertBtn.style.borderColor = 'var(--primary-color)';
 
     // Calculate ETA
     if (progress.percent > 0 && conversionStartTime > 0) {
@@ -516,11 +600,19 @@ const setupEventListeners = () => {
       elements.progressSpeed.textContent = progress.speed;
     }
   });
+  
+  window.electronAPI.onConversionLog((message) => {
+    elements.logsContent.textContent += message;
+    elements.logsContent.scrollTop = elements.logsContent.scrollHeight;
+  });
 
   window.electronAPI.onConversionComplete((result) => {
     isConverting = false;
     elements.progressContainer.classList.remove('visible');
     elements.convertBtn.disabled = false;
+    elements.convertBtn.textContent = 'Convert';
+    elements.convertBtn.style.background = '';
+    elements.convertBtn.style.borderColor = '';
     elements.cancelBtn.style.display = 'none';
 
     if (result.success) {
@@ -528,7 +620,11 @@ const setupEventListeners = () => {
       showStatus('success', 'Conversion complete!');
       elements.showInFolderBtn.style.display = 'inline-flex';
     } else {
-      showStatus('error', `Conversion failed: ${result.error}`);
+      if (result.error === 'Conversion cancelled') {
+        showStatus('warning', 'Conversion cancelled');
+      } else {
+        showStatus('error', `Conversion failed: ${result.error}`);
+      }
       elements.showInFolderBtn.style.display = 'none';
     }
   });
@@ -570,8 +666,9 @@ const startConversion = async () => {
 
   isConverting = true;
   conversionStartTime = Date.now();
-  elements.convertBtn.disabled = true;
-  elements.cancelBtn.style.display = 'inline-flex';
+  elements.convertBtn.textContent = 'Converting... 0%';
+  elements.convertBtn.classList.add('converting');
+  elements.cancelBtn.style.display = 'none';
   elements.progressContainer.classList.add('visible');
   elements.progressFill.style.width = '0%';
   elements.progressPercent.textContent = '0%';
@@ -579,6 +676,10 @@ const startConversion = async () => {
   elements.progressEta.textContent = '';
   elements.progressSpeed.textContent = '';
   elements.showInFolderBtn.style.display = 'none';
+  
+  // Clear logs
+  elements.logsContent.textContent = '';
+  
   hideStatus();
 
   const presetId = elements.presetSelect.value;
@@ -590,7 +691,11 @@ const cancelConversion = async () => {
   isConverting = false;
   elements.progressContainer.classList.remove('visible');
   elements.convertBtn.disabled = false;
-  elements.cancelBtn.style.display = 'none';
+  elements.convertBtn.textContent = 'Convert';
+  elements.convertBtn.classList.remove('converting');
+  elements.convertBtn.style.background = '';
+  elements.convertBtn.style.borderColor = '';
+  
   showStatus('warning', 'Conversion cancelled');
 };
 

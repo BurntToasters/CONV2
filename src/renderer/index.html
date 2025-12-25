@@ -6,6 +6,7 @@
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; script-src 'self'">
   <title>CONV2</title>
   <link rel="stylesheet" href="main.css">
+  <link rel="stylesheet" href="extra.css">
 </head>
 <body>
   <div class="container">
@@ -79,7 +80,10 @@
 
     <div class="status-row">
       <div class="status-message" id="statusMessage"></div>
-      <button class="btn btn-secondary btn-xs" id="showInFolderBtn" style="display: none;">Show in Folder</button>
+      <div class="status-actions">
+        <button class="btn btn-secondary btn-xs" id="showLogsBtn" style="display: none;">Show Logs</button>
+        <button class="btn btn-secondary btn-xs" id="showInFolderBtn" style="display: none;">Show in Folder</button>
+      </div>
     </div>
 
     <div class="keyboard-hints">
@@ -111,6 +115,14 @@
           <div class="setting-control">
             <span class="output-path" id="outputPath">Same as input file</span>
             <button class="btn btn-secondary btn-xs" id="outputDirBtn">Change</button>
+          </div>
+        </div>
+
+        <div class="setting-item">
+          <label>Debug</label>
+          <div class="setting-control checkbox-control">
+            <input type="checkbox" id="debugOutputCheck">
+            <label for="debugOutputCheck">Show FFmpeg Output</label>
           </div>
         </div>
 
@@ -164,6 +176,22 @@
       <div class="modal-actions">
         <button class="btn btn-secondary btn-sm" id="modalCancel">Cancel</button>
         <button class="btn btn-primary btn-sm" id="modalConfirm">Confirm</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-overlay" id="logsModal">
+    <div class="modal logs-modal">
+      <div class="modal-header">
+        <h2>FFmpeg Logs</h2>
+        <button class="modal-close" id="closeLogs">&times;</button>
+      </div>
+      <div class="logs-body">
+        <pre id="logsContent"></pre>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" id="clearLogsBtn">Clear</button>
+        <button class="btn btn-primary" id="copyLogsBtn">Copy</button>
       </div>
     </div>
   </div>

@@ -1,0 +1,24 @@
+appId: BurntToasters.CONV2
+productName: CONV2
+directories:
+  output: release
+files:
+  - dist/**/*
+  - assets/**/*
+  - licenses.json
+asar: true
+asarUnpack:
+  - '**/*.node'
+win:
+  target: appx
+  icon: assets/icon.ico
+appx:
+  identityName: BurntToasters.CONV2
+  publisher: CN=BC0CB990-55E8-4580-97B7-1E2DAA4B44F6
+  publisherDisplayName: BurntToasters
+  displayName: CONV2
+  backgroundColor: '#3a2a4d'
+  minVersion: 10.0.10240.0
+  maxVersionTested: 10.0.22621.0
+  customManifestPath: build/appx/appxmanifest.xml
+  artifactName: CONV2-${version}-${arch}.${ext}

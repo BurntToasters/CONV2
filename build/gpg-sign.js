@@ -4,198 +4,363 @@ const { execSync } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const https = require('https');
 
 const RELEASE_DIR = path.join(__dirname, '..', 'release');
-const SIGNABLE_EXTENSIONS = ['.dmg', '.zip', '.exe', '.msi', '.appimage', '.deb', '.rpm', '.flatpak'];
-
 const GPG_KEY_ID = process.env.GPG_KEY_ID;
 const GPG_PASSPHRASE = process.env.GPG_PASSPHRASE;
 const GH_TOKEN = process.env.GH_TOKEN;
+const REPO_OWNER = 'BurntToasters';
+const REPO_NAME = 'CONV2';
 
-function detectPlatform() {
-  const files = fs.readdirSync(RELEASE_DIR);
-  if (files.some(f => f.endsWith('.dmg') || f.endsWith('.pkg'))) return 'macOS';
-  if (files.some(f => f.endsWith('.exe') || f.endsWith('.msi'))) return 'Windows';
-  if (files.some(f => f.endsWith('.AppImage') || f.endsWith('.deb') || f.endsWith('.rpm'))) return 'Linux';
-  return 'Unknown';
-}
+const packageJson = require('../package.json');
+const VERSION = packageJson.version;
+const TAG_NAME = 'v' + VERSION;
 
-function checkGpg() {
-  try {
-    execSync('gpg --version', { stdio: 'pipe' });
-    return true;
-  } catch {
-    console.error('ERROR: GPG is not installed or not in PATH');
-    return false;
+const SIGNABLE_EXTENSIONS = [
+  '.dmg',
+  '.zip',
+  '.exe',
+  '.msi',
+  '.appimage',
+  '.deb',
+  '.rpm',
+  '.flatpak'
+];
+
+function getPlatformName() {
+  switch (process.platform) {
+    case 'darwin': return 'macOS';
+    case 'win32': return 'Windows';
+    case 'linux': return 'Linux';
+    default: return process.platform;
   }
 }
 
 function getFilesToSign() {
   if (!fs.existsSync(RELEASE_DIR)) {
-    console.error(`ERROR: Release directory not found: ${RELEASE_DIR}`);
-    return [];
+    console.error('ERROR: Release directory not found:', RELEASE_DIR);
+    process.exit(1);
   }
 
-  return fs.readdirSync(RELEASE_DIR)
-    .filter(file => {
-      const ext = path.extname(file).toLowerCase();
-      return SIGNABLE_EXTENSIONS.includes(ext);
-    })
-    .map(file => path.join(RELEASE_DIR, file));
+  const files = fs.readdirSync(RELEASE_DIR);
+  return files.filter(file => {
+    const fullPath = path.join(RELEASE_DIR, file);
+
+    if (!fs.statSync(fullPath).isFile()) return false;
+
+    const lowerFile = file.toLowerCase();
+    return SIGNABLE_EXTENSIONS.some(ext => lowerFile.endsWith(ext));
+  });
 }
 
-function calculateSha256(filePath) {
+function generateChecksum(filePath) {
   const fileBuffer = fs.readFileSync(filePath);
   const hashSum = crypto.createHash('sha256');
   hashSum.update(fileBuffer);
   return hashSum.digest('hex');
 }
 
-function signFile(filePath) {
-  const signaturePath = `${filePath}.asc`;
-  const fileName = path.basename(filePath);
-
-  console.log(`Signing: ${fileName}`);
-
-  try {
-    let gpgCommand = 'gpg --batch --yes --armor --detach-sign';
-
-    if (GPG_KEY_ID) {
-      gpgCommand += ` --local-user "${GPG_KEY_ID}"`;
-    }
-
-    if (GPG_PASSPHRASE) {
-      gpgCommand += ` --pinentry-mode loopback --passphrase "${GPG_PASSPHRASE}"`;
-    }
-
-    gpgCommand += ` --output "${signaturePath}" "${filePath}"`;
-
-    execSync(gpgCommand, { stdio: 'pipe' });
-    console.log(`  Created: ${path.basename(signaturePath)}`);
-    return signaturePath;
-  } catch (error) {
-    console.error(`  ERROR signing ${fileName}: ${error.message}`);
-    return null;
-  }
-}
-
-function generateChecksums(files, platform) {
-  const checksumFile = path.join(RELEASE_DIR, `SHA256SUMS-${platform}.txt`);
-  const lines = [];
+function generateChecksumFile(files, platform) {
+  const checksumFile = path.join(RELEASE_DIR, 'SHA256SUMS-' + platform + '.txt');
+  const checksums = [];
+  console.log('\nGenerating SHA256 checksums for ' + platform + '...');
 
   for (const file of files) {
-    const hash = calculateSha256(file);
-    const fileName = path.basename(file);
-    lines.push(`${hash}  ${fileName}`);
-    console.log(`Checksum: ${fileName}`);
+    const filePath = path.join(RELEASE_DIR, file);
+    const checksum = generateChecksum(filePath);
+    checksums.push(checksum + '  ' + file);
+    console.log('   ' + file);
+    console.log('   -> ' + checksum);
   }
 
-  fs.writeFileSync(checksumFile, lines.join('\n') + '\n');
-  console.log(`Created: SHA256SUMS-${platform}.txt`);
+  fs.writeFileSync(checksumFile, checksums.join('\n') + '\n');
+  console.log('\nChecksums written to: SHA256SUMS-' + platform + '.txt');
 
   return checksumFile;
 }
 
-function getVersion() {
-  const packageJson = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'package.json'), 'utf8'));
-  return packageJson.version;
-}
-
-async function uploadToGitHub(filePath) {
-  if (!GH_TOKEN) {
-    console.log('  Skipping GitHub upload (GH_TOKEN not set)');
-    return false;
-  }
-
+function signFile(filePath) {
   const fileName = path.basename(filePath);
-  const version = getVersion();
-  const tag = `v${version}`;
-  const isPrerelease = version.includes('beta') || version.includes('alpha');
+  const ascFile = filePath + '.asc';
+
+  console.log('Signing: ' + fileName);
 
   try {
-    let releaseId;
+    let gpgCmd = 'gpg --batch --yes --armor --detach-sign';
 
-    try {
-      const releaseResult = execSync(
-        `gh release view ${tag} --json id -q .id`,
-        { stdio: 'pipe', encoding: 'utf8' }
-      ).trim();
-      releaseId = releaseResult;
-    } catch {
-      console.log(`  Creating release ${tag}...`);
-      const prereleaseFlag = isPrerelease ? '--prerelease' : '';
-      execSync(
-        `gh release create ${tag} --title "CONV2 ${tag}" --draft ${prereleaseFlag}`,
-        { stdio: 'pipe' }
-      );
+    if (GPG_KEY_ID) {
+      gpgCmd += ' --local-user "' + GPG_KEY_ID + '"';
     }
 
-    console.log(`  Uploading: ${fileName}`);
-    execSync(
-      `gh release upload ${tag} "${filePath}" --clobber`,
-      { stdio: 'pipe' }
-    );
+    if (GPG_PASSPHRASE) {
+      gpgCmd += ' --pinentry-mode loopback --passphrase "' + GPG_PASSPHRASE + '"';
+    }
 
-    return true;
+    gpgCmd += ' --output "' + ascFile + '" "' + filePath + '"';
+
+    execSync(gpgCmd, { stdio: 'pipe' });
+    console.log('   OK: Created ' + path.basename(ascFile));
+    return ascFile;
   } catch (error) {
-    console.error(`  ERROR uploading ${fileName}: ${error.message}`);
-    return false;
+    console.error('   FAILED: ' + fileName + ':', error.message);
+    return null;
+  }
+}
+
+function githubRequest(method, endpoint, body) {
+  return new Promise((resolve, reject) => {
+    const data = body ? JSON.stringify(body) : null;
+    const options = {
+      hostname: 'api.github.com',
+      path: endpoint,
+      method,
+      headers: {
+        'User-Agent': 'CONV2-Release-Script',
+        'Accept': 'application/vnd.github.v3+json'
+      }
+    };
+
+    if (GH_TOKEN) {
+      options.headers['Authorization'] = 'Bearer ' + GH_TOKEN;
+    }
+
+    if (data) {
+      options.headers['Content-Type'] = 'application/json';
+      options.headers['Content-Length'] = Buffer.byteLength(data);
+    }
+
+    const req = https.request(options, (res) => {
+      let responseData = '';
+
+      res.on('data', (chunk) => responseData += chunk);
+      res.on('end', () => {
+        try {
+          const parsed = responseData ? JSON.parse(responseData) : {};
+          if (res.statusCode && res.statusCode >= 200 && res.statusCode < 300) {
+            resolve(parsed);
+          } else {
+            reject(new Error(parsed.message || 'GitHub API error (' + res.statusCode + ')'));
+          }
+        } catch (err) {
+          reject(err);
+        }
+      });
+    });
+
+    req.on('error', reject);
+    if (data) req.write(data);
+    req.end();
+  });
+}
+
+function uploadToRelease(uploadUrl, filePath) {
+  return new Promise((resolve, reject) => {
+    const fileName = path.basename(filePath);
+    const fileContent = fs.readFileSync(filePath);
+    const contentType = fileName.endsWith('.asc') || fileName.endsWith('.txt') 
+      ? 'text/plain' 
+      : 'application/octet-stream';
+
+    const url = new URL(uploadUrl.replace('{?name,label}', ''));
+    url.searchParams.set('name', fileName);
+    
+    const options = {
+      hostname: url.hostname,
+      path: url.pathname + url.search,
+      method: 'POST',
+      headers: {
+        'Authorization': 'Bearer ' + GH_TOKEN,
+        'User-Agent': 'CONV2-Release-Script',
+        'Accept': 'application/vnd.github.v3+json',
+        'Content-Type': contentType,
+        'Content-Length': fileContent.length
+      }
+    };
+
+    const req = https.request(options, (res) => {
+      let data = '';
+      res.on('data', chunk => data += chunk);
+      res.on('end', () => {
+        if (res.statusCode && res.statusCode >= 200 && res.statusCode < 300) {
+          resolve(true);
+        } else {
+          const msg = data || ('HTTP ' + res.statusCode);
+          reject(new Error(msg));
+        }
+      });
+    });
+
+    req.on('error', reject);
+    req.write(fileContent);
+    req.end();
+  });
+}
+
+async function getOrCreateRelease() {
+  console.log('\nLooking for release: ' + TAG_NAME);
+  try {
+    const release = await githubRequest(
+      'GET',
+      '/repos/' + REPO_OWNER + '/' + REPO_NAME + '/releases/tags/' + TAG_NAME
+    );
+    console.log('   Found published release: ' + (release.name || TAG_NAME));
+    return release;
+  } catch (error) {
+    console.log('   Tag not published, searching draft releases...');
+    try {
+      const releases = await githubRequest(
+        'GET',
+        '/repos/' + REPO_OWNER + '/' + REPO_NAME + '/releases?per_page=20'
+      );
+
+      const matchingReleases = releases.filter(function(r) {
+        return r.tag_name === TAG_NAME;
+      });
+
+      if (matchingReleases.length > 0) {
+        matchingReleases.sort(function(a, b) {
+          return b.assets.length - a.assets.length;
+        });
+        const release = matchingReleases[0];
+        console.log('   Found draft release: ' + release.name + ' (' + release.assets.length + ' assets)');
+        return release;
+      }
+    } catch (listError) {
+      console.log('   Could not list releases: ' + listError.message);
+    }
+
+    console.log('   Creating draft release for ' + TAG_NAME + '...');
+    try {
+      const release = await githubRequest(
+        'POST',
+        '/repos/' + REPO_OWNER + '/' + REPO_NAME + '/releases',
+        {
+          tag_name: TAG_NAME,
+          name: 'CONV2 ' + VERSION,
+          draft: true,
+          prerelease: VERSION.includes('beta') || VERSION.includes('alpha')
+        }
+      );
+      console.log('   Created draft release: ' + release.name);
+      return release;
+    } catch (createError) {
+      console.error('   FAILED: Could not create release:', createError.message);
+      return null;
+    }
+  }
+}
+
+async function uploadSignatures(release, filesToUpload) {
+  if (!release || !release.upload_url) {
+    console.log('\nWARN: No release found, skipping upload');
+    return;
+  }
+
+  console.log('\nUploading to GitHub release...');
+  
+  for (const filePath of filesToUpload) {
+    if (!filePath) continue;
+    
+    const fileName = path.basename(filePath);
+    process.stdout.write('   Uploading: ' + fileName + '... ');
+    
+    try {
+      const result = await uploadToRelease(release.upload_url, filePath);
+      if (result) {
+        console.log('OK');
+      }
+    } catch (error) {
+      console.log('FAILED: ' + error.message);
+    }
   }
 }
 
 async function main() {
-  console.log('\n=== CONV2 GPG Signing ===\n');
+  const platform = getPlatformName();
+  
+  console.log('='.repeat(60));
+  console.log('GPG Sign & Upload - CONV2 ' + VERSION);
+  console.log('Platform: ' + platform);
+  console.log('='.repeat(60));
 
-  if (!checkGpg()) {
+  try {
+    execSync('gpg --version', { stdio: 'pipe' });
+  } catch (e) {
+    console.error('\nERROR: GPG not found!');
+    console.error('   Install with:');
+    console.error('   - macOS:   brew install gnupg');
+    console.error('   - Windows: https://gpg4win.org/');
+    console.error('   - Linux:   sudo apt install gnupg');
     process.exit(1);
   }
 
-  if (!GPG_PASSPHRASE) {
-    console.warn('WARNING: GPG_PASSPHRASE not set. Interactive signing may be required.\n');
+  if (!GPG_KEY_ID) {
+    console.warn('\nWARN: GPG_KEY_ID not set - will use default key');
+  } else {
+    console.log('\nGPG Key: ' + GPG_KEY_ID);
   }
-
+  
+  if (!GH_TOKEN) {
+    console.warn('WARN: GH_TOKEN not set - signatures will not be uploaded to GitHub');
+  }
+  
   const files = getFilesToSign();
-
+  
   if (files.length === 0) {
-    console.log('No files to sign in release directory.');
-    process.exit(0);
+    console.log('\nERROR: No release artifacts found to sign.');
+    console.log('   Run a build command first, e.g.: npm run release:mac');
+    process.exit(1);
   }
+  
+  console.log('\nFound ' + files.length + ' artifacts to sign:');
+  files.forEach(f => console.log('   • ' + f));
 
-  console.log(`Found ${files.length} file(s) to sign:\n`);
+  const checksumFile = generateChecksumFile(files, platform);
 
-  const platform = detectPlatform();
-  console.log(`Platform: ${platform}\n`);
-
-  console.log('--- Generating Checksums ---\n');
-  const checksumFile = generateChecksums(files, platform);
-
-  console.log('\n--- Signing Files ---\n');
-  const signatures = [];
-
+  console.log('\nSigning artifacts...\n');
+  
+  const signatureFiles = [];
+  
   for (const file of files) {
-    const sig = signFile(file);
-    if (sig) signatures.push(sig);
+    const filePath = path.join(RELEASE_DIR, file);
+    const sigFile = signFile(filePath);
+    if (sigFile) signatureFiles.push(sigFile);
   }
 
   const checksumSig = signFile(checksumFile);
-  if (checksumSig) signatures.push(checksumSig);
+  if (checksumSig) signatureFiles.push(checksumSig);
 
-  if (GH_TOKEN) {
-    console.log('\n--- Uploading to GitHub ---\n');
+  const filesToUpload = [...signatureFiles, checksumFile];
 
-    await uploadToGitHub(checksumFile);
-
-    for (const sig of signatures) {
-      await uploadToGitHub(sig);
+  for (const file of files) {
+    const lowerFile = file.toLowerCase();
+    if (lowerFile.endsWith('.flatpak')) {
+      filesToUpload.push(path.join(RELEASE_DIR, file));
     }
-  } else {
-    console.log('\nSkipping GitHub upload (GH_TOKEN not configured)');
   }
 
-  console.log('\n=== Signing Complete ===\n');
+  if (GH_TOKEN) {
+    try {
+      const release = await getOrCreateRelease();
+      await uploadSignatures(release, filesToUpload);
+    } catch (error) {
+      console.error('\nERROR: GitHub upload failed:', error.message);
+    }
+  }
+
+  console.log('\n' + '='.repeat(60));
+  console.log('COMPLETE');
+  console.log('='.repeat(60));
+  console.log('\nGenerated files in release/:');
+  
+  const generatedFiles = fs.readdirSync(RELEASE_DIR)
+    .filter(f => f.endsWith('.asc') || f.startsWith('SHA256SUMS'));
+  generatedFiles.forEach(f => console.log('   • ' + f));
+  
+  if (!GH_TOKEN) {
+    console.log('\nTIP: To auto-upload, add GH_TOKEN to your .env file');
+  }
 }
 
-main().catch(error => {
-  console.error('Fatal error:', error);
-  process.exit(1);
-});
+main().catch(console.error);
