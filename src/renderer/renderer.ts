@@ -14,6 +14,7 @@ interface AppSettings {
   gpu: 'nvidia' | 'amd' | 'intel' | 'apple' | 'cpu';
   theme: 'system' | 'dark' | 'light';
   showDebugOutput: boolean;
+  autoCheckUpdates: boolean;
 }
 
 interface VideoInfo {
@@ -72,7 +73,6 @@ let lastOutputPath = '';
 const elements = {
   dropZone: document.getElementById('dropZone') as HTMLDivElement,
   fileInput: document.getElementById('fileInput') as HTMLInputElement,
-  browseBtn: document.getElementById('browseBtn') as HTMLButtonElement,
   fileInfo: document.getElementById('fileInfo') as HTMLDivElement,
   fileName: document.getElementById('fileName') as HTMLSpanElement,
   fileDetails: document.getElementById('fileDetails') as HTMLSpanElement,
@@ -82,6 +82,7 @@ const elements = {
   cancelBtn: document.getElementById('cancelBtn') as HTMLButtonElement,
   progressContainer: document.getElementById('progressContainer') as HTMLDivElement,
   progressFill: document.getElementById('progressFill') as HTMLDivElement,
+  progressGlow: document.getElementById('progressGlow') as HTMLDivElement,
   progressPercent: document.getElementById('progressPercent') as HTMLSpanElement,
   progressTime: document.getElementById('progressTime') as HTMLSpanElement,
   progressEta: document.getElementById('progressEta') as HTMLSpanElement,
@@ -94,8 +95,11 @@ const elements = {
   outputDirBtn: document.getElementById('outputDirBtn') as HTMLButtonElement,
   outputPath: document.getElementById('outputPath') as HTMLSpanElement,
   themeSelect: document.getElementById('themeSelect') as HTMLSelectElement,
+  themeSwitcher: document.getElementById('themeSwitcher') as HTMLDivElement,
   resetSettingsBtn: document.getElementById('resetSettingsBtn') as HTMLButtonElement,
   checkUpdateBtn: document.getElementById('checkUpdateBtn') as HTMLButtonElement,
+  updateBadge: document.getElementById('updateBadge') as HTMLSpanElement,
+  autoCheckUpdatesCheck: document.getElementById('autoCheckUpdatesCheck') as HTMLInputElement,
   versionInfo: document.getElementById('versionInfo') as HTMLSpanElement,
   ffmpegWarning: document.getElementById('ffmpegWarning') as HTMLDivElement,
   dynamicModal: document.getElementById('dynamicModal') as HTMLDivElement,
@@ -327,7 +331,8 @@ const loadSettings = async () => {
   elements.gpuSelect.value = settings.gpu;
   elements.themeSelect.value = settings.theme;
   elements.debugOutputCheck.checked = settings.showDebugOutput;
-  
+  elements.autoCheckUpdatesCheck.checked = settings.autoCheckUpdates;
+
   if (settings.showDebugOutput) {
     elements.showLogsBtn.style.display = 'inline-block';
   } else {
@@ -376,6 +381,16 @@ const loadVersion = async () => {
   elements.versionInfo.textContent = `CONV2 v${version}`;
 };
 
+const updateThemeSwitcher = () => {
+  const switcher = document.getElementById('themeSwitcher');
+  if (!switcher) return;
+
+  switcher.querySelectorAll('.theme-option').forEach((btn) => {
+    const btnTheme = (btn as HTMLElement).dataset.theme;
+    btn.classList.toggle('active', btnTheme === settings.theme);
+  });
+};
+
 const applyTheme = async () => {
   if (settings.theme === 'system') {
     const systemTheme = await window.electronAPI.getSystemTheme();
@@ -383,6 +398,8 @@ const applyTheme = async () => {
   } else {
     document.documentElement.setAttribute('data-theme', settings.theme);
   }
+
+  updateThemeSwitcher();
 
   window.electronAPI.onThemeChange((theme) => {
     if (settings.theme === 'system') {
@@ -445,8 +462,15 @@ document.getElementById('rosie-run')?.addEventListener('click', (e) => {
   window.electronAPI.openExternal('https://rosie.run');
 });
 
-  elements.dropZone.addEventListener('click', () => elements.fileInput.click());
-  elements.browseBtn.addEventListener('click', (e) => {
+  elements.dropZone.addEventListener('click', (e: MouseEvent) => {
+    const target = e.target as HTMLElement;
+    if (!target.closest('button')) {
+      elements.fileInput.click();
+    }
+  });
+
+  const browseBtn = elements.dropZone.querySelector('button');
+  browseBtn?.addEventListener('click', (e: MouseEvent) => {
     e.stopPropagation();
     elements.fileInput.click();
   });
@@ -485,12 +509,31 @@ document.getElementById('rosie-run')?.addEventListener('click', (e) => {
     settings.theme = elements.themeSelect.value as AppSettings['theme'];
     await window.electronAPI.saveSettings({ theme: settings.theme });
     await applyTheme();
+    updateThemeSwitcher();
+  });
+
+  elements.themeSwitcher?.querySelectorAll('.theme-option').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const theme = (btn as HTMLElement).dataset.theme as AppSettings['theme'];
+      if (theme) {
+        settings.theme = theme;
+        elements.themeSelect.value = theme;
+        await window.electronAPI.saveSettings({ theme });
+        await applyTheme();
+        updateThemeSwitcher();
+      }
+    });
   });
 
   elements.debugOutputCheck.addEventListener('change', async () => {
     settings.showDebugOutput = elements.debugOutputCheck.checked;
     await window.electronAPI.saveSettings({ showDebugOutput: settings.showDebugOutput });
     elements.showLogsBtn.style.display = settings.showDebugOutput ? 'inline-block' : 'none';
+  });
+
+  elements.autoCheckUpdatesCheck.addEventListener('change', async () => {
+    settings.autoCheckUpdates = elements.autoCheckUpdatesCheck.checked;
+    await window.electronAPI.saveSettings({ autoCheckUpdates: settings.autoCheckUpdates });
   });
 
   elements.convertBtn.addEventListener('click', () => {
@@ -549,10 +592,10 @@ document.getElementById('rosie-run')?.addEventListener('click', (e) => {
 
   elements.copyLogsBtn.addEventListener('click', () => {
     navigator.clipboard.writeText(elements.logsContent.textContent || '');
-    const originalText = elements.copyLogsBtn.textContent;
-    elements.copyLogsBtn.textContent = 'Copied!';
+    const originalHTML = elements.copyLogsBtn.innerHTML;
+    elements.copyLogsBtn.innerHTML = '<svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>Copied!';
     setTimeout(() => {
-      elements.copyLogsBtn.textContent = originalText;
+      elements.copyLogsBtn.innerHTML = originalHTML;
     }, 2000);
   });
 
@@ -595,23 +638,20 @@ document.getElementById('rosie-run')?.addEventListener('click', (e) => {
 
   elements.checkUpdateBtn.addEventListener('click', () => {
     window.electronAPI.checkForUpdates();
-    elements.checkUpdateBtn.textContent = 'Checking...';
+    const originalHTML = elements.checkUpdateBtn.innerHTML;
+    elements.checkUpdateBtn.innerHTML = '<svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>Checking...';
     elements.checkUpdateBtn.disabled = true;
     setTimeout(() => {
-      elements.checkUpdateBtn.textContent = 'Check for Updates';
+      elements.checkUpdateBtn.innerHTML = originalHTML;
       elements.checkUpdateBtn.disabled = false;
     }, 5000);
   });
 
   window.electronAPI.onConversionProgress((progress) => {
     elements.progressFill.style.width = `${progress.percent}%`;
-    elements.progressPercent.textContent = `${progress.percent.toFixed(1)}%`;
+    elements.progressGlow.style.width = `${progress.percent}%`;
+    elements.progressPercent.textContent = `${Math.floor(progress.percent)}%`;
     elements.progressTime.textContent = progress.time;
-    
-    // Update convert button; show progress
-    elements.convertBtn.textContent = `Converting... ${Math.floor(progress.percent)}%`;
-    elements.convertBtn.style.background = `linear-gradient(90deg, var(--primary-color) ${progress.percent}%, var(--bg-secondary) ${progress.percent}%)`;
-    elements.convertBtn.style.borderColor = 'var(--primary-color)';
 
     // Calculate ETA
     if (progress.percent > 0 && conversionStartTime > 0) {
@@ -640,9 +680,8 @@ document.getElementById('rosie-run')?.addEventListener('click', (e) => {
     isConverting = false;
     elements.progressContainer.classList.remove('visible');
     elements.convertBtn.disabled = false;
-    elements.convertBtn.textContent = 'Convert';
-    elements.convertBtn.style.background = '';
-    elements.convertBtn.style.borderColor = '';
+    elements.convertBtn.innerHTML = '<svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg>Convert';
+    elements.convertBtn.classList.remove('converting');
     elements.cancelBtn.style.display = 'none';
 
     if (result.success) {
@@ -663,12 +702,21 @@ document.getElementById('rosie-run')?.addEventListener('click', (e) => {
     isConverting = false;
     elements.progressContainer.classList.remove('visible');
     elements.convertBtn.disabled = false;
-    elements.convertBtn.textContent = 'Convert';
-    elements.convertBtn.style.background = '';
-    elements.convertBtn.style.borderColor = '';
+    elements.convertBtn.innerHTML = '<svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg>Convert';
+    elements.convertBtn.classList.remove('converting');
     elements.cancelBtn.style.display = 'none';
 
     showGPUErrorModal(error);
+  });
+
+  window.electronAPI.onUpdateAvailable((available: boolean) => {
+    if (available) {
+      elements.updateBadge.style.display = 'flex';
+      elements.checkUpdateBtn.innerHTML = '<svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>Update Available!';
+    } else {
+      elements.updateBadge.style.display = 'none';
+      elements.checkUpdateBtn.innerHTML = '<svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>Check for Updates';
+    }
   });
 };
 
@@ -774,11 +822,11 @@ const startConversion = async () => {
 
   isConverting = true;
   conversionStartTime = Date.now();
-  elements.convertBtn.textContent = 'Converting... 0%';
   elements.convertBtn.classList.add('converting');
   elements.cancelBtn.style.display = 'none';
   elements.progressContainer.classList.add('visible');
   elements.progressFill.style.width = '0%';
+  elements.progressGlow.style.width = '0%';
   elements.progressPercent.textContent = '0%';
   elements.progressTime.textContent = '00:00:00';
   elements.progressEta.textContent = '';
@@ -799,17 +847,20 @@ const cancelConversion = async () => {
   isConverting = false;
   elements.progressContainer.classList.remove('visible');
   elements.convertBtn.disabled = false;
-  elements.convertBtn.textContent = 'Convert';
+  elements.convertBtn.innerHTML = '<svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg>Convert';
   elements.convertBtn.classList.remove('converting');
-  elements.convertBtn.style.background = '';
-  elements.convertBtn.style.borderColor = '';
-  
+
   showStatus('warning', 'Conversion cancelled');
 };
 
 const showStatus = (type: 'success' | 'error' | 'warning', message: string) => {
   elements.statusMessage.className = `status-message visible ${type}`;
-  elements.statusMessage.textContent = message;
+  const textEl = elements.statusMessage.querySelector('.status-text');
+  if (textEl) {
+    textEl.textContent = message;
+  } else {
+    elements.statusMessage.textContent = message;
+  }
 };
 
 const hideStatus = () => {

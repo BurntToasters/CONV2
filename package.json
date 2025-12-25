@@ -15,7 +15,7 @@
   "main": "dist/main/main.js",
   "scripts": {
     "build": "tsc && npm run copy-assets",
-    "copy-assets": "node -e \"const fs=require('fs');const path=require('path');['index.html','main.css'].forEach(f=>fs.copyFileSync(path.join('src/renderer',f),path.join('dist/renderer',f)))\"",
+    "copy-assets": "node -e \"const fs=require('fs');const path=require('path');['index.html','main.css','extra.css'].forEach(f=>fs.copyFileSync(path.join('src/renderer',f),path.join('dist/renderer',f)))\"",
     "build:cleanup": "node -e \"const fs=require('fs');['release','dist'].forEach(d=>{if(fs.existsSync(d))fs.rmSync(d,{recursive:true})})\"",
     "watch": "tsc -w",
     "start": "npm run build && electron .",

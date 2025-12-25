@@ -14,6 +14,7 @@ export interface AppSettings {
   gpu: 'nvidia' | 'amd' | 'intel' | 'apple' | 'cpu';
   theme: 'system' | 'dark' | 'light';
   showDebugOutput: boolean;
+  autoCheckUpdates: boolean;
 }
 
 export interface VideoInfo {
@@ -75,6 +76,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   onUpdateProgress: (callback: (percent: number) => void): void => {
     ipcRenderer.on('update-download-progress', (_, percent) => callback(percent));
   },
+  onUpdateAvailable: (callback: (available: boolean) => void): void => {
+    ipcRenderer.on('update-available', (_, available) => callback(available));
+  },
 
   // FFmpeg check
   checkFFmpeg: (): Promise<boolean> => ipcRenderer.invoke('check-ffmpeg'),
@@ -119,6 +123,7 @@ declare global {
       checkForUpdates: () => Promise<void>;
       onUpdateStatus: (callback: (message: string) => void) => void;
       onUpdateProgress: (callback: (percent: number) => void) => void;
+      onUpdateAvailable: (callback: (available: boolean) => void) => void;
       checkFFmpeg: () => Promise<boolean>;
       getVersion: () => Promise<string>;
       getPlatform: () => Promise<string>;

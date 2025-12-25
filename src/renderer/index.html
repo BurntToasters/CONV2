@@ -17,6 +17,7 @@
       </div>
       <button class="settings-btn" id="settingsBtn" title="Settings (Ctrl+,)">
         <img src="../../assets/twemoji/2699.svg" alt="Settings">
+        <span class="update-badge" id="updateBadge" style="display: none;">1</span>
       </button>
     </header>
 
@@ -26,9 +27,19 @@
     </div>
 
     <div class="drop-zone" id="dropZone">
-      <img src="../../assets/twemoji/1f4c1.svg" alt="Folder">
-      <p>Drag and drop a video file here</p>
-      <button class="btn btn-secondary" id="browseBtn">Browse Files</button>
+      <div class="drop-zone-content">
+        <img src="../../assets/twemoji/1f3ac.svg" alt="Video" class="drop-zone-icon">
+        <p class="drop-zone-title">Drop your video here</p>
+        <p class="drop-zone-subtitle">or click to browse files</p>
+        <button class="btn btn-secondary">
+          <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+            <polyline points="17 8 12 3 7 8"/>
+            <line x1="12" y1="3" x2="12" y2="15"/>
+          </svg>
+          Browse Files
+        </button>
+      </div>
       <input type="file" id="fileInput" accept="video/*" hidden>
     </div>
 
@@ -57,17 +68,32 @@
     </div>
 
     <div class="convert-section">
-      <button class="btn btn-primary" id="convertBtn" disabled>Convert</button>
-      <button class="btn btn-secondary" id="cancelBtn" style="display: none;">Cancel</button>
+      <button class="btn btn-primary" id="convertBtn" disabled>
+        <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+          <polygon points="5 3 19 12 5 21 5 3"/>
+        </svg>
+        Convert
+      </button>
+      <button class="btn btn-secondary" id="cancelBtn" style="display: none;">
+        <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="12" cy="12" r="10"/>
+          <line x1="15" y1="9" x2="9" y2="15"/>
+          <line x1="9" y1="9" x2="15" y2="15"/>
+        </svg>
+        Cancel
+      </button>
     </div>
 
     <div class="progress-container" id="progressContainer">
-      <div class="progress-bar">
-        <div class="progress-fill" id="progressFill"></div>
+      <div class="progress-wrapper">
+        <div class="progress-bar">
+          <div class="progress-fill" id="progressFill"></div>
+        </div>
+        <div class="progress-glow" id="progressGlow"></div>
       </div>
       <div class="progress-info">
         <div class="progress-left">
-          <span id="progressPercent">0%</span>
+          <span class="progress-percent" id="progressPercent">0%</span>
           <span class="progress-separator">•</span>
           <span id="progressTime">00:00:00</span>
         </div>
@@ -79,17 +105,43 @@
     </div>
 
     <div class="status-row">
-      <div class="status-message" id="statusMessage"></div>
+      <div class="status-message" id="statusMessage">
+        <span class="status-icon"></span>
+        <span class="status-text"></span>
+      </div>
       <div class="status-actions">
-        <button class="btn btn-secondary btn-xs" id="showLogsBtn" style="display: none;">Show Logs</button>
-        <button class="btn btn-secondary btn-xs" id="showInFolderBtn" style="display: none;">Show in Folder</button>
+        <button class="btn btn-secondary btn-xs" id="showLogsBtn" style="display: none;">
+          <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+            <polyline points="14 2 14 8 20 8"/>
+            <line x1="16" y1="13" x2="8" y2="13"/>
+            <line x1="16" y1="17" x2="8" y2="17"/>
+          </svg>
+          Logs
+        </button>
+        <button class="btn btn-secondary btn-xs" id="showInFolderBtn" style="display: none;">
+          <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
+          </svg>
+          Show
+        </button>
       </div>
     </div>
 
     <div class="keyboard-hints">
-      <span>Ctrl+O Open</span>
-      <span>Enter Convert</span>
-      <span>Esc Close</span>
+      <span class="kbd">
+        <span class="kbd-key">Ctrl</span>
+        <span class="kbd-key">O</span>
+        <span class="kbd-action">Open</span>
+      </span>
+      <span class="kbd">
+        <span class="kbd-key">Enter</span>
+        <span class="kbd-action">Convert</span>
+      </span>
+      <span class="kbd">
+        <span class="kbd-key">Esc</span>
+        <span class="kbd-action">Close</span>
+      </span>
     </div>
   </div>
 
@@ -103,7 +155,21 @@
       <div class="settings-grid">
         <div class="setting-item">
           <label>Theme</label>
-          <select id="themeSelect">
+          <div class="theme-switcher" id="themeSwitcher">
+            <button class="theme-option" data-theme="system">
+              <span class="theme-option-icon">💻</span>
+              Auto
+            </button>
+            <button class="theme-option" data-theme="dark">
+              <span class="theme-option-icon">🌙</span>
+              Dark
+            </button>
+            <button class="theme-option" data-theme="light">
+              <span class="theme-option-icon">☀️</span>
+              Light
+            </button>
+          </div>
+          <select id="themeSelect" style="display: none;">
             <option value="system">System</option>
             <option value="dark">Dark</option>
             <option value="light">Light</option>
@@ -120,35 +186,65 @@
 
         <div class="setting-item">
           <label>Debug</label>
-          <div class="setting-control checkbox-control">
-            <input type="checkbox" id="debugOutputCheck">
-            <label for="debugOutputCheck">Show FFmpeg Output</label>
+          <div class="setting-control">
+            <label class="toggle-switch">
+              <input type="checkbox" id="debugOutputCheck">
+              <span class="toggle-slider"></span>
+            </label>
+            <span class="toggle-label">Show FFmpeg Output</span>
           </div>
         </div>
 
         <div class="setting-item">
           <label>Updates</label>
-          <button class="btn btn-secondary btn-xs full-width" id="checkUpdateBtn">Check for Updates</button>
+          <button class="btn btn-secondary btn-xs full-width" id="checkUpdateBtn">
+            <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <polyline points="23 4 23 10 17 10"/>
+              <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>
+            </svg>
+            Check for Updates
+          </button>
+          <div class="setting-control" style="margin-top: 12px;">
+            <label class="toggle-switch">
+              <input type="checkbox" id="autoCheckUpdatesCheck">
+              <span class="toggle-slider"></span>
+            </label>
+            <span class="toggle-label">Auto-check on Startup</span>
+          </div>
         </div>
 
         <div class="setting-item">
           <label>Credits & Licenses</label>
-          <button class="btn btn-secondary btn-xs full-width" id="viewCreditsBtn">View Credits</button>
+          <button class="btn btn-secondary btn-xs full-width" id="viewCreditsBtn">
+            <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="12" cy="12" r="10"/>
+              <line x1="12" y1="16" x2="12" y2="12"/>
+              <line x1="12" y1="8" x2="12.01" y2="8"/>
+            </svg>
+            View Credits
+          </button>
         </div>
 
         <div class="setting-item setting-danger">
           <label>Reset Settings</label>
-          <button class="btn btn-danger btn-xs full-width" id="resetSettingsBtn">Reset & Restart</button>
+          <button class="btn btn-danger btn-xs full-width" id="resetSettingsBtn">
+            <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <polyline points="1 4 1 10 7 10"/>
+              <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/>
+            </svg>
+            Reset & Restart
+          </button>
         </div>
       </div>
 
       <div class="version-info">
         <span id="versionInfo">CONV2 v0.0.1</span> <span class="about-divider">|</span>
-        <a href="#" id="support-link">❤️Support</a> <span class="about-divider">|</span>
+        <a href="#" id="support-link">Support</a> <span class="about-divider">|</span>
         <a href="#" id="help-link">Help</a> <span class="about-divider">|</span>
-        <a href="#" id="about-privacy">Privacy Policy</a>
-        <div><br></div>
-        <div>Made with ❤️ By: BurntToasters/<a href="#" id="rosie-run">Rosie.run</a></div>
+        <a href="#" id="about-privacy">Privacy</a>
+        <div style="margin-top: 8px;">
+          Made with ❤️ by BurntToasters/<a href="#" id="rosie-run">Rosie.run</a>
+        </div>
       </div>
     </div>
   </div>
@@ -195,8 +291,20 @@
         <pre id="logsContent"></pre>
       </div>
       <div class="modal-footer">
-        <button class="btn btn-secondary" id="clearLogsBtn">Clear</button>
-        <button class="btn btn-primary" id="copyLogsBtn">Copy</button>
+        <button class="btn btn-secondary btn-sm" id="clearLogsBtn">
+          <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="3 6 5 6 21 6"/>
+            <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+          </svg>
+          Clear
+        </button>
+        <button class="btn btn-primary btn-sm" id="copyLogsBtn">
+          <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
+            <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+          </svg>
+          Copy
+        </button>
       </div>
     </div>
   </div>

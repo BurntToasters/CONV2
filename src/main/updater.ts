@@ -4,6 +4,8 @@ import { execSync } from 'child_process';
 
 let mainWindow: BrowserWindow | null = null;
 let updatesDisabled = false;
+let updateAvailable = false;
+let silentCheck = false;
 
 const checkMsiInstallation = (): boolean => {
   if (process.platform !== 'win32') {
@@ -38,28 +40,43 @@ export const initUpdater = (window: BrowserWindow): void => {
   });
 
   autoUpdater.on('update-available', (info: UpdateInfo) => {
-    dialog.showMessageBox(mainWindow!, {
-      type: 'info',
-      title: 'Update Available',
-      message: `A new version (${info.version}) is available. Would you like to download it now?`,
-      buttons: ['Download', 'Later'],
-      defaultId: 0,
-    }).then((result) => {
-      if (result.response === 0) {
-        autoUpdater.downloadUpdate();
-        sendStatusToWindow('Downloading update...');
-      }
-    });
+    updateAvailable = true;
+    if (mainWindow) {
+      mainWindow.webContents.send('update-available', true);
+    }
+
+    if (!silentCheck) {
+      dialog.showMessageBox(mainWindow!, {
+        type: 'info',
+        title: 'Update Available',
+        message: `A new version (${info.version}) is available. Would you like to download it now?`,
+        buttons: ['Download', 'Later'],
+        defaultId: 0,
+      }).then((result) => {
+        if (result.response === 0) {
+          autoUpdater.downloadUpdate();
+          sendStatusToWindow('Downloading update...');
+        }
+      });
+    }
+    silentCheck = false;
   });
 
   autoUpdater.on('update-not-available', () => {
-    sendStatusToWindow('You have the latest version.');
-    dialog.showMessageBox(mainWindow!, {
-      type: 'info',
-      title: 'No Updates',
-      message: 'You are already running the latest version of CONV2.',
-      buttons: ['OK'],
-    });
+    if (mainWindow) {
+      mainWindow.webContents.send('update-available', false);
+    }
+
+    if (!silentCheck) {
+      sendStatusToWindow('You have the latest version.');
+      dialog.showMessageBox(mainWindow!, {
+        type: 'info',
+        title: 'No Updates',
+        message: 'You are already running the latest version of CONV2.',
+        buttons: ['OK'],
+      });
+    }
+    silentCheck = false;
   });
 
   autoUpdater.on('error', (err) => {
@@ -114,6 +131,17 @@ export const checkForUpdates = (): void => {
 
 export const isUpdateDisabled = (): boolean => {
   return updatesDisabled;
+};
+
+export const checkForUpdatesSilent = (): void => {
+  if (updatesDisabled) {
+    return;
+  }
+
+  silentCheck = true;
+  autoUpdater.checkForUpdates().catch(() => {
+    silentCheck = false;
+  });
 };
 
 const sendStatusToWindow = (message: string): void => {

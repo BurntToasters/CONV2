@@ -10,7 +10,7 @@ import {
   checkGPUEncoderSupport,
   parseGPUError,
 } from './ffmpeg';
-import { initUpdater, checkForUpdates } from './updater';
+import { initUpdater, checkForUpdates, checkForUpdatesSilent } from './updater';
 
 if (process.platform === 'darwin') {
   const commonPaths = [
@@ -41,6 +41,7 @@ interface AppSettings {
   gpu: GPUVendor;
   theme: 'system' | 'dark' | 'light';
   showDebugOutput: boolean;
+  autoCheckUpdates: boolean;
 }
 
 const defaultSettings: AppSettings = {
@@ -48,6 +49,7 @@ const defaultSettings: AppSettings = {
   gpu: 'cpu',
   theme: 'system',
   showDebugOutput: false,
+  autoCheckUpdates: true,
 };
 
 let mainWindow: BrowserWindow | null = null;
@@ -100,7 +102,7 @@ const createWindow = (): void => {
 
   mainWindow = new BrowserWindow({
     width: 900,
-    height: 900,
+    height: 840,
     minWidth: 600,
     minHeight: 500,
     webPreferences: {
@@ -116,6 +118,13 @@ const createWindow = (): void => {
 
   mainWindow.once('ready-to-show', () => {
     mainWindow?.show();
+
+    // Auto-check for updates if enabled and app is packaged
+    if (app.isPackaged && settings.autoCheckUpdates) {
+      setTimeout(() => {
+        checkForUpdatesSilent();
+      }, 3000);
+    }
   });
 
   mainWindow.on('closed', () => {
