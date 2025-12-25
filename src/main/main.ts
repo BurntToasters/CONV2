@@ -5,6 +5,27 @@ import { presets, getPresetById, GPUVendor } from './presets';
 import { convertVideo, cancelConversion, checkFFmpegInstalled, getVideoInfo } from './ffmpeg';
 import { initUpdater, checkForUpdates } from './updater';
 
+if (process.platform === 'darwin') {
+  const commonPaths = [
+    '/usr/local/bin',
+    '/opt/homebrew/bin',
+    '/usr/bin',
+    '/bin',
+    '/usr/sbin',
+    '/sbin'
+  ];
+
+  const currentPath = process.env.PATH || '';
+  const newPath = commonPaths.reduce((acc, p) => {
+    if (!acc.includes(p)) {
+      return `${acc}:${p}`;
+    }
+    return acc;
+  }, currentPath);
+
+  process.env.PATH = newPath;
+}
+
 let isConversionActive = false;
 let lastOutputPath = '';
 
@@ -12,12 +33,14 @@ interface AppSettings {
   outputDirectory: string;
   gpu: GPUVendor;
   theme: 'system' | 'dark' | 'light';
+  showDebugOutput: boolean;
 }
 
 const defaultSettings: AppSettings = {
   outputDirectory: '',
   gpu: 'cpu',
   theme: 'system',
+  showDebugOutput: false,
 };
 
 let mainWindow: BrowserWindow | null = null;
@@ -175,7 +198,10 @@ ipcMain.handle('start-conversion', async (_, inputPath: string, presetId: string
     settings.gpu,
     (progress) => {
       mainWindow?.webContents.send('conversion-progress', progress);
-    }
+    },
+    settings.showDebugOutput ? (message) => {
+      mainWindow?.webContents.send('conversion-log', message);
+    } : undefined
   );
 
   isConversionActive = false;
@@ -229,6 +255,10 @@ ipcMain.handle('check-ffmpeg', async () => {
 
 ipcMain.handle('get-version', () => {
   return app.getVersion();
+});
+
+ipcMain.handle('get-platform', () => {
+  return process.platform;
 });
 
 ipcMain.handle('open-path', async (_, filePath: string) => {

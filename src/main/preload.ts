@@ -11,8 +11,9 @@ export interface ConversionProgress {
 
 export interface AppSettings {
   outputDirectory: string;
-  gpu: 'nvidia' | 'amd' | 'intel' | 'cpu';
+  gpu: 'nvidia' | 'amd' | 'intel' | 'apple' | 'cpu';
   theme: 'system' | 'dark' | 'light';
+  showDebugOutput: boolean;
 }
 
 export interface VideoInfo {
@@ -36,6 +37,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   cancelConversion: (): Promise<void> => ipcRenderer.invoke('cancel-conversion'),
   onConversionProgress: (callback: (progress: ConversionProgress) => void): void => {
     ipcRenderer.on('conversion-progress', (_, progress) => callback(progress));
+  },
+  onConversionLog: (callback: (message: string) => void): void => {
+    ipcRenderer.on('conversion-log', (_, message) => callback(message));
   },
   onConversionComplete: (callback: (result: { success: boolean; outputPath: string; error?: string }) => void): void => {
     ipcRenderer.on('conversion-complete', (_, result) => callback(result));
@@ -64,6 +68,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   // App info
   getVersion: (): Promise<string> => ipcRenderer.invoke('get-version'),
+  getPlatform: (): Promise<string> => ipcRenderer.invoke('get-platform'),
 
   // Open external
   openPath: (path: string): Promise<void> => ipcRenderer.invoke('open-path', path),
@@ -92,6 +97,7 @@ declare global {
       startConversion: (inputPath: string, presetId: string) => Promise<void>;
       cancelConversion: () => Promise<void>;
       onConversionProgress: (callback: (progress: ConversionProgress) => void) => void;
+      onConversionLog: (callback: (message: string) => void) => void;
       onConversionComplete: (callback: (result: { success: boolean; outputPath: string; error?: string }) => void) => void;
       getPresets: () => Promise<Array<{ id: string; name: string; description: string; category: string }>>;
       getSettings: () => Promise<AppSettings>;
@@ -101,6 +107,7 @@ declare global {
       onUpdateProgress: (callback: (percent: number) => void) => void;
       checkFFmpeg: () => Promise<boolean>;
       getVersion: () => Promise<string>;
+      getPlatform: () => Promise<string>;
       openPath: (path: string) => Promise<void>;
       openExternal: (url: string) => Promise<void>;
       getSystemTheme: () => Promise<'dark' | 'light'>;
