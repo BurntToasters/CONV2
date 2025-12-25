@@ -2,7 +2,14 @@ import { app, BrowserWindow, ipcMain, dialog, nativeTheme, shell, Menu } from 'e
 import * as path from 'path';
 import * as fs from 'fs';
 import { presets, getPresetById, GPUVendor } from './presets';
-import { convertVideo, cancelConversion, checkFFmpegInstalled, getVideoInfo } from './ffmpeg';
+import {
+  convertVideo,
+  cancelConversion,
+  checkFFmpegInstalled,
+  getVideoInfo,
+  checkGPUEncoderSupport,
+  parseGPUError,
+} from './ffmpeg';
 import { initUpdater, checkForUpdates } from './updater';
 
 if (process.platform === 'darwin') {
@@ -188,6 +195,18 @@ ipcMain.handle('start-conversion', async (_, inputPath: string, presetId: string
     return;
   }
 
+  const codecCategory = preset.category;
+  const isVideoPreset = ['av1', 'h264', 'h265'].includes(codecCategory);
+
+  if (isVideoPreset && settings.gpu !== 'cpu') {
+    const codec = codecCategory as 'av1' | 'h264' | 'h265';
+    const encoderCheck = await checkGPUEncoderSupport(settings.gpu, codec);
+    if (!encoderCheck.available && encoderCheck.error) {
+      mainWindow?.webContents.send('gpu-encoder-error', encoderCheck.error);
+      return;
+    }
+  }
+
   const outputDir = settings.outputDirectory || path.dirname(inputPath);
   isConversionActive = true;
 
@@ -206,6 +225,16 @@ ipcMain.handle('start-conversion', async (_, inputPath: string, presetId: string
 
   isConversionActive = false;
   lastOutputPath = result.outputPath;
+
+  if (!result.success && result.error && settings.gpu !== 'cpu' && isVideoPreset) {
+    const codec = codecCategory as 'av1' | 'h264' | 'h265';
+    const gpuError = parseGPUError(result.error, settings.gpu, codec);
+    if (gpuError) {
+      mainWindow?.webContents.send('gpu-encoder-error', gpuError);
+      return;
+    }
+  }
+
   mainWindow?.webContents.send('conversion-complete', result);
 });
 

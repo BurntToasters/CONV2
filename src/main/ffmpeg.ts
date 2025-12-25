@@ -3,6 +3,55 @@ import * as path from 'path';
 import * as fs from 'fs';
 import { GPUVendor, Preset } from './presets';
 
+export const GPU_ENCODERS: Record<string, Record<GPUVendor, string>> = {
+  h264: {
+    nvidia: 'h264_nvenc',
+    amd: 'h264_amf',
+    intel: 'h264_qsv',
+    apple: 'h264_videotoolbox',
+    cpu: 'libx264',
+  },
+  h265: {
+    nvidia: 'hevc_nvenc',
+    amd: 'hevc_amf',
+    intel: 'hevc_qsv',
+    apple: 'hevc_videotoolbox',
+    cpu: 'libx265',
+  },
+  av1: {
+    nvidia: 'av1_nvenc',
+    amd: 'av1_amf',
+    intel: 'av1_qsv',
+    apple: 'libsvtav1',
+    cpu: 'libsvtav1',
+  },
+};
+
+// Human-readable
+const GPU_NAMES: Record<GPUVendor, string> = {
+  nvidia: 'NVIDIA',
+  amd: 'AMD',
+  intel: 'Intel',
+  apple: 'Apple',
+  cpu: 'CPU',
+};
+
+const CODEC_NAMES: Record<string, string> = {
+  h264: 'H.264',
+  h265: 'H.265/HEVC',
+  av1: 'AV1',
+};
+
+export interface GPUEncoderError {
+  type: 'encoder_unavailable' | 'gpu_capability' | 'driver_error' | 'unknown';
+  message: string;
+  details: string;
+  suggestion: string;
+  canRetryWithCPU: boolean;
+  codec?: string;
+  gpu?: GPUVendor;
+}
+
 export interface ConversionProgress {
   percent: number;
   frame: number;
@@ -40,6 +89,217 @@ export const checkFFmpegInstalled = async (): Promise<boolean> => {
       resolve(false);
     });
   });
+};
+
+let encoderCache: Set<string> | null = null;
+
+export const getAvailableEncoders = async (): Promise<Set<string>> => {
+  if (encoderCache) {
+    return encoderCache;
+  }
+
+  return new Promise((resolve) => {
+    const process = spawn('ffmpeg', ['-encoders', '-hide_banner'], { shell: true });
+    let output = '';
+
+    process.stdout?.on('data', (data) => {
+      output += data.toString();
+    });
+
+    process.on('close', () => {
+      const encoders = new Set<string>();
+      const lines = output.split('\n');
+      for (const line of lines) {
+        const match = line.match(/^\s*[VASFXBD.]+\s+(\S+)/);
+        if (match && match[1]) {
+          encoders.add(match[1]);
+        }
+      }
+      encoderCache = encoders;
+      resolve(encoders);
+    });
+
+    process.on('error', () => {
+      resolve(new Set());
+    });
+  });
+};
+
+export const checkEncoderAvailable = async (encoder: string): Promise<boolean> => {
+  const encoders = await getAvailableEncoders();
+  return encoders.has(encoder);
+};
+
+export const checkGPUEncoderSupport = async (
+  gpu: GPUVendor,
+  codec: 'h264' | 'h265' | 'av1'
+): Promise<{ available: boolean; encoder: string; error?: GPUEncoderError }> => {
+  if (gpu === 'cpu') {
+    return { available: true, encoder: GPU_ENCODERS[codec].cpu };
+  }
+
+  const encoder = GPU_ENCODERS[codec]?.[gpu];
+  if (!encoder) {
+    return {
+      available: false,
+      encoder: '',
+      error: {
+        type: 'encoder_unavailable',
+        message: `No ${CODEC_NAMES[codec]} encoder for ${GPU_NAMES[gpu]}`,
+        details: `The selected GPU vendor does not have a ${codec} encoder configured.`,
+        suggestion: 'Try using CPU encoding instead.',
+        canRetryWithCPU: true,
+        codec,
+        gpu,
+      },
+    };
+  }
+
+  const available = await checkEncoderAvailable(encoder);
+  if (!available) {
+    return {
+      available: false,
+      encoder,
+      error: {
+        type: 'encoder_unavailable',
+        message: `${GPU_NAMES[gpu]} ${CODEC_NAMES[codec]} encoder not available`,
+        details: `The encoder "${encoder}" was not found in your FFmpeg installation. This could mean:\n• Your GPU drivers don't support this codec\n• FFmpeg wasn't compiled with ${GPU_NAMES[gpu]} support\n• The required libraries are missing`,
+        suggestion: gpu === 'nvidia' && codec === 'av1'
+          ? 'AV1 encoding requires an RTX 40-series GPU or newer. Try H.264 or H.265 instead, or use CPU encoding.'
+          : `Try using CPU encoding, or ensure your ${GPU_NAMES[gpu]} drivers are up to date.`,
+        canRetryWithCPU: true,
+        codec,
+        gpu,
+      },
+    };
+  }
+
+  return { available: true, encoder };
+};
+
+export const parseGPUError = (errorOutput: string, gpu: GPUVendor, codec?: string): GPUEncoderError | null => {
+  const gpuName = GPU_NAMES[gpu];
+  const codecName = codec ? CODEC_NAMES[codec] || codec : 'video';
+
+  // NVIDIA specific errors
+  if (gpu === 'nvidia') {
+    if (errorOutput.includes('No capable devices found') ||
+        errorOutput.includes('Cannot load nvEncodeAPI') ||
+        errorOutput.includes('nvEncodeAPICreateInstance failed')) {
+      return {
+        type: 'gpu_capability',
+        message: `${gpuName} encoder initialization failed`,
+        details: 'FFmpeg could not initialize the NVIDIA encoder. This usually means:\n• Your GPU doesn\'t support hardware encoding\n• NVIDIA drivers are not installed or outdated\n• Another application is using the encoder',
+        suggestion: 'Update your NVIDIA drivers or try CPU encoding.',
+        canRetryWithCPU: true,
+        codec,
+        gpu,
+      };
+    }
+    if (errorOutput.includes('not capable') || errorOutput.includes('unsupported')) {
+      return {
+        type: 'gpu_capability',
+        message: `Your ${gpuName} GPU doesn't support ${codecName} encoding`,
+        details: codec === 'av1'
+          ? 'AV1 hardware encoding requires an RTX 40-series (Ada Lovelace) GPU or newer.'
+          : `Your GPU model doesn't support hardware ${codecName} encoding.`,
+        suggestion: codec === 'av1'
+          ? 'Use H.264 or H.265 for hardware encoding, or switch to CPU for AV1.'
+          : 'Try using CPU encoding instead.',
+        canRetryWithCPU: true,
+        codec,
+        gpu,
+      };
+    }
+  }
+
+  // AMD specific errors
+  if (gpu === 'amd') {
+    if (errorOutput.includes('AMF') && (errorOutput.includes('failed') || errorOutput.includes('error'))) {
+      return {
+        type: 'gpu_capability',
+        message: `${gpuName} encoder initialization failed`,
+        details: 'FFmpeg could not initialize the AMD AMF encoder. This usually means:\n• Your GPU doesn\'t support AMF encoding\n• AMD drivers are not installed or outdated',
+        suggestion: 'Update your AMD drivers or try CPU encoding.',
+        canRetryWithCPU: true,
+        codec,
+        gpu,
+      };
+    }
+    if (errorOutput.includes('not supported') || errorOutput.includes('unsupported')) {
+      return {
+        type: 'gpu_capability',
+        message: `Your ${gpuName} GPU doesn't support ${codecName} encoding`,
+        details: codec === 'av1'
+          ? 'AV1 hardware encoding requires an RX 7000 series (RDNA 3) GPU or newer.'
+          : `Your GPU model doesn't support hardware ${codecName} encoding.`,
+        suggestion: codec === 'av1'
+          ? 'Use H.264 or H.265 for hardware encoding, or switch to CPU for AV1.'
+          : 'Try using CPU encoding instead.',
+        canRetryWithCPU: true,
+        codec,
+        gpu,
+      };
+    }
+  }
+
+  // Intel specific errors
+  if (gpu === 'intel') {
+    if (errorOutput.includes('QSV') && (errorOutput.includes('failed') || errorOutput.includes('error') || errorOutput.includes('not found'))) {
+      return {
+        type: 'gpu_capability',
+        message: `${gpuName} Quick Sync encoder not available`,
+        details: 'FFmpeg could not initialize Intel Quick Sync Video. This usually means:\n• Your CPU/GPU doesn\'t support Quick Sync\n• Intel graphics drivers are not installed\n• Quick Sync is disabled in BIOS',
+        suggestion: 'Ensure Intel graphics drivers are installed and Quick Sync is enabled in BIOS, or try CPU encoding.',
+        canRetryWithCPU: true,
+        codec,
+        gpu,
+      };
+    }
+  }
+
+  // Apple specific errors
+  if (gpu === 'apple') {
+    if (errorOutput.includes('videotoolbox') && (errorOutput.includes('failed') || errorOutput.includes('error'))) {
+      return {
+        type: 'gpu_capability',
+        message: 'VideoToolbox encoder not available',
+        details: 'FFmpeg could not initialize Apple VideoToolbox. This usually means:\n• Your Mac doesn\'t support hardware encoding for this codec\n• macOS version doesn\'t support this encoder',
+        suggestion: 'Try using CPU encoding instead.',
+        canRetryWithCPU: true,
+        codec,
+        gpu,
+      };
+    }
+  }
+
+  // Generic encoder errors
+  if (errorOutput.includes('Encoder') && errorOutput.includes('not found')) {
+    return {
+      type: 'encoder_unavailable',
+      message: `${codecName} encoder not found`,
+      details: 'The selected encoder is not available in your FFmpeg installation.',
+      suggestion: 'Try using CPU encoding instead.',
+      canRetryWithCPU: true,
+      codec,
+      gpu,
+    };
+  }
+
+  // DLL/library loading errors
+  if (errorOutput.includes('DLL') || errorOutput.includes('LoadLibrary')) {
+    return {
+      type: 'driver_error',
+      message: 'GPU driver or library error',
+      details: 'A required library failed to load. This usually indicates a driver issue.',
+      suggestion: 'Update your GPU drivers and restart your computer.',
+      canRetryWithCPU: true,
+      codec,
+      gpu,
+    };
+  }
+
+  return null;
 };
 
 export const getVideoInfo = async (inputPath: string): Promise<VideoInfo> => {

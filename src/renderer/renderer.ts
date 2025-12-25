@@ -35,6 +35,16 @@ interface ModalOptions {
   onCancel?: () => void;
 }
 
+interface GPUEncoderError {
+  type: 'encoder_unavailable' | 'gpu_capability' | 'driver_error' | 'unknown';
+  message: string;
+  details: string;
+  suggestion: string;
+  canRetryWithCPU: boolean;
+  codec?: string;
+  gpu?: 'nvidia' | 'amd' | 'intel' | 'apple' | 'cpu';
+}
+
 interface LicenseCrawlerEntry {
   licenses: string | string[];
   repository?: string;
@@ -628,6 +638,84 @@ const setupEventListeners = () => {
       elements.showInFolderBtn.style.display = 'none';
     }
   });
+
+  window.electronAPI.onGPUEncoderError((error: GPUEncoderError) => {
+    isConverting = false;
+    elements.progressContainer.classList.remove('visible');
+    elements.convertBtn.disabled = false;
+    elements.convertBtn.textContent = 'Convert';
+    elements.convertBtn.style.background = '';
+    elements.convertBtn.style.borderColor = '';
+    elements.cancelBtn.style.display = 'none';
+
+    showGPUErrorModal(error);
+  });
+};
+
+const showGPUErrorModal = (error: GPUEncoderError): void => {
+  const modal = elements.dynamicModal;
+  const titleEl = modal.querySelector('.modal-header h2') as HTMLElement;
+  const bodyEl = modal.querySelector('.modal-body p') as HTMLElement;
+  const confirmBtn = modal.querySelector('#modalConfirm') as HTMLButtonElement;
+  const cancelBtn = modal.querySelector('#modalCancel') as HTMLButtonElement;
+
+  titleEl.textContent = 'GPU Encoding Error';
+
+  bodyEl.innerHTML = `
+    <strong style="color: var(--danger-color);">${error.message}</strong>
+    <div style="margin-top: 12px; white-space: pre-line; opacity: 0.85; font-size: 0.9em;">${error.details}</div>
+    <div style="margin-top: 12px; padding: 8px 12px; background: var(--bg-tertiary); border-radius: 6px; font-size: 0.9em;">
+      <strong>Suggestion:</strong> ${error.suggestion}
+    </div>
+  `;
+
+  if (error.canRetryWithCPU) {
+    confirmBtn.textContent = 'Retry with CPU';
+    cancelBtn.textContent = 'Cancel';
+    confirmBtn.className = 'btn btn-sm btn-primary';
+  } else {
+    confirmBtn.textContent = 'OK';
+    cancelBtn.style.display = 'none';
+    confirmBtn.className = 'btn btn-sm btn-primary';
+  }
+
+  const cleanup = () => {
+    modal.classList.remove('visible');
+    cancelBtn.style.display = '';
+    bodyEl.innerHTML = '';
+    confirmBtn.replaceWith(confirmBtn.cloneNode(true));
+    cancelBtn.replaceWith(cancelBtn.cloneNode(true));
+  };
+
+  const newConfirmBtn = modal.querySelector('#modalConfirm') as HTMLButtonElement;
+  const newCancelBtn = modal.querySelector('#modalCancel') as HTMLButtonElement;
+
+  newConfirmBtn.addEventListener('click', async () => {
+    cleanup();
+    if (error.canRetryWithCPU) {
+      settings.gpu = 'cpu';
+      elements.gpuSelect.value = 'cpu';
+      await window.electronAPI.saveSettings({ gpu: 'cpu' });
+      showStatus('warning', 'Switched to CPU encoding');
+      if (selectedFile) {
+        startConversion();
+      }
+    }
+  });
+
+  newCancelBtn.addEventListener('click', () => {
+    cleanup();
+    showStatus('error', error.message);
+  });
+
+  modal.addEventListener('click', (e) => {
+    if (e.target === modal) {
+      cleanup();
+      showStatus('error', error.message);
+    }
+  }, { once: true });
+
+  modal.classList.add('visible');
 };
 
 const handleFileSelect = async (filePath: string) => {

@@ -25,6 +25,16 @@ export interface VideoInfo {
   format: string;
 }
 
+export interface GPUEncoderError {
+  type: 'encoder_unavailable' | 'gpu_capability' | 'driver_error' | 'unknown';
+  message: string;
+  details: string;
+  suggestion: string;
+  canRetryWithCPU: boolean;
+  codec?: string;
+  gpu?: 'nvidia' | 'amd' | 'intel' | 'apple' | 'cpu';
+}
+
 contextBridge.exposeInMainWorld('electronAPI', {
   // File operations
   selectFile: (): Promise<string | null> => ipcRenderer.invoke('select-file'),
@@ -43,6 +53,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
   onConversionComplete: (callback: (result: { success: boolean; outputPath: string; error?: string }) => void): void => {
     ipcRenderer.on('conversion-complete', (_, result) => callback(result));
+  },
+  onGPUEncoderError: (callback: (error: GPUEncoderError) => void): void => {
+    ipcRenderer.on('gpu-encoder-error', (_, error) => callback(error));
   },
 
   // Presets
@@ -99,6 +112,7 @@ declare global {
       onConversionProgress: (callback: (progress: ConversionProgress) => void) => void;
       onConversionLog: (callback: (message: string) => void) => void;
       onConversionComplete: (callback: (result: { success: boolean; outputPath: string; error?: string }) => void) => void;
+      onGPUEncoderError: (callback: (error: GPUEncoderError) => void) => void;
       getPresets: () => Promise<Array<{ id: string; name: string; description: string; category: string }>>;
       getSettings: () => Promise<AppSettings>;
       saveSettings: (settings: Partial<AppSettings>) => Promise<void>;
