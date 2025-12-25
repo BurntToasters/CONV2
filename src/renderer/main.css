@@ -8,6 +8,7 @@
   --text-secondary: #888888;
   --text-muted: #555555;
   --accent: #7c3aed;
+  --link: #f1acff;
   --accent-hover: #8b5cf6;
   --accent-glow: rgba(124, 58, 237, 0.3);
   --success: #10b981;
@@ -32,6 +33,7 @@
   --bg-secondary: #ffffff;
   --bg-tertiary: #f0f0f0;
   --bg-elevated: #ffffff;
+  --link: #b75dc9;
   --bg-glass: rgba(0, 0, 0, 0.02);
   --text-primary: #111111;
   --text-secondary: #666666;
@@ -52,6 +54,16 @@ html {
   height: 100%;
 }
 
+.about-divider {
+  color: var(--text-primary);
+  font-weight: bold;
+}
+
+a {
+  color: var(--link);
+  text-decoration: none;
+  transition: var(--transition);
+}
 body {
   font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   background: var(--bg-primary);
@@ -714,11 +726,15 @@ select:focus {
 
 .version-info {
   text-align: center;
-  color: var(--text-muted);
+  color: var(--text-primary);
   font-size: 11px;
   margin-top: 16px;
   padding-top: 14px;
   border-top: 1px solid var(--border);
+}
+
+.version-info br {
+  display: none;
 }
 
 #dynamicModal .modal {

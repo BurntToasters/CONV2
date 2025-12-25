@@ -425,6 +425,26 @@ const setupKeyboardShortcuts = () => {
 };
 
 const setupEventListeners = () => {
+document.getElementById('support-link')?.addEventListener('click', (e) => {
+  e.preventDefault();
+  window.electronAPI.openExternal('https://rosie.run/support');
+});
+
+document.getElementById('help-link')?.addEventListener('click', (e) => {
+  e.preventDefault();
+  window.electronAPI.openExternal('https://help.rosie.run/conv2/en-us/faq');
+});
+
+document.getElementById('about-privacy')?.addEventListener('click', (e) => {
+  e.preventDefault();
+  window.electronAPI.openExternal('https://help.rosie.run/conv2/en-us/privacy-policy');
+});
+
+document.getElementById('rosie-run')?.addEventListener('click', (e) => {
+  e.preventDefault();
+  window.electronAPI.openExternal('https://rosie.run');
+});
+
   elements.dropZone.addEventListener('click', () => elements.fileInput.click());
   elements.browseBtn.addEventListener('click', (e) => {
     e.stopPropagation();
