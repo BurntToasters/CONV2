@@ -166,7 +166,7 @@
           ]
         }
       ],
-      "icon": "assets/icon-mac.png",
+      "icon": "assets/conv2.icns",
       "artifactName": "${productName}-macOS-${arch}.${ext}",
       "category": "public.app-category.video",
       "hardenedRuntime": true,
