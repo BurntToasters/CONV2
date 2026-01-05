@@ -1,6 +1,6 @@
 {
   "name": "conv2",
-  "version": "0.0.1",
+  "version": "1.0.0",
   "description": "A cross platform FFMPEG GUI front-end making it easy for quick video conversion!",
   "homepage": "https://github.com/BurntToasters/CONV2#readme",
   "bugs": {
@@ -59,7 +59,8 @@
     "release:beta:linux": "npm run patch:beta && cross-env IS_BETA=true npm run release:linux && npm run restore:release",
     "sign:gpg": "node build/gpg-sign.js",
     "licenses": "npm run licenses:prod",
-    "licenses:prod": "npx npm-license-crawler --production --json licenses.json"
+    "licenses:prod": "npx npm-license-crawler --production --json licenses.json",
+    "tests": "npm run build && node --test tests/*.test.js"
   },
   "devDependencies": {
     "@electron/notarize": "^3.0.0",

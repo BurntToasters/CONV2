@@ -70,6 +70,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   // Updates
   checkForUpdates: (): Promise<void> => ipcRenderer.invoke('check-for-updates'),
+  isUpdatesDisabled: (): Promise<boolean> => ipcRenderer.invoke('is-updates-disabled'),
   onUpdateStatus: (callback: (message: string) => void): void => {
     ipcRenderer.on('update-status', (_, message) => callback(message));
   },
@@ -121,6 +122,7 @@ declare global {
       getSettings: () => Promise<AppSettings>;
       saveSettings: (settings: Partial<AppSettings>) => Promise<void>;
       checkForUpdates: () => Promise<void>;
+      isUpdatesDisabled: () => Promise<boolean>;
       onUpdateStatus: (callback: (message: string) => void) => void;
       onUpdateProgress: (callback: (percent: number) => void) => void;
       onUpdateAvailable: (callback: (available: boolean) => void) => void;

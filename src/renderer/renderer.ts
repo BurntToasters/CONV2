@@ -69,6 +69,7 @@ let settings: AppSettings;
 let presets: Preset[] = [];
 let conversionStartTime = 0;
 let lastOutputPath = '';
+let themeListenerRegistered = false;
 
 const elements = {
   dropZone: document.getElementById('dropZone') as HTMLDivElement,
@@ -298,6 +299,7 @@ const init = async () => {
   await loadPresets();
   await loadVersion();
   await applyTheme();
+  await applyUpdateVisibility();
   setupEventListeners();
   setupKeyboardShortcuts();
 };
@@ -381,6 +383,14 @@ const loadVersion = async () => {
   elements.versionInfo.textContent = `CONV2 v${version}`;
 };
 
+const applyUpdateVisibility = async () => {
+  const updatesDisabled = await window.electronAPI.isUpdatesDisabled();
+  if (updatesDisabled) {
+    elements.checkUpdateBtn.style.display = 'none';
+    elements.updateBadge.style.display = 'none';
+  }
+};
+
 const updateThemeSwitcher = () => {
   const switcher = document.getElementById('themeSwitcher');
   if (!switcher) return;
@@ -401,11 +411,14 @@ const applyTheme = async () => {
 
   updateThemeSwitcher();
 
-  window.electronAPI.onThemeChange((theme) => {
-    if (settings.theme === 'system') {
-      document.documentElement.setAttribute('data-theme', theme);
-    }
-  });
+  if (!themeListenerRegistered) {
+    window.electronAPI.onThemeChange((theme) => {
+      if (settings.theme === 'system') {
+        document.documentElement.setAttribute('data-theme', theme);
+      }
+    });
+    themeListenerRegistered = true;
+  }
 };
 
 const setupKeyboardShortcuts = () => {

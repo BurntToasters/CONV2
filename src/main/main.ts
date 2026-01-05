@@ -10,7 +10,7 @@ import {
   checkGPUEncoderSupport,
   parseGPUError,
 } from './ffmpeg';
-import { initUpdater, checkForUpdates, checkForUpdatesSilent } from './updater';
+import { initUpdater, checkForUpdates, checkForUpdatesSilent, isUpdateDisabled } from './updater';
 
 if (process.platform === 'darwin') {
   const commonPaths = [
@@ -285,6 +285,10 @@ ipcMain.handle('save-settings', (_, newSettings: Partial<AppSettings>) => {
 
 ipcMain.handle('check-for-updates', () => {
   checkForUpdates();
+});
+
+ipcMain.handle('is-updates-disabled', () => {
+  return isUpdateDisabled();
 });
 
 ipcMain.handle('check-ffmpeg', async () => {
