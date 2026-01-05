@@ -77,11 +77,12 @@ export interface VideoInfo {
 }
 
 let currentProcess: ChildProcess | null = null;
-let currentOutputPath: string | null = null;
+const outputPathByProcess = new Map<ChildProcess, string>();
+const canceledProcesses = new Set<ChildProcess>();
 
 export const checkFFmpegInstalled = async (): Promise<boolean> => {
   return new Promise((resolve) => {
-    const process = spawn('ffmpeg', ['-version'], { shell: true });
+    const process = spawn('ffmpeg', ['-version']);
     process.on('close', (code) => {
       resolve(code === 0);
     });
@@ -99,7 +100,7 @@ export const getAvailableEncoders = async (): Promise<Set<string>> => {
   }
 
   return new Promise((resolve) => {
-    const process = spawn('ffmpeg', ['-encoders', '-hide_banner'], { shell: true });
+    const process = spawn('ffmpeg', ['-encoders', '-hide_banner']);
     let output = '';
 
     process.stdout?.on('data', (data) => {
@@ -312,7 +313,7 @@ export const getVideoInfo = async (inputPath: string): Promise<VideoInfo> => {
       inputPath
     ];
 
-    const process = spawn('ffprobe', args, { shell: true });
+    const process = spawn('ffprobe', args);
     let output = '';
 
     process.stdout.on('data', (data) => {
@@ -355,7 +356,7 @@ export const getVideoDuration = async (inputPath: string): Promise<number> => {
       '-of', 'csv=p=0'
     ];
 
-    const process = spawn('ffprobe', args, { shell: true });
+    const process = spawn('ffprobe', args);
     let output = '';
 
     process.stdout.on('data', (data) => {
@@ -416,7 +417,6 @@ export const convertVideo = async (
 ): Promise<ConversionResult> => {
   const inputBasename = path.basename(inputPath, path.extname(inputPath));
   const outputPath = path.join(outputDir, `${inputBasename}_converted.${preset.extension}`);
-  currentOutputPath = outputPath;
 
   let totalDuration = 0;
   try {
@@ -432,11 +432,13 @@ export const convertVideo = async (
   }
 
   return new Promise((resolve) => {
-    currentProcess = spawn('ffmpeg', args, { shell: true });
+    const ffmpegProcess = spawn('ffmpeg', args);
+    currentProcess = ffmpegProcess;
+    outputPathByProcess.set(ffmpegProcess, outputPath);
 
     let errorOutput = '';
 
-    currentProcess.stdout?.on('data', (data) => {
+    ffmpegProcess.stdout?.on('data', (data) => {
       const output = data.toString();
       if (onLog) onLog(output);
       
@@ -458,7 +460,7 @@ export const convertVideo = async (
       }
     });
 
-    currentProcess.stderr?.on('data', (data) => {
+    ffmpegProcess.stderr?.on('data', (data) => {
       const line = data.toString();
       if (onLog) onLog(line);
       errorOutput += line;
@@ -469,9 +471,25 @@ export const convertVideo = async (
       }
     });
 
-    currentProcess.on('close', (code) => {
-      currentProcess = null;
-      currentOutputPath = null;
+    ffmpegProcess.on('close', (code) => {
+      if (currentProcess === ffmpegProcess) {
+        currentProcess = null;
+      }
+      const outputToDelete = outputPathByProcess.get(ffmpegProcess);
+      outputPathByProcess.delete(ffmpegProcess);
+      const wasCanceled = canceledProcesses.has(ffmpegProcess);
+      canceledProcesses.delete(ffmpegProcess);
+      if (wasCanceled) {
+        if (outputToDelete && fs.existsSync(outputToDelete)) {
+          try {
+            fs.unlinkSync(outputToDelete);
+          } catch (err) {
+            console.error('Failed to delete partial file:', err);
+          }
+        }
+        resolve({ success: false, outputPath, error: 'Conversion cancelled' });
+        return;
+      }
       if (code === 0) {
         resolve({ success: true, outputPath });
       } else {
@@ -479,9 +497,25 @@ export const convertVideo = async (
       }
     });
 
-    currentProcess.on('error', (err) => {
-      currentProcess = null;
-      currentOutputPath = null;
+    ffmpegProcess.on('error', (err) => {
+      if (currentProcess === ffmpegProcess) {
+        currentProcess = null;
+      }
+      const outputToDelete = outputPathByProcess.get(ffmpegProcess);
+      outputPathByProcess.delete(ffmpegProcess);
+      const wasCanceled = canceledProcesses.has(ffmpegProcess);
+      canceledProcesses.delete(ffmpegProcess);
+      if (wasCanceled) {
+        if (outputToDelete && fs.existsSync(outputToDelete)) {
+          try {
+            fs.unlinkSync(outputToDelete);
+          } catch (deleteErr) {
+            console.error('Failed to delete partial file:', deleteErr);
+          }
+        }
+        resolve({ success: false, outputPath, error: 'Conversion cancelled' });
+        return;
+      }
       resolve({ success: false, outputPath, error: err.message });
     });
   });
@@ -489,17 +523,14 @@ export const convertVideo = async (
 
 export const cancelConversion = (): void => {
   if (currentProcess) {
-    currentProcess.kill('SIGTERM');
-    currentProcess = null;
-
-    if (currentOutputPath && fs.existsSync(currentOutputPath)) {
-      try {
-        fs.unlinkSync(currentOutputPath);
-      } catch (err) {
-        console.error('Failed to delete partial file:', err);
+    const processToKill = currentProcess;
+    canceledProcesses.add(processToKill);
+    processToKill.kill('SIGTERM');
+    setTimeout(() => {
+      if (currentProcess === processToKill && processToKill.exitCode === null) {
+        processToKill.kill('SIGKILL');
       }
-    }
-    currentOutputPath = null;
+    }, 2000);
   }
 };
 

@@ -12,15 +12,47 @@ const checkMsiInstallation = (): boolean => {
     return false;
   }
 
-  try {
-    const result = execSync(
-      'reg query "HKCU\\Software\\CONV2" /v DisableAutoUpdates',
-      { encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] }
-    );
-    return result.includes('0x1') || result.includes('REG_DWORD    1');
-  } catch {
-    return false;
+  const registryKeys = [
+    'HKLM\\Software\\CONV2',
+    'HKCU\\Software\\CONV2',
+  ];
+
+  for (const key of registryKeys) {
+    try {
+      const result = execSync(
+        `reg query "${key}"`,
+        { encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] }
+      );
+      if (hasRegistryDwordValue(result, ['InstalledViaMsi', 'DisableAutoUpdates'])) {
+        return true;
+      }
+    } catch {
+      continue;
+    }
   }
+
+  return false;
+};
+
+const hasRegistryDwordValue = (output: string, names: string[]): boolean => {
+  const nameSet = new Set(names.map((name) => name.toLowerCase()));
+  const lines = output.split(/\r?\n/);
+  for (const line of lines) {
+    const match = line.match(/^\s*(\S+)\s+REG_DWORD\s+(\S+)/i);
+    if (!match) {
+      continue;
+    }
+    const name = match[1].toLowerCase();
+    if (!nameSet.has(name)) {
+      continue;
+    }
+    const rawValue = match[2];
+    const value = rawValue.startsWith('0x') ? parseInt(rawValue, 16) : parseInt(rawValue, 10);
+    if (value === 1) {
+      return true;
+    }
+  }
+  return false;
 };
 
 export const initUpdater = (window: BrowserWindow): void => {

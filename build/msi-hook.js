@@ -81,8 +81,9 @@ exports.default = async function(wxsFilePath) {
   const msiMarkerComponent = `
     <!-- MSI Installation marker - disables in-app auto-updates -->
     <Component Id="MsiInstallMarker" Guid="A1B2C3D4-E5F6-7890-ABCD-EF1234567890">
-      <RegistryKey Root="HKCU" Key="Software\\CONV2">
+      <RegistryKey Root="HKLM" Key="Software\\CONV2">
         <RegistryValue Name="InstalledViaMsi" Type="integer" Value="1" KeyPath="yes"/>
+        <RegistryValue Name="DisableAutoUpdates" Type="integer" Value="1"/>
       </RegistryKey>
     </Component>`;
 
