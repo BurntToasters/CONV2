@@ -91,6 +91,7 @@ const elements = {
   statusMessage: document.getElementById('statusMessage') as HTMLDivElement,
   showInFolderBtn: document.getElementById('showInFolderBtn') as HTMLButtonElement,
   settingsBtn: document.getElementById('settingsBtn') as HTMLButtonElement,
+  supportBtn: document.getElementById('supportBtn') as HTMLButtonElement,
   settingsModal: document.getElementById('settingsModal') as HTMLDivElement,
   closeSettings: document.getElementById('closeSettings') as HTMLButtonElement,
   outputDirBtn: document.getElementById('outputDirBtn') as HTMLButtonElement,
@@ -102,6 +103,7 @@ const elements = {
   updateBadge: document.getElementById('updateBadge') as HTMLSpanElement,
   autoCheckUpdatesCheck: document.getElementById('autoCheckUpdatesCheck') as HTMLInputElement,
   versionInfo: document.getElementById('versionInfo') as HTMLSpanElement,
+  versionLink: document.getElementById('versionLink') as HTMLAnchorElement,
   ffmpegWarning: document.getElementById('ffmpegWarning') as HTMLDivElement,
   dynamicModal: document.getElementById('dynamicModal') as HTMLDivElement,
   viewCreditsBtn: document.getElementById('viewCreditsBtn') as HTMLButtonElement,
@@ -380,7 +382,10 @@ const loadPresets = async () => {
 
 const loadVersion = async () => {
   const version = await window.electronAPI.getVersion();
+  const tagUrl = `https://github.com/BurntToasters/CONV2/releases/tag/v${version}`;
   elements.versionInfo.textContent = `CONV2 v${version}`;
+  elements.versionLink.href = tagUrl;
+  elements.versionLink.title = `View release v${version}`;
 };
 
 const applyUpdateVisibility = async () => {
@@ -459,6 +464,17 @@ document.getElementById('support-link')?.addEventListener('click', (e) => {
   e.preventDefault();
   window.electronAPI.openExternal('https://rosie.run/support');
 });
+
+  elements.supportBtn.addEventListener('click', () => {
+    window.electronAPI.openExternal('https://rosie.run/support');
+  });
+
+  elements.versionLink.addEventListener('click', (e) => {
+    e.preventDefault();
+    if (elements.versionLink.href) {
+      window.electronAPI.openExternal(elements.versionLink.href);
+    }
+  });
 
 document.getElementById('help-link')?.addEventListener('click', (e) => {
   e.preventDefault();
