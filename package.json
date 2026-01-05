@@ -122,12 +122,16 @@
       "artifactName": "${productName}-Win-${arch}.${ext}"
     },
     "nsis": {
+      "artifactName": "${productName}-Win-${arch}-Setup.${ext}",
       "oneClick": false,
       "perMachine": false,
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
       "shortcutName": "CONV2"
+    },
+    "portable": {
+      "artifactName": "${productName}-Win-${arch}-Portable.${ext}"
     },
     "msi": {
       "perMachine": true,
