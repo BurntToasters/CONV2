@@ -46,7 +46,7 @@
     "flatpak:clean": "rm -rf build-dir .flatpak-builder",
     "patch:beta": "node build/patch-beta.js",
     "restore:release": "node build/restore-release.js",
-    "release:win": "npm run build && dotenv -- electron-builder --win nsis portable msi --publish always && npm run sign:gpg",
+    "release:win": "npm run build && dotenv -- electron-builder --win --x64 --arm64 nsis portable msi --publish always && npm run sign:gpg",
     "release:win:x64": "npm run build && dotenv -- electron-builder --win --x64 nsis portable msi --publish always && npm run sign:gpg",
     "release:win:arm64": "npm run build && dotenv -- electron-builder --win --arm64 nsis portable msi --publish always && npm run sign:gpg",
     "release:msstore": "npm run build && dotenv -- electron-builder --win appx --publish always",
@@ -166,7 +166,7 @@
           ]
         }
       ],
-      "icon": "assets/icon-mac.png",
+      "icon": "assets/conv2.icns",
       "artifactName": "${productName}-macOS-${arch}.${ext}",
       "category": "public.app-category.video",
       "hardenedRuntime": true,
