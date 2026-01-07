@@ -518,14 +518,16 @@ document.getElementById('rosie-run')?.addEventListener('click', (e) => {
     elements.dropZone.classList.remove('dragover');
     const files = e.dataTransfer?.files;
     if (files && files.length > 0) {
-      handleFileSelect((files[0] as ElectronFile).path);
+      const filePath = window.electronAPI.getPathForFile(files[0]);
+      handleFileSelect(filePath);
     }
   });
 
   elements.fileInput.addEventListener('change', () => {
     const files = elements.fileInput.files;
     if (files && files.length > 0) {
-      handleFileSelect((files[0] as ElectronFile).path);
+      const filePath = window.electronAPI.getPathForFile(files[0]);
+      handleFileSelect(filePath);
     }
   });
 

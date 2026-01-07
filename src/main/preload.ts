@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer } from 'electron';
+import { contextBridge, ipcRenderer, webUtils } from 'electron';
 
 export interface ConversionProgress {
   percent: number;
@@ -38,6 +38,7 @@ export interface GPUEncoderError {
 
 contextBridge.exposeInMainWorld('electronAPI', {
   // File operations
+  getPathForFile: (file: File): string => webUtils.getPathForFile(file),
   selectFile: (): Promise<string | null> => ipcRenderer.invoke('select-file'),
   selectOutputDirectory: (): Promise<string | null> => ipcRenderer.invoke('select-output-directory'),
   getFileInfo: (filePath: string): Promise<VideoInfo | null> => ipcRenderer.invoke('get-file-info', filePath),
@@ -109,6 +110,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
 declare global {
   interface Window {
     electronAPI: {
+      getPathForFile: (file: File) => string;
       selectFile: () => Promise<string | null>;
       selectOutputDirectory: () => Promise<string | null>;
       getFileInfo: (filePath: string) => Promise<VideoInfo | null>;
