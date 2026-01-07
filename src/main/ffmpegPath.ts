@@ -5,6 +5,22 @@ let cachedFFmpegPath: string | null = null;
 let cachedFFprobePath: string | null = null;
 let useSystemFFmpeg = false;
 
+const ensureExecutable = (filePath: string): void => {
+  if (process.platform === 'win32') {
+    return;
+  }
+
+  try {
+    const stats = fs.statSync(filePath);
+    const isExecutable = (stats.mode & 0o111) !== 0;
+
+    if (!isExecutable) {
+      fs.chmodSync(filePath, stats.mode | 0o755);
+    }
+  } catch {
+  }
+};
+
 export const setUseSystemFFmpeg = (value: boolean): void => {
   useSystemFFmpeg = value;
   cachedFFmpegPath = null;
@@ -56,6 +72,7 @@ export const getFFmpegPath = (): string => {
     const ext = process.platform === 'win32' ? '.exe' : '';
     const bundledPath = path.join(bundledDir, `ffmpeg${ext}`);
     if (fs.existsSync(bundledPath)) {
+      ensureExecutable(bundledPath);
       cachedFFmpegPath = bundledPath;
       return bundledPath;
     }
@@ -80,6 +97,7 @@ export const getFFprobePath = (): string => {
     const ext = process.platform === 'win32' ? '.exe' : '';
     const bundledPath = path.join(bundledDir, `ffprobe${ext}`);
     if (fs.existsSync(bundledPath)) {
+      ensureExecutable(bundledPath);
       cachedFFprobePath = bundledPath;
       return bundledPath;
     }

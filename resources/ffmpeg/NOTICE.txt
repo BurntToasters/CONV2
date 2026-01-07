@@ -5,8 +5,9 @@ This application includes FFmpeg, a complete, cross-platform solution for
 recording, converting, and streaming audio and video.
 
 FFmpeg is licensed under the GNU General Public License version 2 or later
-(GPL-2.0-or-later). The full license text is available at:
-https://www.gnu.org/licenses/old-licenses/gpl-2.0.html
+(GPL-2.0-or-later). The full license text is included with this distribution at:
+ffmpeg/LICENSE.txt
+It is also available at: https://www.gnu.org/licenses/old-licenses/gpl-2.0.html
 
 FFmpeg Project
 --------------
@@ -18,8 +19,8 @@ Binary Sources
 --------------
 The pre-built FFmpeg binaries included with this application are provided by:
 
-- macOS builds: https://www.osxexperts.net/
-- Windows/Linux builds: https://github.com/BtbN/FFmpeg-Builds
+- macOS builds: https://www.osxexperts.net/ (FFmpeg release/6.1)
+- Windows/Linux builds: https://github.com/BtbN/FFmpeg-Builds (tag autobuild-2026-01-07-12-59, n8.0)
 
 These builds include the following GPL-licensed components:
 - libx264 (H.264 encoder)
@@ -27,15 +28,19 @@ These builds include the following GPL-licensed components:
 
 Source Code Availability
 ------------------------
-As required by the GPL, the source code for FFmpeg and all included
-components is available from:
+As required by the GPL, the complete corresponding source code for the exact
+FFmpeg binaries distributed with this application is available from
+BurntToasters under the written offer included at:
+ffmpeg/SOURCE_OFFER.txt
+
+Source archives are hosted at:
+https://github.com/BurntToasters/FFMPEG-ARCHIVES/releases/tag/v1.0.0
+
+Upstream sources are also available at:
 
 - FFmpeg source: https://git.ffmpeg.org/ffmpeg.git
 - x264 source: https://code.videolan.org/videolan/x264
 - x265 source: https://bitbucket.org/multicoreware/x265_git
-
-You may also obtain the complete corresponding source code by contacting
-the binary providers listed above.
 
 CONV2 Application Notice
 ------------------------

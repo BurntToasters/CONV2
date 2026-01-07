@@ -182,7 +182,19 @@ const buildLicenseEntries = (data: Record<string, LicenseCrawlerEntry> | null): 
       name: 'FFmpeg',
       license: 'GPL-2.0-or-later',
       link: 'https://ffmpeg.org/',
-      note: 'Bundled builds include x264/x265 (GPL). Source: ffmpeg.org',
+      note: 'Bundled builds include x264/x265 (GPL). License text: ffmpeg/LICENSE.txt. Source offer: ffmpeg/SOURCE_OFFER.txt.',
+      isSpecial: true,
+    },
+    {
+      name: 'FFmpeg license text',
+      license: 'GPL-2.0-or-later',
+      note: 'Included with this app at ffmpeg/LICENSE.txt.',
+      isSpecial: true,
+    },
+    {
+      name: 'FFmpeg source offer',
+      license: 'GPLv2 Section 3(b)',
+      note: 'Written offer included with this app at ffmpeg/SOURCE_OFFER.txt.',
       isSpecial: true,
     },
     {

@@ -908,8 +908,8 @@ select option {
 }
 
 .settings-modal {
-  max-width: 320px;
-  padding: 16px;
+  max-width: 400px;
+  padding: 18px;
 }
 
 .credits-modal {
@@ -1094,9 +1094,23 @@ select option {
 }
 
 .settings-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px 12px;
+}
+
+.settings-grid .full-width {
+  grid-column: 1 / -1;
+}
+
+.setting-row {
   display: flex;
-  flex-direction: column;
+  align-items: center;
   gap: 12px;
+}
+
+.setting-row .btn {
+  flex-shrink: 0;
 }
 
 .setting-item {
@@ -1126,9 +1140,8 @@ select option {
 }
 
 .setting-danger {
-  padding-top: 10px;
-  margin-top: 2px;
-  border-top: 1px solid var(--border);
+  padding-top: 0;
+  margin-top: 0;
 }
 
 .output-path {

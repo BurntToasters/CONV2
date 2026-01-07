@@ -1,0 +1,40 @@
+FFmpeg Source Code Offer
+========================
+
+This product includes FFmpeg binaries that are licensed under GPL-2.0-or-later.
+In compliance with GPLv2 Section 3(b), BurntToasters offers to provide the
+complete corresponding source code for the exact FFmpeg binaries (and all GPL
+components they include, such as x264/x265) that are distributed with CONV2.
+This includes the build scripts and configuration used to produce those binaries.
+
+This offer is valid for at least three years from the date you received the
+binaries. We will provide the source code on a physical medium or electronically,
+for a charge no more than the cost of physically performing distribution.
+
+To request the source code, contact:
+BurntToasters <code@rosie.run>
+
+Build Source Details (current distribution)
+-------------------------------------------
+Source archive repository (current release):
+https://github.com/BurntToasters/FFMPEG-ARCHIVES/releases/tag/v1.0.0
+
+Windows/Linux binaries:
+- Provider: BtbN/FFmpeg-Builds
+- Release tag: autobuild-2026-01-07-12-59
+- Build scripts archive: windows-linux/FFmpeg-Builds-autobuild-2026-01-07-12-59.zip
+- FFmpeg base: n8.0
+
+macOS binaries:
+- Provider: osxexperts.net
+- FFmpeg base: https://github.com/FFmpeg/FFmpeg/tree/release/6.1
+- FFmpeg source archive: macos/FFmpeg-release-6.1.zip
+- Build scripts: macos/macos_build_intel.txt, macos/macos_build_arm64.txt
+
+Additional component sources used by these builds (x264, x265, libvpx, libass,
+and others) are provided on request under this offer.
+
+Upstream sources are also available at:
+- FFmpeg: https://git.ffmpeg.org/ffmpeg.git
+- x264: https://code.videolan.org/videolan/x264
+- x265: https://bitbucket.org/multicoreware/x265_git

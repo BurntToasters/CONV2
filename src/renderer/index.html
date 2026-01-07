@@ -158,7 +158,7 @@
       </div>
 
       <div class="settings-grid">
-        <div class="setting-item">
+        <div class="setting-item full-width">
           <label>Theme</label>
           <div class="theme-switcher" id="themeSwitcher">
             <button class="theme-option" data-theme="system">
@@ -181,7 +181,7 @@
           </select>
         </div>
 
-        <div class="setting-item">
+        <div class="setting-item full-width">
           <label>Output Directory</label>
           <div class="setting-control">
             <span class="output-path" id="outputPath">Same as input file</span>
@@ -196,7 +196,7 @@
               <input type="checkbox" id="useSystemFFmpegCheck">
               <span class="toggle-slider"></span>
             </label>
-            <span class="toggle-label">Use System FFmpeg (from PATH)</span>
+            <span class="toggle-label">Use System</span>
           </div>
         </div>
 
@@ -207,48 +207,50 @@
               <input type="checkbox" id="debugOutputCheck">
               <span class="toggle-slider"></span>
             </label>
-            <span class="toggle-label">Show FFmpeg Output</span>
+            <span class="toggle-label">Show Output</span>
           </div>
         </div>
 
-        <div class="setting-item">
+        <div class="setting-item full-width">
           <label>Updates</label>
-          <button class="btn btn-secondary btn-xs full-width" id="checkUpdateBtn">
-            <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <polyline points="23 4 23 10 17 10"/>
-              <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>
-            </svg>
-            Check for Updates
-          </button>
-          <div class="setting-control" style="margin-top: 12px;">
-            <label class="toggle-switch">
-              <input type="checkbox" id="autoCheckUpdatesCheck">
-              <span class="toggle-slider"></span>
-            </label>
-            <span class="toggle-label">Auto-check on Startup</span>
+          <div class="setting-row">
+            <button class="btn btn-secondary btn-xs" id="checkUpdateBtn">
+              <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <polyline points="23 4 23 10 17 10"/>
+                <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>
+              </svg>
+              Check Now
+            </button>
+            <div class="setting-control">
+              <label class="toggle-switch">
+                <input type="checkbox" id="autoCheckUpdatesCheck">
+                <span class="toggle-slider"></span>
+              </label>
+              <span class="toggle-label">Auto-check</span>
+            </div>
           </div>
         </div>
 
         <div class="setting-item">
-          <label>Credits & Licenses</label>
+          <label>Credits</label>
           <button class="btn btn-secondary btn-xs full-width" id="viewCreditsBtn">
             <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <circle cx="12" cy="12" r="10"/>
               <line x1="12" y1="16" x2="12" y2="12"/>
               <line x1="12" y1="8" x2="12.01" y2="8"/>
             </svg>
-            View Credits
+            View
           </button>
         </div>
 
         <div class="setting-item setting-danger">
-          <label>Reset Settings</label>
+          <label>Reset</label>
           <button class="btn btn-danger btn-xs full-width" id="resetSettingsBtn">
             <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <polyline points="1 4 1 10 7 10"/>
               <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/>
             </svg>
-            Reset & Restart
+            Reset
           </button>
         </div>
       </div>
@@ -272,7 +274,7 @@
       </div>
       <div class="credits-body">
         <p class="credits-description">
-          Generated via <code>npm run licenses</code>. Includes production dependencies and bundled assets such as Twemoji (CC-BY 4.0).
+          Generated via <code>npm run licenses</code>. Includes production dependencies and bundled assets such as Twemoji (CC-BY 4.0). FFmpeg license text and source offer are included at <code>ffmpeg/LICENSE.txt</code> and <code>ffmpeg/SOURCE_OFFER.txt</code>.
         </p>
         <div class="licenses-list" id="licensesList">
           <div class="license-item">Loading credits...</div>

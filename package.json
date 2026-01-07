@@ -99,7 +99,9 @@
       "extraResources": [
         { "from": "resources/ffmpeg/win/x64", "to": "ffmpeg/x64" },
         { "from": "resources/ffmpeg/win/arm64", "to": "ffmpeg/arm64" },
-        { "from": "resources/ffmpeg/NOTICE.txt", "to": "ffmpeg/NOTICE.txt" }
+        { "from": "resources/ffmpeg/NOTICE.txt", "to": "ffmpeg/NOTICE.txt" },
+        { "from": "resources/ffmpeg/ffmpeg_license.txt", "to": "ffmpeg/LICENSE.txt" },
+        { "from": "resources/ffmpeg/SOURCE_OFFER.txt", "to": "ffmpeg/SOURCE_OFFER.txt" }
       ],
       "target": [
         {
@@ -161,7 +163,9 @@
       "extraResources": [
         { "from": "resources/ffmpeg/mac/x64", "to": "ffmpeg/x64" },
         { "from": "resources/ffmpeg/mac/arm64", "to": "ffmpeg/arm64" },
-        { "from": "resources/ffmpeg/NOTICE.txt", "to": "ffmpeg/NOTICE.txt" }
+        { "from": "resources/ffmpeg/NOTICE.txt", "to": "ffmpeg/NOTICE.txt" },
+        { "from": "resources/ffmpeg/ffmpeg_license.txt", "to": "ffmpeg/LICENSE.txt" },
+        { "from": "resources/ffmpeg/SOURCE_OFFER.txt", "to": "ffmpeg/SOURCE_OFFER.txt" }
       ],
       "target": [
         {
@@ -210,7 +214,9 @@
     "linux": {
       "extraResources": [
         { "from": "resources/ffmpeg/linux/${arch}", "to": "ffmpeg" },
-        { "from": "resources/ffmpeg/NOTICE.txt", "to": "ffmpeg/NOTICE.txt" }
+        { "from": "resources/ffmpeg/NOTICE.txt", "to": "ffmpeg/NOTICE.txt" },
+        { "from": "resources/ffmpeg/ffmpeg_license.txt", "to": "ffmpeg/LICENSE.txt" },
+        { "from": "resources/ffmpeg/SOURCE_OFFER.txt", "to": "ffmpeg/SOURCE_OFFER.txt" }
       ],
       "target": [
         {
