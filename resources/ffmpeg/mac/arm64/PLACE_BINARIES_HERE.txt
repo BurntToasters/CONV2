@@ -1,0 +1,6 @@
+Place macOS ARM64 (Apple Silicon) FFmpeg binaries here:
+- ffmpeg
+- ffprobe
+
+Download from: https://www.osxexperts.net/
+Ensure execute permissions: chmod +x ffmpeg ffprobe

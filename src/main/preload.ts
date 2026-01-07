@@ -15,6 +15,7 @@ export interface AppSettings {
   theme: 'system' | 'dark' | 'light';
   showDebugOutput: boolean;
   autoCheckUpdates: boolean;
+  useSystemFFmpeg: boolean;
 }
 
 export interface VideoInfo {

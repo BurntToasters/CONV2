@@ -96,6 +96,11 @@
       }
     ],
     "win": {
+      "extraResources": [
+        { "from": "resources/ffmpeg/win/x64", "to": "ffmpeg/x64" },
+        { "from": "resources/ffmpeg/win/arm64", "to": "ffmpeg/arm64" },
+        { "from": "resources/ffmpeg/NOTICE.txt", "to": "ffmpeg/NOTICE.txt" }
+      ],
       "target": [
         {
           "target": "nsis",
@@ -153,6 +158,11 @@
       "showNameOnTiles": true
     },
     "mac": {
+      "extraResources": [
+        { "from": "resources/ffmpeg/mac/x64", "to": "ffmpeg/x64" },
+        { "from": "resources/ffmpeg/mac/arm64", "to": "ffmpeg/arm64" },
+        { "from": "resources/ffmpeg/NOTICE.txt", "to": "ffmpeg/NOTICE.txt" }
+      ],
       "target": [
         {
           "target": "dmg",
@@ -198,6 +208,10 @@
       ]
     },
     "linux": {
+      "extraResources": [
+        { "from": "resources/ffmpeg/linux/${arch}", "to": "ffmpeg" },
+        { "from": "resources/ffmpeg/NOTICE.txt", "to": "ffmpeg/NOTICE.txt" }
+      ],
       "target": [
         {
           "target": "AppImage",

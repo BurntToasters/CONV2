@@ -9,3 +9,9 @@ Thumbs.db
 .env
 **/.*/
 !.github/
+
+# FFmpeg binaries (too large for git)
+resources/ffmpeg/**/ffmpeg
+resources/ffmpeg/**/ffmpeg.exe
+resources/ffmpeg/**/ffprobe
+resources/ffmpeg/**/ffprobe.exe

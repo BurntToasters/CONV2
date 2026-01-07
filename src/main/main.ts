@@ -11,6 +11,7 @@ import {
   parseGPUError,
 } from './ffmpeg';
 import { initUpdater, checkForUpdates, checkForUpdatesSilent, isUpdateDisabled } from './updater';
+import { setUseSystemFFmpeg } from './ffmpegPath';
 
 if (process.platform === 'darwin') {
   const commonPaths = [
@@ -42,6 +43,7 @@ interface AppSettings {
   theme: 'system' | 'dark' | 'light';
   showDebugOutput: boolean;
   autoCheckUpdates: boolean;
+  useSystemFFmpeg: boolean;
 }
 
 const defaultSettings: AppSettings = {
@@ -50,6 +52,7 @@ const defaultSettings: AppSettings = {
   theme: 'system',
   showDebugOutput: false,
   autoCheckUpdates: true,
+  useSystemFFmpeg: false,
 };
 
 let mainWindow: BrowserWindow | null = null;
@@ -70,6 +73,7 @@ const loadSettings = (): void => {
   } catch {
     settings = { ...defaultSettings };
   }
+  setUseSystemFFmpeg(settings.useSystemFFmpeg);
 };
 
 const saveSettings = (): void => {
@@ -282,6 +286,9 @@ ipcMain.handle('get-settings', () => {
 ipcMain.handle('save-settings', (_, newSettings: Partial<AppSettings>) => {
   settings = { ...settings, ...newSettings };
   saveSettings();
+  if (newSettings.useSystemFFmpeg !== undefined) {
+    setUseSystemFFmpeg(settings.useSystemFFmpeg);
+  }
 });
 
 ipcMain.handle('check-for-updates', () => {

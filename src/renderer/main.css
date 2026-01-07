@@ -644,6 +644,17 @@ select option {
   border-color: var(--error);
 }
 
+.btn-update-available {
+  background: linear-gradient(135deg, #06b6d4 0%, #0891b2 100%);
+  color: white;
+  border-color: #06b6d4;
+}
+
+.btn-update-available:hover {
+  background: linear-gradient(135deg, #22d3ee 0%, #06b6d4 100%);
+  box-shadow: 0 4px 16px rgba(6, 182, 212, 0.4);
+}
+
 .btn-sm {
   padding: 8px 14px;
   font-size: 12px;

@@ -11,6 +11,7 @@ interface AppSettings {
   theme: 'system' | 'dark' | 'light';
   showDebugOutput: boolean;
   autoCheckUpdates: boolean;
+  useSystemFFmpeg: boolean;
 }
 
 interface VideoInfo {
@@ -107,6 +108,7 @@ const elements = {
   closeCredits: document.getElementById('closeCredits') as HTMLButtonElement,
   licensesList: document.getElementById('licensesList') as HTMLDivElement,
   debugOutputCheck: document.getElementById('debugOutputCheck') as HTMLInputElement,
+  useSystemFFmpegCheck: document.getElementById('useSystemFFmpegCheck') as HTMLInputElement,
   showLogsBtn: document.getElementById('showLogsBtn') as HTMLButtonElement,
   logsModal: document.getElementById('logsModal') as HTMLDivElement,
   closeLogs: document.getElementById('closeLogs') as HTMLButtonElement,
@@ -177,6 +179,27 @@ const showModal = (options: ModalOptions): void => {
 const buildLicenseEntries = (data: Record<string, LicenseCrawlerEntry> | null): LicenseDisplayEntry[] => {
   const entries: LicenseDisplayEntry[] = [
     {
+      name: 'FFmpeg',
+      license: 'GPL-2.0-or-later',
+      link: 'https://ffmpeg.org/',
+      note: 'Bundled builds include x264/x265 (GPL). Source: ffmpeg.org',
+      isSpecial: true,
+    },
+    {
+      name: 'FFmpeg macOS binaries',
+      license: 'GPL-2.0-or-later',
+      link: 'https://www.osxexperts.net/',
+      note: 'Pre-built macOS binaries provided by OSXExperts.',
+      isSpecial: true,
+    },
+    {
+      name: 'FFmpeg Windows/Linux binaries',
+      license: 'GPL-2.0-or-later',
+      link: 'https://github.com/BtbN/FFmpeg-Builds',
+      note: 'Pre-built Windows and Linux binaries by BtbN.',
+      isSpecial: true,
+    },
+    {
       name: 'Twemoji assets',
       license: 'CC-BY 4.0',
       link: 'https://github.com/jdecked/twemoji',
@@ -210,7 +233,7 @@ const buildLicenseEntries = (data: Record<string, LicenseCrawlerEntry> | null): 
     })
     .sort((a, b) => a.name.localeCompare(b.name));
 
-  return [entries[0], ...packageEntries];
+  return [...entries, ...packageEntries];
 };
 
 const renderLicenses = (entries: LicenseDisplayEntry[]): void => {
@@ -332,6 +355,7 @@ const loadSettings = async () => {
   elements.themeSelect.value = settings.theme;
   elements.debugOutputCheck.checked = settings.showDebugOutput;
   elements.autoCheckUpdatesCheck.checked = settings.autoCheckUpdates;
+  elements.useSystemFFmpegCheck.checked = settings.useSystemFFmpeg;
 
   if (settings.showDebugOutput) {
     elements.showLogsBtn.style.display = 'inline-block';
@@ -563,6 +587,12 @@ document.getElementById('rosie-run')?.addEventListener('click', (e) => {
     await window.electronAPI.saveSettings({ autoCheckUpdates: settings.autoCheckUpdates });
   });
 
+  elements.useSystemFFmpegCheck.addEventListener('change', async () => {
+    settings.useSystemFFmpeg = elements.useSystemFFmpegCheck.checked;
+    await window.electronAPI.saveSettings({ useSystemFFmpeg: settings.useSystemFFmpeg });
+    await checkFFmpeg();
+  });
+
   elements.convertBtn.addEventListener('click', () => {
     if (isConverting) {
       showModal({
@@ -740,9 +770,11 @@ document.getElementById('rosie-run')?.addEventListener('click', (e) => {
     if (available) {
       elements.updateBadge.style.display = 'flex';
       elements.checkUpdateBtn.innerHTML = '<svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>Update Available!';
+      elements.checkUpdateBtn.classList.add('btn-update-available');
     } else {
       elements.updateBadge.style.display = 'none';
       elements.checkUpdateBtn.innerHTML = '<svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>Check for Updates';
+      elements.checkUpdateBtn.classList.remove('btn-update-available');
     }
   });
 };

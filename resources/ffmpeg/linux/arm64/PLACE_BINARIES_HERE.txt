@@ -1,0 +1,7 @@
+Place Linux ARM64 FFmpeg binaries here:
+- ffmpeg
+- ffprobe
+
+Download from: https://github.com/BtbN/FFmpeg-Builds/releases
+Use: ffmpeg-n8.0-latest-linuxarm64-gpl-8.0.tar.xz (static, not shared)
+Ensure execute permissions: chmod +x ffmpeg ffprobe

@@ -1,0 +1,6 @@
+Place macOS x64 (Intel) FFmpeg binaries here:
+- ffmpeg
+- ffprobe
+
+Download from: https://www.osxexperts.net/
+Ensure execute permissions: chmod +x ffmpeg ffprobe

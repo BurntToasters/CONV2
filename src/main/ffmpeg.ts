@@ -2,6 +2,7 @@ import { spawn, spawnSync, ChildProcess } from 'child_process';
 import * as path from 'path';
 import * as fs from 'fs';
 import { GPUVendor, Preset } from './presets';
+import { getFFmpegPath, getFFprobePath } from './ffmpegPath';
 
 export const GPU_ENCODERS: Record<string, Record<GPUVendor, string>> = {
   h264: {
@@ -114,7 +115,7 @@ const canceledProcesses = new Set<ChildProcess>();
 
 export const checkFFmpegInstalled = async (): Promise<boolean> => {
   return new Promise((resolve) => {
-    const process = spawn('ffmpeg', ['-version']);
+    const process = spawn(getFFmpegPath(), ['-version']);
     process.on('close', (code) => {
       resolve(code === 0);
     });
@@ -133,7 +134,7 @@ export const getAvailableEncoders = async (): Promise<Set<string>> => {
   }
 
   return new Promise((resolve) => {
-    const process = spawn('ffmpeg', ['-encoders', '-hide_banner']);
+    const process = spawn(getFFmpegPath(), ['-encoders', '-hide_banner']);
     let output = '';
 
     process.stdout?.on('data', (data) => {
@@ -170,7 +171,7 @@ export const getAvailableDecoders = async (): Promise<Set<string>> => {
   }
 
   return new Promise((resolve) => {
-    const process = spawn('ffmpeg', ['-decoders', '-hide_banner']);
+    const process = spawn(getFFmpegPath(), ['-decoders', '-hide_banner']);
     let output = '';
 
     process.stdout?.on('data', (data) => {
@@ -459,7 +460,7 @@ export const getVideoInfo = async (inputPath: string): Promise<VideoInfo> => {
       inputPath
     ];
 
-    const process = spawn('ffprobe', args);
+    const process = spawn(getFFprobePath(), args);
     let output = '';
 
     process.stdout.on('data', (data) => {
@@ -502,7 +503,7 @@ export const getVideoDuration = async (inputPath: string): Promise<number> => {
       '-of', 'csv=p=0'
     ];
 
-    const process = spawn('ffprobe', args);
+    const process = spawn(getFFprobePath(), args);
     let output = '';
 
     process.stdout.on('data', (data) => {
@@ -587,7 +588,7 @@ export const convertVideo = async (
   }
 
   return new Promise((resolve) => {
-    const ffmpegProcess = spawn('ffmpeg', args);
+    const ffmpegProcess = spawn(getFFmpegPath(), args);
     currentProcess = ffmpegProcess;
     outputPathByProcess.set(ffmpegProcess, outputPath);
 
