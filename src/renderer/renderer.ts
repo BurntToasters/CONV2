@@ -1,7 +1,3 @@
-interface ElectronFile extends File {
-  path: string;
-}
-
 interface Preset {
   id: string;
   name: string;
