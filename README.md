@@ -29,3 +29,13 @@
 * Advanced Settings
 * Light and Dark Mode
 * And More!
+
+### Want more info? Please visit: [https://help.rosie.run/conv2/en-us/faq](https://help.rosie.run/conv2/en-us/faq)!
+---
+
+
+
+## Building CONV2
+CONV2 is an electronjs application using nodejs/npm for its environment.
+* Build scripts are available in the `package.json` file.
+* To install all dependencies run `npm i`.
