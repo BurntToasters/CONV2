@@ -1,4 +1,31 @@
 # CONV2
-Cross Platform FFMPEG GUI frontend for quick video conversion options!
+<p align="center">
+  <img width="45%" height="1012" alt="CONV2-9-1" src="https://github.com/user-attachments/assets/cd08ca70-4cf4-4070-a865-93edd38a6502" />
+&nbsp;
+<img width="45%" height="1012" alt="CONV2-9-2" src="https://github.com/user-attachments/assets/68733876-e801-409f-8322-109806c72039" />
+</p>
 
-Development has begun. No releases or documentation is current available.
+---
+# ⬇️ Downloads
+
+| <img height="20" src="https://github.com/user-attachments/assets/340d360e-79b1-4c70-bfab-d944085f75df" /> Windows | <img height="20" src="https://github.com/user-attachments/assets/42d7e887-4616-4e8c-b1d3-e44e01340f8c" /> MacOS | <img height="20" src="https://github.com/user-attachments/assets/e0cc4f33-4516-408b-9c5c-be71a3ac316b" /> Linux |
+| :--- | :--- | :--- |
+| **[Universal EXE (x64/arm64)](https://github.com/BurntToasters/CONV2/releases/latest/download/CONV2-Win.exe)** | **[Universal DMG](https://github.com/BurntToasters/CONV2/releases/latest/download/CONV2-MacOS-universal.dmg)** | **AppImage:** [x64](https://github.com/BurntToasters/CONV2/releases/latest/download/CONV2-Linux-x86_64.AppImage) / [arm64](https://github.com/BurntToasters/CONV2/releases/latest/download/CONV2-Linux-arm64.AppImage) |
+| <div align="center"><!--<a href="#"><img src="https://get.microsoft.com/images/en-us%20light.svg" width="150"/></a>--></div> | **[Universal ZIP](https://github.com/BurntToasters/CONV2/releases/latest/download/CONV2-MacOS-universal.zip)** | **DEB:** [x64](https://github.com/BurntToasters/CONV2/releases/latest/download/CONV2-Linux-amd64.deb) / [arm64](https://github.com/BurntToasters/CONV2/releases/latest/download/CONV2-Linux-arm64.deb) |
+| *See MSI note in releases* | | **RPM:** [x64](https://github.com/BurntToasters/CONV2/releases/latest/download/CONV2-Linux-x86_64.rpm) / [arm64](https://github.com/BurntToasters/CONV2/releases/latest/download/CONV2-Linux-aarch64.rpm) |
+| | | **Flatpak:** *Coming Soon*! |
+
+### ℹ️ Enjoying CONV2? Consider [❤️ Supporting Me! ❤️](https://rosie.run/support)
+
+---
+
+## What is CONV2? 
+### CONV2 is a quick and simple video converter using ffmpeg on the backend which features:
+* In-App Updates
+* Windows, MacOS, and Linux Support
+* Minimalist UI
+* Minimal Bloat (besides the part that its electron-based)
+* Quick Video Presets
+* Advanced Settings
+* Light and Dark Mode
+* And More!
