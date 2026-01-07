@@ -193,7 +193,7 @@ ipcMain.handle('select-output-directory', async () => {
   return result.canceled ? null : result.filePaths[0];
 });
 
-ipcMain.handle('start-conversion', async (_, inputPath: string, presetId: string) => {
+ipcMain.handle('start-conversion', async (_, inputPath: string, presetId: string, gpuOverride?: GPUVendor) => {
   const preset = getPresetById(presetId);
   if (!preset) {
     mainWindow?.webContents.send('conversion-complete', {
@@ -204,12 +204,13 @@ ipcMain.handle('start-conversion', async (_, inputPath: string, presetId: string
     return;
   }
 
+  const gpu = gpuOverride ?? settings.gpu;
   const codecCategory = preset.category;
   const isVideoPreset = ['av1', 'h264', 'h265'].includes(codecCategory);
 
-  if (isVideoPreset && settings.gpu !== 'cpu') {
+  if (isVideoPreset && gpu !== 'cpu') {
     const codec = codecCategory as 'av1' | 'h264' | 'h265';
-    const encoderCheck = await checkGPUEncoderSupport(settings.gpu, codec);
+    const encoderCheck = await checkGPUEncoderSupport(gpu, codec);
     if (!encoderCheck.available && encoderCheck.error) {
       mainWindow?.webContents.send('gpu-encoder-error', encoderCheck.error);
       return;
@@ -223,7 +224,7 @@ ipcMain.handle('start-conversion', async (_, inputPath: string, presetId: string
     inputPath,
     outputDir,
     preset,
-    settings.gpu,
+    gpu,
     (progress) => {
       mainWindow?.webContents.send('conversion-progress', progress);
     },
@@ -235,9 +236,9 @@ ipcMain.handle('start-conversion', async (_, inputPath: string, presetId: string
   isConversionActive = false;
   lastOutputPath = result.outputPath;
 
-  if (!result.success && result.error && settings.gpu !== 'cpu' && isVideoPreset) {
+  if (!result.success && result.error && gpu !== 'cpu' && isVideoPreset) {
     const codec = codecCategory as 'av1' | 'h264' | 'h265';
-    const gpuError = parseGPUError(result.error, settings.gpu, codec);
+    const gpuError = parseGPUError(result.error, gpu, codec);
     if (gpuError) {
       mainWindow?.webContents.send('gpu-encoder-error', gpuError);
       return;

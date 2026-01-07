@@ -866,7 +866,7 @@ const startConversion = async () => {
   hideStatus();
 
   const presetId = elements.presetSelect.value;
-  await window.electronAPI.startConversion(selectedFile, presetId);
+  await window.electronAPI.startConversion(selectedFile, presetId, settings.gpu);
 };
 
 const cancelConversion = async () => {

@@ -44,8 +44,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getFileInfo: (filePath: string): Promise<VideoInfo | null> => ipcRenderer.invoke('get-file-info', filePath),
 
   // Conversion
-  startConversion: (inputPath: string, presetId: string): Promise<void> =>
-    ipcRenderer.invoke('start-conversion', inputPath, presetId),
+  startConversion: (inputPath: string, presetId: string, gpu: AppSettings['gpu']): Promise<void> =>
+    ipcRenderer.invoke('start-conversion', inputPath, presetId, gpu),
   cancelConversion: (): Promise<void> => ipcRenderer.invoke('cancel-conversion'),
   onConversionProgress: (callback: (progress: ConversionProgress) => void): void => {
     ipcRenderer.on('conversion-progress', (_, progress) => callback(progress));
@@ -114,7 +114,7 @@ declare global {
       selectFile: () => Promise<string | null>;
       selectOutputDirectory: () => Promise<string | null>;
       getFileInfo: (filePath: string) => Promise<VideoInfo | null>;
-      startConversion: (inputPath: string, presetId: string) => Promise<void>;
+      startConversion: (inputPath: string, presetId: string, gpu: AppSettings['gpu']) => Promise<void>;
       cancelConversion: () => Promise<void>;
       onConversionProgress: (callback: (progress: ConversionProgress) => void) => void;
       onConversionLog: (callback: (message: string) => void) => void;
