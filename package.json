@@ -1,6 +1,6 @@
 {
   "name": "conv2",
-  "version": "1.0.2",
+  "version": "1.1.0",
   "description": "A cross platform FFMPEG GUI front-end making it easy for quick video conversion!",
   "homepage": "https://github.com/BurntToasters/CONV2#readme",
   "bugs": {

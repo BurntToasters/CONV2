@@ -143,7 +143,7 @@ const createWindow = (): void => {
         cancelId: 0,
       }).then((result) => {
         if (result.response === 1) {
-          cancelConversion();
+          cancelConversion(true);
           isConversionActive = false;
           mainWindow?.destroy();
         }
@@ -248,8 +248,8 @@ ipcMain.handle('start-conversion', async (_, inputPath: string, presetId: string
   mainWindow?.webContents.send('conversion-complete', result);
 });
 
-ipcMain.handle('cancel-conversion', () => {
-  cancelConversion();
+ipcMain.handle('cancel-conversion', (_, force?: boolean) => {
+  cancelConversion(!!force);
   isConversionActive = false;
 });
 

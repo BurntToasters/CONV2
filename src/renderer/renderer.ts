@@ -870,7 +870,7 @@ const startConversion = async () => {
 };
 
 const cancelConversion = async () => {
-  await window.electronAPI.cancelConversion();
+  await window.electronAPI.cancelConversion(true);
   isConverting = false;
   elements.progressContainer.classList.remove('visible');
   elements.convertBtn.disabled = false;

@@ -1,4 +1,4 @@
-import { spawn, ChildProcess } from 'child_process';
+import { spawn, spawnSync, ChildProcess } from 'child_process';
 import * as path from 'path';
 import * as fs from 'fs';
 import { GPUVendor, Preset } from './presets';
@@ -40,6 +40,38 @@ const CODEC_NAMES: Record<string, string> = {
   h264: 'H.264',
   h265: 'H.265/HEVC',
   av1: 'AV1',
+};
+
+const NVIDIA_DECODERS: Record<string, string> = {
+  h264: 'h264_cuvid',
+  hevc: 'hevc_cuvid',
+  h265: 'hevc_cuvid',
+  av1: 'av1_cuvid',
+  vp9: 'vp9_cuvid',
+  mpeg2video: 'mpeg2_cuvid',
+  mpeg4: 'mpeg4_cuvid',
+};
+
+const INTEL_DECODERS: Record<string, string> = {
+  h264: 'h264_qsv',
+  hevc: 'hevc_qsv',
+  h265: 'hevc_qsv',
+  av1: 'av1_qsv',
+  vp9: 'vp9_qsv',
+};
+
+const D3D11_DECODERS: Record<string, string> = {
+  h264: 'h264_d3d11va',
+  hevc: 'hevc_d3d11va',
+  h265: 'hevc_d3d11va',
+  av1: 'av1_d3d11va',
+  vp9: 'vp9_d3d11va',
+};
+
+const VIDEOTOOLBOX_DECODERS: Record<string, string> = {
+  h264: 'h264_videotoolbox',
+  hevc: 'hevc_videotoolbox',
+  h265: 'hevc_videotoolbox',
 };
 
 export interface GPUEncoderError {
@@ -93,6 +125,7 @@ export const checkFFmpegInstalled = async (): Promise<boolean> => {
 };
 
 let encoderCache: Set<string> | null = null;
+let decoderCache: Set<string> | null = null;
 
 export const getAvailableEncoders = async (): Promise<Set<string>> => {
   if (encoderCache) {
@@ -129,6 +162,43 @@ export const getAvailableEncoders = async (): Promise<Set<string>> => {
 export const checkEncoderAvailable = async (encoder: string): Promise<boolean> => {
   const encoders = await getAvailableEncoders();
   return encoders.has(encoder);
+};
+
+export const getAvailableDecoders = async (): Promise<Set<string>> => {
+  if (decoderCache) {
+    return decoderCache;
+  }
+
+  return new Promise((resolve) => {
+    const process = spawn('ffmpeg', ['-decoders', '-hide_banner']);
+    let output = '';
+
+    process.stdout?.on('data', (data) => {
+      output += data.toString();
+    });
+
+    process.on('close', () => {
+      const decoders = new Set<string>();
+      const lines = output.split('\n');
+      for (const line of lines) {
+        const match = line.match(/^\s*[VASFXBD.]+\s+(\S+)/);
+        if (match && match[1]) {
+          decoders.add(match[1]);
+        }
+      }
+      decoderCache = decoders;
+      resolve(decoders);
+    });
+
+    process.on('error', () => {
+      resolve(new Set());
+    });
+  });
+};
+
+export const checkDecoderAvailable = async (decoder: string): Promise<boolean> => {
+  const decoders = await getAvailableDecoders();
+  return decoders.has(decoder);
 };
 
 export const checkGPUEncoderSupport = async (
@@ -303,6 +373,82 @@ export const parseGPUError = (errorOutput: string, gpu: GPUVendor, codec?: strin
   return null;
 };
 
+const normalizeCodec = (codec?: string): string | null => {
+  if (!codec) return null;
+  const normalized = codec.toLowerCase();
+  if (normalized === 'h265') return 'hevc';
+  return normalized;
+};
+
+const getHardwareDecodeArgs = async (
+  gpu: GPUVendor,
+  codec?: string
+): Promise<string[]> => {
+  if (gpu === 'cpu') {
+    return [];
+  }
+
+  const normalized = normalizeCodec(codec);
+  if (!normalized) {
+    return [];
+  }
+
+  if (process.platform === 'darwin') {
+    if (gpu !== 'apple') return [];
+    const decoder = VIDEOTOOLBOX_DECODERS[normalized];
+    if (decoder && await checkDecoderAvailable(decoder)) {
+      return ['-hwaccel', 'videotoolbox', '-c:v', decoder];
+    }
+    return ['-hwaccel', 'videotoolbox'];
+  }
+
+  if (process.platform === 'win32') {
+    if (gpu === 'nvidia') {
+      const decoder = NVIDIA_DECODERS[normalized];
+      if (decoder && await checkDecoderAvailable(decoder)) {
+        return ['-hwaccel', 'cuda', '-hwaccel_output_format', 'cuda', '-c:v', decoder];
+      }
+      return [];
+    }
+
+    if (gpu === 'intel') {
+      const decoder = INTEL_DECODERS[normalized];
+      if (decoder && await checkDecoderAvailable(decoder)) {
+        return ['-hwaccel', 'qsv', '-hwaccel_output_format', 'qsv', '-c:v', decoder];
+      }
+      return [];
+    }
+
+    if (gpu === 'amd') {
+      const decoder = D3D11_DECODERS[normalized];
+      if (decoder && await checkDecoderAvailable(decoder)) {
+        return ['-hwaccel', 'd3d11va', '-hwaccel_output_format', 'd3d11', '-c:v', decoder];
+      }
+      return [];
+    }
+  }
+
+  if (process.platform === 'linux') {
+    if (gpu === 'nvidia') {
+      const decoder = NVIDIA_DECODERS[normalized];
+      if (decoder && await checkDecoderAvailable(decoder)) {
+        return ['-hwaccel', 'cuda', '-hwaccel_output_format', 'cuda', '-c:v', decoder];
+      }
+      return [];
+    }
+
+    if (gpu === 'amd' || gpu === 'intel') {
+      const vaapiDevice = '/dev/dri/renderD128';
+      if (fs.existsSync(vaapiDevice) && ['h264', 'hevc', 'av1', 'vp9'].includes(normalized)) {
+        return ['-hwaccel', 'vaapi', '-hwaccel_device', vaapiDevice, '-hwaccel_output_format', 'vaapi'];
+      }
+      return [];
+    }
+  }
+
+  return [];
+};
+
 export const getVideoInfo = async (inputPath: string): Promise<VideoInfo> => {
   return new Promise((resolve, reject) => {
     const args = [
@@ -419,13 +565,22 @@ export const convertVideo = async (
   const outputPath = path.join(outputDir, `${inputBasename}_converted.${preset.extension}`);
 
   let totalDuration = 0;
+  let inputCodec: string | undefined;
   try {
-    totalDuration = await getVideoDuration(inputPath);
+    const info = await getVideoInfo(inputPath);
+    totalDuration = info.duration;
+    inputCodec = info.codec;
   } catch {
-    console.warn('Could not get video duration, progress may be inaccurate');
+    try {
+      totalDuration = await getVideoDuration(inputPath);
+    } catch {
+      console.warn('Could not get video duration, progress may be inaccurate');
+    }
   }
 
-  const args = ['-y', '-progress', 'pipe:1', ...preset.getArgs(inputPath, outputPath, gpu)];
+  const isVideoPreset = ['av1', 'h264', 'h265'].includes(preset.category);
+  const decodeArgs = isVideoPreset ? await getHardwareDecodeArgs(gpu, inputCodec) : [];
+  const args = ['-y', '-progress', 'pipe:1', ...decodeArgs, ...preset.getArgs(inputPath, outputPath, gpu)];
   
   if (onLog) {
     onLog(`Running command: ffmpeg ${args.join(' ')}\n`);
@@ -521,16 +676,60 @@ export const convertVideo = async (
   });
 };
 
-export const cancelConversion = (): void => {
+const forceKillProcess = (processToKill: ChildProcess): void => {
+  if (processToKill.exitCode !== null) {
+    return;
+  }
+
+  if (process.platform === 'win32' && processToKill.pid) {
+    try {
+      spawnSync('taskkill', ['/pid', processToKill.pid.toString(), '/t', '/f'], { windowsHide: true });
+    } catch {
+      try {
+        processToKill.kill('SIGKILL');
+      } catch {
+        return;
+      }
+    }
+    return;
+  }
+
+  try {
+    processToKill.kill('SIGKILL');
+  } catch {
+    return;
+  }
+};
+
+export const cancelConversion = (force = false): void => {
   if (currentProcess) {
     const processToKill = currentProcess;
     canceledProcesses.add(processToKill);
-    processToKill.kill('SIGTERM');
+
+    try {
+      processToKill.stdin?.write('q');
+      processToKill.stdin?.end();
+    } catch {
+    }
+
+    try {
+      processToKill.kill('SIGTERM');
+    } catch {
+      if (force) {
+        forceKillProcess(processToKill);
+      }
+    }
+
+    if (force) {
+      forceKillProcess(processToKill);
+      return;
+    }
+
     setTimeout(() => {
       if (currentProcess === processToKill && processToKill.exitCode === null) {
-        processToKill.kill('SIGKILL');
+        forceKillProcess(processToKill);
       }
-    }, 2000);
+    }, 1500);
   }
 };
 
