@@ -13,7 +13,7 @@
 | **[Universal EXE (x64/arm64)](https://github.com/BurntToasters/CONV2/releases/latest/download/CONV2-Win.exe)** | **[Universal DMG](https://github.com/BurntToasters/CONV2/releases/latest/download/CONV2-MacOS-universal.dmg)** | **AppImage:** [x64](https://github.com/BurntToasters/CONV2/releases/latest/download/CONV2-Linux-x86_64.AppImage) / [arm64](https://github.com/BurntToasters/CONV2/releases/latest/download/CONV2-Linux-arm64.AppImage) |
 | <div align="center"><!--<a href="#"><img src="https://get.microsoft.com/images/en-us%20light.svg" width="150"/></a>--></div> | **[Universal ZIP](https://github.com/BurntToasters/CONV2/releases/latest/download/CONV2-MacOS-universal.zip)** | **DEB:** [x64](https://github.com/BurntToasters/CONV2/releases/latest/download/CONV2-Linux-amd64.deb) / [arm64](https://github.com/BurntToasters/CONV2/releases/latest/download/CONV2-Linux-arm64.deb) |
 | *See MSI note in releases* | | **RPM:** [x64](https://github.com/BurntToasters/CONV2/releases/latest/download/CONV2-Linux-x86_64.rpm) / [arm64](https://github.com/BurntToasters/CONV2/releases/latest/download/CONV2-Linux-aarch64.rpm) |
-| | | **Flatpak:** *Coming Soon*! |
+| | | **Flatpak:** [x64](https://github.com/BurntToasters/CONV2/releases/latest/download/CONV2-Linux-x86_64.flatpak) / [arm64](https://github.com/BurntToasters/CONV2/releases/latest/download/CONV2-Linux-aarch64.flatpak) |
 
 ### ℹ️ Enjoying CONV2? Consider [❤️ Supporting Me! ❤️](https://rosie.run/support)
 
@@ -29,6 +29,23 @@
 * Advanced Settings
 * Light and Dark Mode
 * And More!
+
+## What installers are available?
+* **Windows**
+  * `.EXE`: x64, arm64
+    * There are portable `.exe` binaries available but they are experimental.
+  * `.MSI`: x64, arm64 (Important! MSI builds have the auto updater permanently disabled as these are meant for enterprise installments!)
+* **MacOS** (Intel support may be phased out soon)
+  * `.DMG`: Universal
+  * `.ZIP`: Universal
+* **Linux**
+  * `Flatpak`: x64, arm64
+  * `.DEB`: x64, arm64
+  * `.RPM`: x64, arm64
+  * `.AppImage`: x64, arm64
+
+## FFmpeg
+Conv2 comes bundled with a platform specific FFMPEG binary. See the source at: https://github.com/BurntToasters/ffmpeg-static-builds
 
 ### Want more info? Please visit: [https://help.rosie.run/conv2/en-us/faq](https://help.rosie.run/conv2/en-us/faq)!
 ---
