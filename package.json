@@ -184,7 +184,8 @@
       "extraResources": [
         {
           "from": "resources/ffmpeg/mac/${arch}",
-          "to": "ffmpeg"
+          "to": "ffmpeg",
+          "filter": ["**/*", "!PLACE_BINARIES_HERE.txt"]
         },
         {
           "from": "resources/ffmpeg/NOTICE.txt",
