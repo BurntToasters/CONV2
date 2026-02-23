@@ -1,6 +1,6 @@
 {
   "name": "conv2",
-  "version": "1.0.2",
+  "version": "1.1.0",
   "description": "A cross platform FFMPEG GUI front-end making it easy for quick video conversion!",
   "homepage": "https://github.com/BurntToasters/CONV2#readme",
   "bugs": {
@@ -14,67 +14,77 @@
   "author": "BurntToasters <code@rosie.run>",
   "main": "dist/main/main.js",
   "scripts": {
-    "build": "tsc && npm run copy-assets",
-    "copy-assets": "node -e \"const fs=require('fs');const path=require('path');['index.html','main.css','extra.css'].forEach(f=>fs.copyFileSync(path.join('src/renderer',f),path.join('dist/renderer',f)))\"",
-    "build:cleanup": "node -e \"const fs=require('fs');['release','dist'].forEach(d=>{if(fs.existsSync(d))fs.rmSync(d,{recursive:true})})\"",
+    "clean": "node build/dist-tools.js clean",
+    "compile": "node build/dist-tools.js compile",
+    "build": "tsc && node build/dist-tools.js copy",
     "watch": "tsc -w",
     "start": "npm run build && electron .",
     "dev": "npm run build && electron . --enable-logging",
-    "build:win": "npm run build && electron-builder --win nsis portable msi",
-    "build:win:x64": "npm run build && electron-builder --win nsis portable msi --x64",
-    "build:win:arm64": "npm run build && electron-builder --win nsis portable msi --arm64",
-    "build:win:nsis": "npm run build && electron-builder --win nsis",
-    "build:win:portable": "npm run build && electron-builder --win portable",
-    "build:win:msi": "npm run build && electron-builder --win msi",
-    "build:msstore": "npm run build && electron-builder --win appx",
-    "build:msstore:x64": "npm run build && electron-builder --win appx --x64",
-    "build:msstore:arm64": "npm run build && electron-builder --win appx --arm64",
-    "build:mac": "npm run build && dotenv -- electron-builder --mac --universal",
-    "build:mac:dev": "npm run build && electron-builder --mac --universal -c.mac.notarize=false",
-    "build:mac:mas": "npm run build && dotenv -- electron-builder --mac mas",
-    "build:linux": "npm run build && electron-builder --linux",
-    "build:linux:x64": "npm run build && electron-builder --linux --x64",
-    "build:linux:arm64": "npm run build && electron-builder --linux --arm64",
-    "build:linux:appimage": "npm run build && electron-builder --linux AppImage",
-    "build:linux:deb": "npm run build && electron-builder --linux deb",
-    "build:linux:rpm": "npm run build && electron-builder --linux rpm",
+    "build:win": "npm run compile && electron-builder --win nsis portable msi --x64 --arm64",
+    "build:win:x64": "npm run compile && electron-builder --win nsis portable msi --x64",
+    "build:win:arm64": "npm run compile && electron-builder --win nsis portable msi --arm64",
+    "build:win:nsis": "npm run compile && electron-builder --win nsis",
+    "build:win:portable": "npm run compile && electron-builder --win portable",
+    "build:win:msi": "npm run compile && electron-builder --win msi",
+    "build:msstore": "npm run compile && electron-builder --win appx",
+    "build:msstore:x64": "npm run compile && electron-builder --win appx --x64",
+    "build:msstore:arm64": "npm run compile && electron-builder --win appx --arm64",
+    "build:mac": "npm run compile && dotenv -- electron-builder --mac --universal",
+    "build:mac:dev": "npm run compile && electron-builder --mac --universal -c.mac.notarize=false",
+    "build:mac:mas": "npm run compile && dotenv -- electron-builder --mac mas",
+    "build:linux": "npm run compile && electron-builder --linux",
+    "build:linux:x64": "npm run compile && electron-builder --linux --x64",
+    "build:linux:arm64": "npm run compile && electron-builder --linux --arm64",
+    "build:linux:appimage": "npm run compile && electron-builder --linux AppImage",
+    "build:linux:deb": "npm run compile && electron-builder --linux deb",
+    "build:linux:rpm": "npm run compile && electron-builder --linux rpm",
     "build:linux:native": "cross-env USE_SYSTEM_FPM=true npm run build:linux",
-    "build:flatpak": "npm run build && electron-builder --linux flatpak",
-    "flatpak:build": "flatpak-builder --force-clean --user --install build-dir com.burnttoasters.conv2.yml",
+    "build:flatpak": "npm run compile && electron-builder --linux flatpak",
+    "flatpak:setup": "sudo env \"PATH=$PATH\" node build/setup-flatpak.js",
+    "flatpak:build": "node build/flatpak.js build",
+    "flatpak:build:x64": "node build/flatpak.js build --x64",
+    "flatpak:build:arm64": "node build/flatpak.js build --arm64",
     "flatpak:run": "flatpak run com.burnttoasters.conv2",
-    "flatpak:bundle": "flatpak build-bundle ~/.local/share/flatpak/repo release/CONV2-Linux.flatpak com.burnttoasters.conv2",
-    "flatpak:clean": "rm -rf build-dir .flatpak-builder",
+    "flatpak:bundle": "node build/flatpak.js bundle",
+    "flatpak:bundle:x64": "node build/flatpak.js bundle --x64",
+    "flatpak:bundle:arm64": "node build/flatpak.js bundle --arm64",
+    "flatpak:clean": "node build/flatpak.js clean",
     "patch:beta": "node build/patch-beta.js",
     "restore:release": "node build/restore-release.js",
-    "release:win": "npm run build && dotenv -- electron-builder --win nsis portable msi --x64 --arm64 --publish always && npm run sign:gpg",
-    "release:win:x64": "npm run build && dotenv -- electron-builder --win nsis portable msi --x64 --publish always && npm run sign:gpg",
-    "release:win:arm64": "npm run build && dotenv -- electron-builder --win nsis portable msi --arm64 --publish always && npm run sign:gpg",
-    "release:msstore": "npm run build && dotenv -- electron-builder --win appx --publish always",
-    "release:mac": "npm run build && dotenv -- electron-builder --mac --universal --publish always && npm run sign:gpg",
-    "release:linux": "npm run build && dotenv -- electron-builder --linux --publish always && npm run sign:gpg",
-    "release:linux:all": "npm run build && dotenv -- electron-builder --linux --publish always && npm run flatpak:bundle && npm run sign:gpg",
-    "release:linux:native": "cross-env USE_SYSTEM_FPM=true npm run release:linux",
-    "release:all": "npm run release:win && npm run release:mac && npm run release:linux",
+    "release:win": "npm run release:prepare && npm run compile && dotenv -- electron-builder --win nsis portable msi --x64 --arm64 --publish always && npm run sign:gpg",
+    "release:win:x64": "npm run release:prepare && npm run compile && dotenv -- electron-builder --win nsis portable msi --x64 --publish always && npm run sign:gpg",
+    "release:win:arm64": "npm run release:prepare && npm run compile && dotenv -- electron-builder --win nsis portable msi --arm64 --publish always && npm run sign:gpg",
+    "release:msstore": "npm run release:prepare && npm run compile && dotenv -- electron-builder --win appx --publish always",
+    "release:mac": "npm run release:prepare && npm run compile && dotenv -- electron-builder --mac --universal --publish always && npm run sign:gpg",
+    "release:linux": "npm run release:prepare && npm run compile && dotenv -- electron-builder --linux --publish always && npm run sign:gpg",
+    "release:linux:all": "npm run release:prepare && npm run compile && dotenv -- electron-builder --linux --publish always && npm run flatpak:clean && npm run flatpak:bundle && npm run sign:gpg",
+    "release:linux:native": "cross-env USE_SYSTEM_FPM=true npm run release:linux:all",
+    "release:all": "npm run release:prepare && npm run compile && dotenv -- electron-builder --win nsis portable msi --x64 --arm64 --publish always && dotenv -- electron-builder --mac --universal --publish always && dotenv -- electron-builder --linux --publish always && npm run sign:gpg",
     "release:beta:win": "npm run patch:beta && cross-env IS_BETA=true npm run release:win && npm run restore:release",
     "release:beta:mac": "npm run patch:beta && cross-env IS_BETA=true npm run release:mac && npm run restore:release",
     "release:beta:linux": "npm run patch:beta && cross-env IS_BETA=true npm run release:linux && npm run restore:release",
     "sign:gpg": "node build/gpg-sign.js",
-    "licenses": "npm run licenses:prod",
-    "licenses:prod": "npx npm-license-crawler --production --json licenses.json",
-    "tests": "npm run build && node --test tests/*.test.js"
+    "licenses": "npx npm-license-crawler --production --json licenses.json",
+    "tests": "npm run build && node --test tests/*.test.js",
+    "typecheck": "tsc --noEmit",
+    "release:prepare": "node build/update-metainfo.js"
+  },
+  "engines": {
+    "node": "24.x",
+    "npm": "11.x"
   },
   "devDependencies": {
     "@electron/notarize": "^3.0.0",
-    "@types/node": "^25.0.3",
+    "@types/node": "^25.3.0",
     "cross-env": "^7.0.3",
     "dotenv": "^16.4.5",
-    "dotenv-cli": "^7.4.4",
-    "electron": "^39.2.7",
-    "electron-builder": "^26.0.12",
+    "dotenv-cli": "^11.0.0",
+    "electron": "^40.6.0",
+    "electron-builder": "^26.8.1",
     "typescript": "^5.9.3"
   },
   "dependencies": {
-    "electron-updater": "^6.1.7"
+    "electron-updater": "^6.8.3"
   },
   "build": {
     "appId": "com.burnttoasters.conv2",
@@ -96,6 +106,24 @@
       }
     ],
     "win": {
+      "extraResources": [
+        {
+          "from": "resources/ffmpeg/win/${arch}",
+          "to": "ffmpeg"
+        },
+        {
+          "from": "resources/ffmpeg/NOTICE.txt",
+          "to": "ffmpeg/NOTICE.txt"
+        },
+        {
+          "from": "resources/ffmpeg/ffmpeg_license.txt",
+          "to": "ffmpeg/LICENSE.txt"
+        },
+        {
+          "from": "resources/ffmpeg/SOURCE_OFFER.txt",
+          "to": "ffmpeg/SOURCE_OFFER.txt"
+        }
+      ],
       "target": [
         {
           "target": "nsis",
@@ -153,6 +181,24 @@
       "showNameOnTiles": true
     },
     "mac": {
+      "extraResources": [
+        {
+          "from": "resources/ffmpeg/mac/${arch}",
+          "to": "ffmpeg"
+        },
+        {
+          "from": "resources/ffmpeg/NOTICE.txt",
+          "to": "ffmpeg/NOTICE.txt"
+        },
+        {
+          "from": "resources/ffmpeg/ffmpeg_license.txt",
+          "to": "ffmpeg/LICENSE.txt"
+        },
+        {
+          "from": "resources/ffmpeg/SOURCE_OFFER.txt",
+          "to": "ffmpeg/SOURCE_OFFER.txt"
+        }
+      ],
       "target": [
         {
           "target": "dmg",
@@ -198,6 +244,24 @@
       ]
     },
     "linux": {
+      "extraResources": [
+        {
+          "from": "resources/ffmpeg/linux/${arch}",
+          "to": "ffmpeg"
+        },
+        {
+          "from": "resources/ffmpeg/NOTICE.txt",
+          "to": "ffmpeg/NOTICE.txt"
+        },
+        {
+          "from": "resources/ffmpeg/ffmpeg_license.txt",
+          "to": "ffmpeg/LICENSE.txt"
+        },
+        {
+          "from": "resources/ffmpeg/SOURCE_OFFER.txt",
+          "to": "ffmpeg/SOURCE_OFFER.txt"
+        }
+      ],
       "target": [
         {
           "target": "AppImage",

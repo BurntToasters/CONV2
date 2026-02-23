@@ -11,6 +11,7 @@ interface AppSettings {
   theme: 'system' | 'dark' | 'light';
   showDebugOutput: boolean;
   autoCheckUpdates: boolean;
+  useSystemFFmpeg: boolean;
 }
 
 interface VideoInfo {
@@ -66,6 +67,7 @@ let presets: Preset[] = [];
 let conversionStartTime = 0;
 let lastOutputPath = '';
 let themeListenerRegistered = false;
+let convertBtnOriginalHTML = '';
 
 const elements = {
   dropZone: document.getElementById('dropZone') as HTMLDivElement,
@@ -107,6 +109,7 @@ const elements = {
   closeCredits: document.getElementById('closeCredits') as HTMLButtonElement,
   licensesList: document.getElementById('licensesList') as HTMLDivElement,
   debugOutputCheck: document.getElementById('debugOutputCheck') as HTMLInputElement,
+  useSystemFFmpegCheck: document.getElementById('useSystemFFmpegCheck') as HTMLInputElement,
   showLogsBtn: document.getElementById('showLogsBtn') as HTMLButtonElement,
   logsModal: document.getElementById('logsModal') as HTMLDivElement,
   closeLogs: document.getElementById('closeLogs') as HTMLButtonElement,
@@ -177,6 +180,32 @@ const showModal = (options: ModalOptions): void => {
 const buildLicenseEntries = (data: Record<string, LicenseCrawlerEntry> | null): LicenseDisplayEntry[] => {
   const entries: LicenseDisplayEntry[] = [
     {
+      name: 'FFmpeg',
+      license: 'GPL-2.0-or-later',
+      link: 'https://ffmpeg.org/',
+      note: 'Bundled GPL static builds include x264, x265, lame, libass, fribidi, freetype, fontconfig, libiconv, enca, and expat. License text: ffmpeg/LICENSE.txt. Source offer: ffmpeg/SOURCE_OFFER.txt.',
+      isSpecial: true,
+    },
+    {
+      name: 'FFmpeg license text',
+      license: 'GPL-2.0-or-later',
+      note: 'Included with this app at ffmpeg/LICENSE.txt.',
+      isSpecial: true,
+    },
+    {
+      name: 'FFmpeg source offer',
+      license: 'GPLv2 Section 3(b)',
+      note: 'Written offer included with this app at ffmpeg/SOURCE_OFFER.txt.',
+      isSpecial: true,
+    },
+    {
+      name: 'FFmpeg binaries',
+      license: 'GPL-2.0-or-later',
+      link: 'https://github.com/BurntToasters/ffmpeg-static-builds',
+      note: 'Pre-built FFmpeg 8.0 static binaries for all platforms. Source code available at the linked repository.',
+      isSpecial: true,
+    },
+    {
       name: 'Twemoji assets',
       license: 'CC-BY 4.0',
       link: 'https://github.com/jdecked/twemoji',
@@ -210,7 +239,7 @@ const buildLicenseEntries = (data: Record<string, LicenseCrawlerEntry> | null): 
     })
     .sort((a, b) => a.name.localeCompare(b.name));
 
-  return [entries[0], ...packageEntries];
+  return [...entries, ...packageEntries];
 };
 
 const renderLicenses = (entries: LicenseDisplayEntry[]): void => {
@@ -291,6 +320,7 @@ const closeCreditsModal = (): void => {
 };
 
 const init = async () => {
+  convertBtnOriginalHTML = elements.convertBtn.innerHTML;
   await checkFFmpeg();
   await checkPlatform();
   await loadSettings();
@@ -305,15 +335,9 @@ const init = async () => {
 const checkPlatform = async () => {
   const platform = await window.electronAPI.getPlatform();
   if (platform === 'darwin') {
-    const option = document.createElement('option');
-    option.value = 'apple';
-    option.textContent = 'Apple Silicon (VideoToolbox)';
-    option.title = 'Apple VideoToolbox. Requires Apple Silicon (M1/M2/M3) or Intel Mac with T2.';
-    // Insert after CPU
-    if (elements.gpuSelect.children.length > 0) {
-      elements.gpuSelect.insertBefore(option, elements.gpuSelect.children[1]);
-    } else {
-      elements.gpuSelect.appendChild(option);
+    const appleOption = elements.gpuSelect.querySelector<HTMLOptionElement>('option[value="apple"]');
+    if (appleOption) {
+      appleOption.hidden = false;
     }
   }
 };
@@ -332,6 +356,7 @@ const loadSettings = async () => {
   elements.themeSelect.value = settings.theme;
   elements.debugOutputCheck.checked = settings.showDebugOutput;
   elements.autoCheckUpdatesCheck.checked = settings.autoCheckUpdates;
+  elements.useSystemFFmpegCheck.checked = settings.useSystemFFmpeg;
 
   if (settings.showDebugOutput) {
     elements.showLogsBtn.style.display = 'inline-block';
@@ -563,6 +588,12 @@ document.getElementById('rosie-run')?.addEventListener('click', (e) => {
     await window.electronAPI.saveSettings({ autoCheckUpdates: settings.autoCheckUpdates });
   });
 
+  elements.useSystemFFmpegCheck.addEventListener('change', async () => {
+    settings.useSystemFFmpeg = elements.useSystemFFmpegCheck.checked;
+    await window.electronAPI.saveSettings({ useSystemFFmpeg: settings.useSystemFFmpeg });
+    await checkFFmpeg();
+  });
+
   elements.convertBtn.addEventListener('click', () => {
     if (isConverting) {
       showModal({
@@ -707,7 +738,7 @@ document.getElementById('rosie-run')?.addEventListener('click', (e) => {
     isConverting = false;
     elements.progressContainer.classList.remove('visible');
     elements.convertBtn.disabled = false;
-    elements.convertBtn.innerHTML = '<svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg>Convert';
+    elements.convertBtn.innerHTML = convertBtnOriginalHTML;
     elements.convertBtn.classList.remove('converting');
     elements.cancelBtn.style.display = 'none';
 
@@ -729,7 +760,7 @@ document.getElementById('rosie-run')?.addEventListener('click', (e) => {
     isConverting = false;
     elements.progressContainer.classList.remove('visible');
     elements.convertBtn.disabled = false;
-    elements.convertBtn.innerHTML = '<svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg>Convert';
+    elements.convertBtn.innerHTML = convertBtnOriginalHTML;
     elements.convertBtn.classList.remove('converting');
     elements.cancelBtn.style.display = 'none';
 
@@ -740,9 +771,11 @@ document.getElementById('rosie-run')?.addEventListener('click', (e) => {
     if (available) {
       elements.updateBadge.style.display = 'flex';
       elements.checkUpdateBtn.innerHTML = '<svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>Update Available!';
+      elements.checkUpdateBtn.classList.add('btn-update-available');
     } else {
       elements.updateBadge.style.display = 'none';
       elements.checkUpdateBtn.innerHTML = '<svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>Check for Updates';
+      elements.checkUpdateBtn.classList.remove('btn-update-available');
     }
   });
 };
@@ -870,11 +903,11 @@ const startConversion = async () => {
 };
 
 const cancelConversion = async () => {
-  await window.electronAPI.cancelConversion();
+  await window.electronAPI.cancelConversion(true);
   isConverting = false;
   elements.progressContainer.classList.remove('visible');
   elements.convertBtn.disabled = false;
-  elements.convertBtn.innerHTML = '<svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg>Convert';
+  elements.convertBtn.innerHTML = convertBtnOriginalHTML;
   elements.convertBtn.classList.remove('converting');
 
   showStatus('warning', 'Conversion cancelled');

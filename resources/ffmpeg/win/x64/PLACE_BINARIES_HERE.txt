@@ -1,0 +1,6 @@
+Place Windows x64 FFmpeg binaries here:
+- ffmpeg.exe
+- ffprobe.exe
+
+Download from: https://github.com/BtbN/FFmpeg-Builds/releases
+Use: ffmpeg-n8.0-latest-win64-gpl-8.0.zip (static, not shared)

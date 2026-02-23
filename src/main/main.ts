@@ -11,6 +11,8 @@ import {
   parseGPUError,
 } from './ffmpeg';
 import { initUpdater, checkForUpdates, checkForUpdatesSilent, isUpdateDisabled } from './updater';
+import { setUseSystemFFmpeg } from './ffmpegPath';
+import { clearFFmpegCaches } from './ffmpeg';
 
 if (process.platform === 'darwin') {
   const commonPaths = [
@@ -42,6 +44,7 @@ interface AppSettings {
   theme: 'system' | 'dark' | 'light';
   showDebugOutput: boolean;
   autoCheckUpdates: boolean;
+  useSystemFFmpeg: boolean;
 }
 
 const defaultSettings: AppSettings = {
@@ -50,6 +53,7 @@ const defaultSettings: AppSettings = {
   theme: 'system',
   showDebugOutput: false,
   autoCheckUpdates: true,
+  useSystemFFmpeg: false,
 };
 
 let mainWindow: BrowserWindow | null = null;
@@ -70,6 +74,8 @@ const loadSettings = (): void => {
   } catch {
     settings = { ...defaultSettings };
   }
+  setUseSystemFFmpeg(settings.useSystemFFmpeg);
+  clearFFmpegCaches();
 };
 
 const saveSettings = (): void => {
@@ -143,7 +149,7 @@ const createWindow = (): void => {
         cancelId: 0,
       }).then((result) => {
         if (result.response === 1) {
-          cancelConversion();
+          cancelConversion(true);
           isConversionActive = false;
           mainWindow?.destroy();
         }
@@ -248,8 +254,8 @@ ipcMain.handle('start-conversion', async (_, inputPath: string, presetId: string
   mainWindow?.webContents.send('conversion-complete', result);
 });
 
-ipcMain.handle('cancel-conversion', () => {
-  cancelConversion();
+ipcMain.handle('cancel-conversion', (_, force?: boolean) => {
+  cancelConversion(!!force);
   isConversionActive = false;
 });
 
@@ -282,6 +288,10 @@ ipcMain.handle('get-settings', () => {
 ipcMain.handle('save-settings', (_, newSettings: Partial<AppSettings>) => {
   settings = { ...settings, ...newSettings };
   saveSettings();
+  if (newSettings.useSystemFFmpeg !== undefined) {
+    setUseSystemFFmpeg(settings.useSystemFFmpeg);
+    clearFFmpegCaches();
+  }
 });
 
 ipcMain.handle('check-for-updates', () => {

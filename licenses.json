@@ -11,7 +11,7 @@
         "licenseUrl": "https://github.com/webpack/schema-utils/raw/master/LICENSE",
         "parents": "conv2"
     },
-    "@electron/asar@3.2.18": {
+    "@electron/asar@3.4.1": {
         "licenses": "MIT",
         "repository": "https://github.com/electron/asar",
         "licenseUrl": "https://github.com/electron/asar/raw/master/LICENSE.md",
@@ -29,12 +29,6 @@
         "licenseUrl": "https://github.com/electron/get/raw/master/LICENSE",
         "parents": "conv2"
     },
-    "@electron/node-gyp@10.2.0-electron.1": {
-        "licenses": "MIT",
-        "repository": "https://github.com/nodejs/node-gyp",
-        "licenseUrl": "https://github.com/nodejs/node-gyp/raw/master/LICENSE",
-        "parents": "conv2"
-    },
     "@electron/notarize@2.5.0": {
         "licenses": "MIT",
         "repository": "https://github.com/electron/notarize",
@@ -47,19 +41,19 @@
         "licenseUrl": "https://github.com/electron/notarize/raw/master/LICENSE",
         "parents": "conv2"
     },
-    "@electron/osx-sign@1.3.1": {
+    "@electron/osx-sign@1.3.3": {
         "licenses": "BSD-2-Clause",
         "repository": "https://github.com/electron/osx-sign",
         "licenseUrl": "https://github.com/electron/osx-sign/raw/master/LICENSE",
         "parents": "conv2"
     },
-    "@electron/rebuild@3.7.0": {
+    "@electron/rebuild@4.0.1": {
         "licenses": "MIT",
         "repository": "https://github.com/electron/rebuild",
         "licenseUrl": "https://github.com/electron/rebuild/raw/master/LICENSE",
         "parents": "conv2"
     },
-    "@electron/universal@2.0.1": {
+    "@electron/universal@2.0.3": {
         "licenses": "MIT",
         "repository": "https://github.com/electron/universal",
         "licenseUrl": "https://github.com/electron/universal/raw/master/LICENSE",
@@ -69,12 +63,6 @@
         "licenses": "BSD-2-Clause",
         "repository": "https://github.com/electron/windows-sign",
         "licenseUrl": "https://github.com/electron/windows-sign/raw/master/LICENSE",
-        "parents": "conv2"
-    },
-    "@gar/promisify@1.1.3": {
-        "licenses": "MIT",
-        "repository": "https://github.com/wraithgar/gar-promisify",
-        "licenseUrl": "https://github.com/wraithgar/gar-promisify/raw/master/LICENSE.md",
         "parents": "conv2"
     },
     "@isaacs/balanced-match@4.0.1": {
@@ -93,6 +81,12 @@
         "licenseUrl": "https://github.com/yargs/cliui/raw/master/LICENSE.txt",
         "parents": "conv2"
     },
+    "@isaacs/fs-minipass@4.0.1": {
+        "licenses": "ISC",
+        "repository": "https://github.com/npm/fs-minipass",
+        "licenseUrl": "https://github.com/npm/fs-minipass/raw/master/LICENSE",
+        "parents": "conv2"
+    },
     "@malept/cross-spawn-promise@2.0.0": {
         "licenses": "Apache-2.0",
         "repository": "https://github.com/malept/cross-spawn-promise",
@@ -105,16 +99,16 @@
         "licenseUrl": "https://github.com/malept/flatpak-bundler/raw/master/LICENSE",
         "parents": "conv2"
     },
-    "@npmcli/fs@2.1.2": {
+    "@npmcli/agent@3.0.0": {
+        "licenses": "ISC",
+        "repository": "https://github.com/npm/agent",
+        "licenseUrl": "https://github.com/npm/agent",
+        "parents": "conv2"
+    },
+    "@npmcli/fs@4.0.0": {
         "licenses": "ISC",
         "repository": "https://github.com/npm/fs",
         "licenseUrl": "https://github.com/npm/fs/raw/master/LICENSE.md",
-        "parents": "conv2"
-    },
-    "@npmcli/move-file@2.0.1": {
-        "licenses": "MIT",
-        "repository": "https://github.com/npm/move-file",
-        "licenseUrl": "https://github.com/npm/move-file/raw/master/LICENSE.md",
         "parents": "conv2"
     },
     "@pkgjs/parseargs@0.11.0": {
@@ -133,12 +127,6 @@
         "licenses": "MIT",
         "repository": "https://github.com/szmarczak/http-timer",
         "licenseUrl": "https://github.com/szmarczak/http-timer/raw/master/LICENSE",
-        "parents": "conv2"
-    },
-    "@tootallnate/once@2.0.0": {
-        "licenses": "MIT",
-        "repository": "https://github.com/TooTallNate/once",
-        "licenseUrl": "https://github.com/TooTallNate/once/raw/master/LICENSE",
         "parents": "conv2"
     },
     "@types/cacheable-request@6.0.3": {
@@ -189,7 +177,19 @@
         "licenseUrl": "https://github.com/DefinitelyTyped/DefinitelyTyped/raw/master/LICENSE",
         "parents": "conv2"
     },
+    "@types/plist@3.0.5": {
+        "licenses": "MIT",
+        "repository": "https://github.com/DefinitelyTyped/DefinitelyTyped",
+        "licenseUrl": "https://github.com/DefinitelyTyped/DefinitelyTyped/raw/master/LICENSE",
+        "parents": "conv2"
+    },
     "@types/responselike@1.0.3": {
+        "licenses": "MIT",
+        "repository": "https://github.com/DefinitelyTyped/DefinitelyTyped",
+        "licenseUrl": "https://github.com/DefinitelyTyped/DefinitelyTyped/raw/master/LICENSE",
+        "parents": "conv2"
+    },
+    "@types/verror@1.10.11": {
         "licenses": "MIT",
         "repository": "https://github.com/DefinitelyTyped/DefinitelyTyped",
         "licenseUrl": "https://github.com/DefinitelyTyped/DefinitelyTyped/raw/master/LICENSE",
@@ -207,34 +207,16 @@
         "licenseUrl": "https://github.com/xmldom/xmldom/raw/master/LICENSE",
         "parents": "conv2"
     },
-    "abbrev@1.1.1": {
+    "abbrev@3.0.1": {
         "licenses": "ISC",
-        "repository": "http://github.com/isaacs/abbrev-js",
-        "licenseUrl": "http://github.com/isaacs/abbrev-js/raw/master/LICENSE",
+        "repository": "https://github.com/npm/abbrev-js",
+        "licenseUrl": "https://github.com/npm/abbrev-js/raw/master/LICENSE",
         "parents": "conv2"
-    },
-    "agent-base@6.0.2": {
-        "licenses": "MIT",
-        "repository": "https://github.com/TooTallNate/node-agent-base",
-        "licenseUrl": "https://github.com/TooTallNate/node-agent-base",
-        "parents": "make-fetch-happen:conv2"
     },
     "agent-base@7.1.4": {
         "licenses": "MIT",
         "repository": "https://github.com/TooTallNate/proxy-agents",
         "licenseUrl": "https://github.com/TooTallNate/proxy-agents/raw/master/LICENSE",
-        "parents": "conv2"
-    },
-    "agentkeepalive@4.6.0": {
-        "licenses": "MIT",
-        "repository": "https://github.com/node-modules/agentkeepalive",
-        "licenseUrl": "https://github.com/node-modules/agentkeepalive/raw/master/LICENSE",
-        "parents": "conv2"
-    },
-    "aggregate-error@3.1.0": {
-        "licenses": "MIT",
-        "repository": "https://github.com/sindresorhus/aggregate-error",
-        "licenseUrl": "https://github.com/sindresorhus/aggregate-error/raw/master/license",
         "parents": "conv2"
     },
     "ajv-keywords@3.5.2": {
@@ -279,7 +261,7 @@
         "licenseUrl": "https://github.com/develar/app-builder/raw/master/LICENSE",
         "parents": "conv2"
     },
-    "app-builder-lib@26.0.12": {
+    "app-builder-lib@26.4.0": {
         "licenses": "MIT",
         "repository": "https://github.com/electron-userland/electron-builder",
         "licenseUrl": "https://github.com/electron-userland/electron-builder",
@@ -289,6 +271,18 @@
         "licenses": "Python-2.0",
         "repository": "https://github.com/nodeca/argparse",
         "licenseUrl": "https://github.com/nodeca/argparse/raw/master/LICENSE",
+        "parents": "conv2"
+    },
+    "assert-plus@1.0.0": {
+        "licenses": "MIT",
+        "repository": "https://github.com/mcavage/node-assert-plus",
+        "licenseUrl": "https://github.com/mcavage/node-assert-plus",
+        "parents": "conv2"
+    },
+    "astral-regex@2.0.0": {
+        "licenses": "MIT",
+        "repository": "https://github.com/kevva/astral-regex",
+        "licenseUrl": "https://github.com/kevva/astral-regex/raw/master/license",
         "parents": "conv2"
     },
     "async-exit-hook@2.0.1": {
@@ -349,7 +343,7 @@
         "licenses": "MIT",
         "repository": "https://github.com/juliangruber/brace-expansion",
         "licenseUrl": "https://github.com/juliangruber/brace-expansion/raw/master/LICENSE",
-        "parents": "@electron/node-gyp:conv2"
+        "parents": "cacache:conv2"
     },
     "buffer-crc32@0.2.13": {
         "licenses": "MIT",
@@ -369,19 +363,19 @@
         "licenseUrl": "https://github.com/feross/buffer/raw/master/LICENSE",
         "parents": "conv2"
     },
-    "builder-util-runtime@9.3.1": {
+    "builder-util-runtime@9.5.1": {
         "licenses": "MIT",
         "repository": "https://github.com/electron-userland/electron-builder",
         "licenseUrl": "https://github.com/electron-userland/electron-builder/raw/master/LICENSE",
         "parents": "conv2"
     },
-    "builder-util@26.0.11": {
+    "builder-util@26.3.4": {
         "licenses": "MIT",
         "repository": "https://github.com/electron-userland/electron-builder",
         "licenseUrl": "https://github.com/electron-userland/electron-builder/raw/master/LICENSE",
         "parents": "conv2"
     },
-    "cacache@16.1.3": {
+    "cacache@19.0.1": {
         "licenses": "ISC",
         "repository": "https://github.com/npm/cacache",
         "licenseUrl": "https://github.com/npm/cacache/raw/master/LICENSE.md",
@@ -417,22 +411,22 @@
         "licenseUrl": "https://github.com/isaacs/chownr/raw/master/LICENSE",
         "parents": "conv2"
     },
+    "chownr@3.0.0": {
+        "licenses": "BlueOak-1.0.0",
+        "repository": "https://github.com/isaacs/chownr",
+        "licenseUrl": "https://github.com/isaacs/chownr/raw/master/LICENSE.md",
+        "parents": "cacache:conv2"
+    },
     "chromium-pickle-js@0.2.0": {
         "licenses": "MIT",
         "repository": "https://github.com/electron/node-chromium-pickle-js",
         "licenseUrl": "https://github.com/electron/node-chromium-pickle-js",
         "parents": "conv2"
     },
-    "ci-info@3.9.0": {
+    "ci-info@4.3.1": {
         "licenses": "MIT",
-        "repository": "https://github.com/watson/ci-info",
-        "licenseUrl": "https://github.com/watson/ci-info/raw/master/LICENSE",
-        "parents": "conv2"
-    },
-    "clean-stack@2.2.0": {
-        "licenses": "MIT",
-        "repository": "https://github.com/sindresorhus/clean-stack",
-        "licenseUrl": "https://github.com/sindresorhus/clean-stack/raw/master/license",
+        "repository": "github:watson/ci-info",
+        "licenseUrl": "github:watson/ci-info",
         "parents": "conv2"
     },
     "cli-cursor@3.1.0": {
@@ -445,6 +439,12 @@
         "licenses": "MIT",
         "repository": "https://github.com/sindresorhus/cli-spinners",
         "licenseUrl": "https://github.com/sindresorhus/cli-spinners/raw/master/license",
+        "parents": "conv2"
+    },
+    "cli-truncate@2.1.0": {
+        "licenses": "MIT",
+        "repository": "https://github.com/sindresorhus/cli-truncate",
+        "licenseUrl": "https://github.com/sindresorhus/cli-truncate/raw/master/license",
         "parents": "conv2"
     },
     "cliui@8.0.1": {
@@ -507,17 +507,23 @@
         "licenseUrl": "https://github.com/substack/node-concat-map/raw/master/LICENSE",
         "parents": "conv2"
     },
-    "config-file-ts@0.2.8-rc1": {
-        "licenses": "MIT",
-        "repository": "https://github.com/mighdoll/config-file-ts",
-        "licenseUrl": "https://github.com/mighdoll/config-file-ts/raw/master/LICENSE",
-        "parents": "conv2"
-    },
-    "conv2@0.0.1": {
+    "conv2@1.1.0": {
         "licenses": "MPL-2.0",
         "repository": "https://github.com/BurntToasters/CONV2",
         "licenseUrl": "https://github.com/BurntToasters/CONV2/raw/master/LICENSE",
         "parents": "UNDEFINED"
+    },
+    "core-util-is@1.0.2": {
+        "licenses": "MIT",
+        "repository": "https://github.com/isaacs/core-util-is",
+        "licenseUrl": "https://github.com/isaacs/core-util-is/raw/master/LICENSE",
+        "parents": "conv2"
+    },
+    "crc@3.8.0": {
+        "licenses": "MIT",
+        "repository": "https://github.com/alexgorbatchev/node-crc",
+        "licenseUrl": "https://github.com/alexgorbatchev/node-crc/raw/master/LICENSE",
+        "parents": "conv2"
     },
     "cross-dirname@0.1.0": {
         "licenses": "MIT",
@@ -597,10 +603,16 @@
         "licenseUrl": "https://github.com/gliviu/dir-compare/raw/master/LICENSE",
         "parents": "conv2"
     },
-    "dmg-builder@26.0.12": {
+    "dmg-builder@26.4.0": {
         "licenses": "MIT",
         "repository": "https://github.com/electron-userland/electron-builder",
         "licenseUrl": "https://github.com/electron-userland/electron-builder",
+        "parents": "conv2"
+    },
+    "dmg-license@1.0.11": {
+        "licenses": "MIT",
+        "repository": "https://github.com/argv-minus-one/dmg-license",
+        "licenseUrl": "https://github.com/argv-minus-one/dmg-license/raw/master/LICENSE",
         "parents": "conv2"
     },
     "dotenv-cli@7.4.4": {
@@ -613,13 +625,13 @@
         "licenses": "BSD-2-Clause",
         "repository": "https://github.com/motdotla/dotenv-expand",
         "licenseUrl": "https://github.com/motdotla/dotenv-expand/raw/master/LICENSE",
-        "parents": "dotenv-cli:conv2"
+        "parents": "conv2"
     },
     "dotenv-expand@11.0.7": {
         "licenses": "BSD-2-Clause",
         "repository": "https://github.com/motdotla/dotenv-expand",
         "licenseUrl": "https://github.com/motdotla/dotenv-expand/raw/master/LICENSE",
-        "parents": "conv2"
+        "parents": "app-builder-lib:conv2"
     },
     "dotenv@16.6.1": {
         "licenses": "BSD-2-Clause",
@@ -645,25 +657,25 @@
         "licenseUrl": "https://github.com/mde/ejs/raw/master/LICENSE",
         "parents": "conv2"
     },
-    "electron-builder-squirrel-windows@26.0.12": {
+    "electron-builder-squirrel-windows@26.4.0": {
         "licenses": "MIT",
         "repository": "https://github.com/electron-userland/electron-builder",
         "licenseUrl": "https://github.com/electron-userland/electron-builder/raw/master/LICENSE",
         "parents": "conv2"
     },
-    "electron-builder@26.0.12": {
+    "electron-builder@26.4.0": {
         "licenses": "MIT",
         "repository": "https://github.com/electron-userland/electron-builder",
         "licenseUrl": "https://github.com/electron-userland/electron-builder/raw/master/LICENSE",
         "parents": "conv2"
     },
-    "electron-publish@26.0.11": {
+    "electron-publish@26.3.4": {
         "licenses": "MIT",
         "repository": "https://github.com/electron-userland/electron-builder",
         "licenseUrl": "https://github.com/electron-userland/electron-builder/raw/master/LICENSE",
         "parents": "conv2"
     },
-    "electron-updater@6.6.2": {
+    "electron-updater@6.7.3": {
         "licenses": "MIT",
         "repository": "https://github.com/electron-userland/electron-builder",
         "licenseUrl": "https://github.com/electron-userland/electron-builder/raw/master/LICENSE",
@@ -771,6 +783,12 @@
         "licenseUrl": "https://github.com/maxogden/extract-zip/raw/master/LICENSE",
         "parents": "conv2"
     },
+    "extsprintf@1.4.1": {
+        "licenses": "MIT",
+        "repository": "https://github.com/davepacheco/node-extsprintf",
+        "licenseUrl": "https://github.com/davepacheco/node-extsprintf/raw/master/LICENSE",
+        "parents": "conv2"
+    },
     "fast-deep-equal@3.1.3": {
         "licenses": "MIT",
         "repository": "https://github.com/epoberezkin/fast-deep-equal",
@@ -787,6 +805,12 @@
         "licenses": "MIT",
         "repository": "https://github.com/andrewrk/node-fd-slicer",
         "licenseUrl": "https://github.com/andrewrk/node-fd-slicer/raw/master/LICENSE",
+        "parents": "conv2"
+    },
+    "fdir@6.5.0": {
+        "licenses": "MIT",
+        "repository": "https://github.com/thecodrr/fdir",
+        "licenseUrl": "https://github.com/thecodrr/fdir/raw/master/LICENSE",
         "parents": "conv2"
     },
     "filelist@1.0.4": {
@@ -841,6 +865,12 @@
         "licenses": "ISC",
         "repository": "https://github.com/npm/fs-minipass",
         "licenseUrl": "https://github.com/npm/fs-minipass/raw/master/LICENSE",
+        "parents": "tar:conv2"
+    },
+    "fs-minipass@3.0.3": {
+        "licenses": "ISC",
+        "repository": "https://github.com/npm/fs-minipass",
+        "licenseUrl": "https://github.com/npm/fs-minipass/raw/master/LICENSE",
         "parents": "conv2"
     },
     "fs.realpath@1.0.0": {
@@ -883,19 +913,13 @@
         "licenses": "ISC",
         "repository": "https://github.com/isaacs/node-glob",
         "licenseUrl": "https://github.com/isaacs/node-glob/raw/master/LICENSE",
-        "parents": "config-file-ts:conv2"
+        "parents": "cacache:conv2"
     },
     "glob@7.2.3": {
         "licenses": "ISC",
         "repository": "https://github.com/isaacs/node-glob",
         "licenseUrl": "https://github.com/isaacs/node-glob/raw/master/LICENSE",
         "parents": "conv2"
-    },
-    "glob@8.1.0": {
-        "licenses": "ISC",
-        "repository": "https://github.com/isaacs/node-glob",
-        "licenseUrl": "https://github.com/isaacs/node-glob/raw/master/LICENSE",
-        "parents": "@electron/node-gyp:conv2"
     },
     "global-agent@3.0.0": {
         "licenses": "BSD-3-Clause",
@@ -969,12 +993,6 @@
         "licenseUrl": "https://github.com/kornelski/http-cache-semantics/raw/master/LICENSE",
         "parents": "conv2"
     },
-    "http-proxy-agent@5.0.0": {
-        "licenses": "MIT",
-        "repository": "https://github.com/TooTallNate/node-http-proxy-agent",
-        "licenseUrl": "https://github.com/TooTallNate/node-http-proxy-agent",
-        "parents": "make-fetch-happen:conv2"
-    },
     "http-proxy-agent@7.0.2": {
         "licenses": "MIT",
         "repository": "https://github.com/TooTallNate/proxy-agents",
@@ -987,22 +1005,16 @@
         "licenseUrl": "https://github.com/szmarczak/http2-wrapper/raw/master/LICENSE",
         "parents": "conv2"
     },
-    "https-proxy-agent@5.0.1": {
-        "licenses": "MIT",
-        "repository": "https://github.com/TooTallNate/node-https-proxy-agent",
-        "licenseUrl": "https://github.com/TooTallNate/node-https-proxy-agent",
-        "parents": "make-fetch-happen:conv2"
-    },
     "https-proxy-agent@7.0.6": {
         "licenses": "MIT",
         "repository": "https://github.com/TooTallNate/proxy-agents",
         "licenseUrl": "https://github.com/TooTallNate/proxy-agents/raw/master/LICENSE",
         "parents": "conv2"
     },
-    "humanize-ms@1.2.1": {
+    "iconv-corefoundation@1.1.7": {
         "licenses": "MIT",
-        "repository": "https://github.com/node-modules/humanize-ms",
-        "licenseUrl": "https://github.com/node-modules/humanize-ms/raw/master/LICENSE",
+        "repository": "https://github.com/argv-minus-one/iconv-corefoundation",
+        "licenseUrl": "https://github.com/argv-minus-one/iconv-corefoundation/raw/master/LICENSE",
         "parents": "conv2"
     },
     "iconv-lite@0.6.3": {
@@ -1023,18 +1035,6 @@
         "licenseUrl": "https://github.com/jensyt/imurmurhash-js",
         "parents": "conv2"
     },
-    "indent-string@4.0.0": {
-        "licenses": "MIT",
-        "repository": "https://github.com/sindresorhus/indent-string",
-        "licenseUrl": "https://github.com/sindresorhus/indent-string/raw/master/license",
-        "parents": "conv2"
-    },
-    "infer-owner@1.0.4": {
-        "licenses": "ISC",
-        "repository": "https://github.com/npm/infer-owner",
-        "licenseUrl": "https://github.com/npm/infer-owner/raw/master/LICENSE",
-        "parents": "conv2"
-    },
     "inflight@1.0.6": {
         "licenses": "ISC",
         "repository": "https://github.com/npm/inflight",
@@ -1053,12 +1053,6 @@
         "licenseUrl": "https://github.com/beaugunderson/ip-address/raw/master/LICENSE",
         "parents": "conv2"
     },
-    "is-ci@3.0.1": {
-        "licenses": "MIT",
-        "repository": "https://github.com/watson/is-ci",
-        "licenseUrl": "https://github.com/watson/is-ci/raw/master/LICENSE",
-        "parents": "conv2"
-    },
     "is-fullwidth-code-point@3.0.0": {
         "licenses": "MIT",
         "repository": "https://github.com/sindresorhus/is-fullwidth-code-point",
@@ -1069,12 +1063,6 @@
         "licenses": "MIT",
         "repository": "https://github.com/sindresorhus/is-interactive",
         "licenseUrl": "https://github.com/sindresorhus/is-interactive/raw/master/license",
-        "parents": "conv2"
-    },
-    "is-lambda@1.0.1": {
-        "licenses": "MIT",
-        "repository": "https://github.com/watson/is-lambda",
-        "licenseUrl": "https://github.com/watson/is-lambda/raw/master/LICENSE",
         "parents": "conv2"
     },
     "is-unicode-supported@0.1.0": {
@@ -1101,6 +1089,12 @@
         "licenseUrl": "https://github.com/isaacs/isexe/raw/master/LICENSE",
         "parents": "conv2"
     },
+    "isexe@3.1.1": {
+        "licenses": "ISC",
+        "repository": "https://github.com/isaacs/isexe",
+        "licenseUrl": "https://github.com/isaacs/isexe/raw/master/LICENSE",
+        "parents": "node-gyp:conv2"
+    },
     "jackspeak@3.4.3": {
         "licenses": "BlueOak-1.0.0",
         "repository": "https://github.com/isaacs/jackspeak",
@@ -1111,6 +1105,12 @@
         "licenses": "Apache-2.0",
         "repository": "https://github.com/jakejs/jake",
         "licenseUrl": "https://github.com/jakejs/jake",
+        "parents": "conv2"
+    },
+    "jiti@2.6.1": {
+        "licenses": "MIT",
+        "repository": "https://github.com/unjs/jiti",
+        "licenseUrl": "https://github.com/unjs/jiti/raw/master/LICENSE",
         "parents": "conv2"
     },
     "js-yaml@4.1.1": {
@@ -1201,7 +1201,7 @@
         "licenses": "ISC",
         "repository": "https://github.com/isaacs/node-lru-cache",
         "licenseUrl": "https://github.com/isaacs/node-lru-cache/raw/master/LICENSE",
-        "parents": "path-scurry:conv2"
+        "parents": "@npmcli/agent:conv2"
     },
     "lru-cache@6.0.0": {
         "licenses": "ISC",
@@ -1209,13 +1209,7 @@
         "licenseUrl": "https://github.com/isaacs/node-lru-cache/raw/master/LICENSE",
         "parents": "conv2"
     },
-    "lru-cache@7.18.3": {
-        "licenses": "ISC",
-        "repository": "https://github.com/isaacs/node-lru-cache",
-        "licenseUrl": "https://github.com/isaacs/node-lru-cache/raw/master/LICENSE",
-        "parents": "cacache:conv2"
-    },
-    "make-fetch-happen@10.2.1": {
+    "make-fetch-happen@14.0.3": {
         "licenses": "ISC",
         "repository": "https://github.com/npm/make-fetch-happen",
         "licenseUrl": "https://github.com/npm/make-fetch-happen/raw/master/LICENSE",
@@ -1285,13 +1279,13 @@
         "licenses": "ISC",
         "repository": "https://github.com/isaacs/minimatch",
         "licenseUrl": "https://github.com/isaacs/minimatch/raw/master/LICENSE",
-        "parents": "@electron/node-gyp:conv2"
+        "parents": "filelist:conv2"
     },
     "minimatch@9.0.5": {
         "licenses": "ISC",
         "repository": "https://github.com/isaacs/minimatch",
         "licenseUrl": "https://github.com/isaacs/minimatch/raw/master/LICENSE",
-        "parents": "@electron/universal:conv2"
+        "parents": "cacache:conv2"
     },
     "minimist@1.2.8": {
         "licenses": "MIT",
@@ -1299,11 +1293,13 @@
         "licenseUrl": "https://github.com/minimistjs/minimist/raw/master/LICENSE",
         "parents": "conv2"
     },
-    "minipass-collect@1.0.2": {
+    "minipass-collect@2.0.1": {
         "licenses": "ISC",
+        "repository": "https://github.com/isaacs/minipass-collect",
+        "licenseUrl": "https://github.com/isaacs/minipass-collect/raw/master/LICENSE",
         "parents": "conv2"
     },
-    "minipass-fetch@2.1.2": {
+    "minipass-fetch@4.0.1": {
         "licenses": "MIT",
         "repository": "https://github.com/npm/minipass-fetch",
         "licenseUrl": "https://github.com/npm/minipass-fetch/raw/master/LICENSE",
@@ -1329,7 +1325,7 @@
         "licenses": "ISC",
         "repository": "https://github.com/isaacs/minipass",
         "licenseUrl": "https://github.com/isaacs/minipass/raw/master/LICENSE",
-        "parents": "conv2"
+        "parents": "minipass-flush:conv2"
     },
     "minipass@5.0.0": {
         "licenses": "ISC",
@@ -1341,9 +1337,15 @@
         "licenses": "ISC",
         "repository": "https://github.com/isaacs/minipass",
         "licenseUrl": "https://github.com/isaacs/minipass/raw/master/LICENSE",
-        "parents": "config-file-ts:conv2"
+        "parents": "conv2"
     },
     "minizlib@2.1.2": {
+        "licenses": "MIT",
+        "repository": "https://github.com/isaacs/minizlib",
+        "licenseUrl": "https://github.com/isaacs/minizlib/raw/master/LICENSE",
+        "parents": "tar:conv2"
+    },
+    "minizlib@3.1.0": {
         "licenses": "MIT",
         "repository": "https://github.com/isaacs/minizlib",
         "licenseUrl": "https://github.com/isaacs/minizlib/raw/master/LICENSE",
@@ -1367,16 +1369,22 @@
         "licenseUrl": "https://github.com/vercel/ms/raw/master/license.md",
         "parents": "conv2"
     },
-    "negotiator@0.6.4": {
+    "negotiator@1.0.0": {
         "licenses": "MIT",
         "repository": "https://github.com/jshttp/negotiator",
         "licenseUrl": "https://github.com/jshttp/negotiator/raw/master/LICENSE",
         "parents": "conv2"
     },
-    "node-abi@3.85.0": {
+    "node-abi@4.24.0": {
         "licenses": "MIT",
         "repository": "https://github.com/electron/node-abi",
         "licenseUrl": "https://github.com/electron/node-abi/raw/master/LICENSE",
+        "parents": "conv2"
+    },
+    "node-addon-api@1.7.2": {
+        "licenses": "MIT",
+        "repository": "https://github.com/nodejs/node-addon-api",
+        "licenseUrl": "https://github.com/nodejs/node-addon-api/raw/master/LICENSE.md",
         "parents": "conv2"
     },
     "node-api-version@0.2.1": {
@@ -1385,7 +1393,13 @@
         "licenseUrl": "https://github.com/timfish/node-api-version",
         "parents": "conv2"
     },
-    "nopt@6.0.0": {
+    "node-gyp@11.5.0": {
+        "licenses": "MIT",
+        "repository": "https://github.com/nodejs/node-gyp",
+        "licenseUrl": "https://github.com/nodejs/node-gyp/raw/master/LICENSE",
+        "parents": "conv2"
+    },
+    "nopt@8.1.0": {
         "licenses": "ISC",
         "repository": "https://github.com/npm/nopt",
         "licenseUrl": "https://github.com/npm/nopt/raw/master/LICENSE",
@@ -1433,7 +1447,7 @@
         "licenseUrl": "https://github.com/sindresorhus/p-limit/raw/master/license",
         "parents": "conv2"
     },
-    "p-map@4.0.0": {
+    "p-map@7.0.4": {
         "licenses": "MIT",
         "repository": "https://github.com/sindresorhus/p-map",
         "licenseUrl": "https://github.com/sindresorhus/p-map/raw/master/license",
@@ -1481,6 +1495,12 @@
         "licenseUrl": "https://github.com/alexeyraspopov/picocolors/raw/master/LICENSE",
         "parents": "conv2"
     },
+    "picomatch@4.0.3": {
+        "licenses": "MIT",
+        "repository": "https://github.com/micromatch/picomatch",
+        "licenseUrl": "https://github.com/micromatch/picomatch/raw/master/LICENSE",
+        "parents": "conv2"
+    },
     "plist@3.1.0": {
         "licenses": "MIT",
         "repository": "https://github.com/TooTallNate/node-plist",
@@ -1493,7 +1513,7 @@
         "licenseUrl": "https://github.com/nodejs/postject/raw/master/LICENSE",
         "parents": "conv2"
     },
-    "proc-log@2.0.1": {
+    "proc-log@5.0.0": {
         "licenses": "ISC",
         "repository": "https://github.com/npm/proc-log",
         "licenseUrl": "https://github.com/npm/proc-log/raw/master/LICENSE",
@@ -1503,12 +1523,6 @@
         "licenses": "MIT",
         "repository": "https://github.com/visionmedia/node-progress",
         "licenseUrl": "https://github.com/visionmedia/node-progress/raw/master/LICENSE",
-        "parents": "conv2"
-    },
-    "promise-inflight@1.0.1": {
-        "licenses": "ISC",
-        "repository": "https://github.com/iarna/promise-inflight",
-        "licenseUrl": "https://github.com/iarna/promise-inflight/raw/master/LICENSE",
         "parents": "conv2"
     },
     "promise-retry@2.0.1": {
@@ -1584,12 +1598,6 @@
         "parents": "conv2"
     },
     "rimraf@2.6.3": {
-        "licenses": "ISC",
-        "repository": "https://github.com/isaacs/rimraf",
-        "licenseUrl": "https://github.com/isaacs/rimraf/raw/master/LICENSE",
-        "parents": "temp:conv2"
-    },
-    "rimraf@3.0.2": {
         "licenses": "ISC",
         "repository": "https://github.com/isaacs/rimraf",
         "licenseUrl": "https://github.com/isaacs/rimraf/raw/master/LICENSE",
@@ -1685,16 +1693,22 @@
         "licenseUrl": "https://github.com/alexbrazier/simple-update-notifier/raw/master/LICENSE",
         "parents": "conv2"
     },
+    "slice-ansi@3.0.0": {
+        "licenses": "MIT",
+        "repository": "https://github.com/chalk/slice-ansi",
+        "licenseUrl": "https://github.com/chalk/slice-ansi/raw/master/license",
+        "parents": "conv2"
+    },
     "smart-buffer@4.2.0": {
         "licenses": "MIT",
         "repository": "https://github.com/JoshGlazebrook/smart-buffer",
         "licenseUrl": "https://github.com/JoshGlazebrook/smart-buffer/raw/master/LICENSE",
         "parents": "conv2"
     },
-    "socks-proxy-agent@7.0.0": {
+    "socks-proxy-agent@8.0.5": {
         "licenses": "MIT",
-        "repository": "https://github.com/TooTallNate/node-socks-proxy-agent",
-        "licenseUrl": "https://github.com/TooTallNate/node-socks-proxy-agent",
+        "repository": "https://github.com/TooTallNate/proxy-agents",
+        "licenseUrl": "https://github.com/TooTallNate/proxy-agents/raw/master/LICENSE",
         "parents": "conv2"
     },
     "socks@2.8.7": {
@@ -1721,7 +1735,7 @@
         "licenseUrl": "https://github.com/alexei/sprintf.js/raw/master/LICENSE",
         "parents": "conv2"
     },
-    "ssri@9.0.1": {
+    "ssri@12.0.0": {
         "licenses": "ISC",
         "repository": "https://github.com/npm/ssri",
         "licenseUrl": "https://github.com/npm/ssri/raw/master/LICENSE.md",
@@ -1781,6 +1795,12 @@
         "licenseUrl": "https://github.com/isaacs/node-tar/raw/master/LICENSE",
         "parents": "conv2"
     },
+    "tar@7.5.2": {
+        "licenses": "BlueOak-1.0.0",
+        "repository": "https://github.com/isaacs/node-tar",
+        "licenseUrl": "https://github.com/isaacs/node-tar/raw/master/LICENSE.md",
+        "parents": "cacache:conv2"
+    },
     "temp-file@3.4.0": {
         "licenses": "MIT",
         "repository": "https://github.com/develar/temp-file",
@@ -1803,6 +1823,12 @@
         "licenses": "MIT",
         "repository": "https://github.com/binier/tiny-typed-emitter",
         "licenseUrl": "https://github.com/binier/tiny-typed-emitter/raw/master/LICENSE",
+        "parents": "conv2"
+    },
+    "tinyglobby@0.2.15": {
+        "licenses": "MIT",
+        "repository": "https://github.com/SuperchupuDev/tinyglobby",
+        "licenseUrl": "https://github.com/SuperchupuDev/tinyglobby/raw/master/LICENSE",
         "parents": "conv2"
     },
     "tmp-promise@3.0.3": {
@@ -1839,21 +1865,21 @@
         "licenses": "MIT",
         "repository": "https://github.com/nodejs/undici",
         "licenseUrl": "https://github.com/nodejs/undici/raw/master/LICENSE",
-        "parents": "conv2"
+        "parents": "electron:conv2"
     },
     "undici-types@7.16.0": {
         "licenses": "MIT",
         "repository": "https://github.com/nodejs/undici",
         "licenseUrl": "https://github.com/nodejs/undici/raw/master/LICENSE",
-        "parents": "@types/node:conv2"
+        "parents": "conv2"
     },
-    "unique-filename@2.0.1": {
+    "unique-filename@4.0.0": {
         "licenses": "ISC",
         "repository": "https://github.com/npm/unique-filename",
         "licenseUrl": "https://github.com/npm/unique-filename/raw/master/LICENSE",
         "parents": "conv2"
     },
-    "unique-slug@3.0.0": {
+    "unique-slug@5.0.0": {
         "licenses": "ISC",
         "repository": "https://github.com/npm/unique-slug",
         "licenseUrl": "https://github.com/npm/unique-slug/raw/master/LICENSE",
@@ -1889,6 +1915,12 @@
         "licenseUrl": "https://github.com/TooTallNate/util-deprecate/raw/master/LICENSE",
         "parents": "conv2"
     },
+    "verror@1.10.1": {
+        "licenses": "MIT",
+        "repository": "https://github.com/joyent/node-verror",
+        "licenseUrl": "https://github.com/joyent/node-verror/raw/master/LICENSE",
+        "parents": "conv2"
+    },
     "wcwidth@1.0.1": {
         "licenses": "MIT",
         "repository": "https://github.com/timoxley/wcwidth",
@@ -1900,6 +1932,12 @@
         "repository": "https://github.com/isaacs/node-which",
         "licenseUrl": "https://github.com/isaacs/node-which/raw/master/LICENSE",
         "parents": "conv2"
+    },
+    "which@5.0.0": {
+        "licenses": "ISC",
+        "repository": "https://github.com/npm/node-which",
+        "licenseUrl": "https://github.com/npm/node-which/raw/master/LICENSE",
+        "parents": "node-gyp:conv2"
     },
     "wrap-ansi@7.0.0": {
         "licenses": "MIT",
@@ -1936,6 +1974,12 @@
         "repository": "https://github.com/isaacs/yallist",
         "licenseUrl": "https://github.com/isaacs/yallist/raw/master/LICENSE",
         "parents": "conv2"
+    },
+    "yallist@5.0.0": {
+        "licenses": "BlueOak-1.0.0",
+        "repository": "https://github.com/isaacs/yallist",
+        "licenseUrl": "https://github.com/isaacs/yallist/raw/master/LICENSE.md",
+        "parents": "cacache:conv2"
     },
     "yargs-parser@21.1.1": {
         "licenses": "ISC",
