@@ -67,6 +67,7 @@ let presets: Preset[] = [];
 let conversionStartTime = 0;
 let lastOutputPath = '';
 let themeListenerRegistered = false;
+let convertBtnOriginalHTML = '';
 
 const elements = {
   dropZone: document.getElementById('dropZone') as HTMLDivElement,
@@ -182,7 +183,7 @@ const buildLicenseEntries = (data: Record<string, LicenseCrawlerEntry> | null): 
       name: 'FFmpeg',
       license: 'GPL-2.0-or-later',
       link: 'https://ffmpeg.org/',
-      note: 'Bundled builds include x264/x265 (GPL). License text: ffmpeg/LICENSE.txt. Source offer: ffmpeg/SOURCE_OFFER.txt.',
+      note: 'Bundled GPL static builds include x264, x265, lame, libass, fribidi, freetype, fontconfig, libiconv, enca, and expat. License text: ffmpeg/LICENSE.txt. Source offer: ffmpeg/SOURCE_OFFER.txt.',
       isSpecial: true,
     },
     {
@@ -198,17 +199,10 @@ const buildLicenseEntries = (data: Record<string, LicenseCrawlerEntry> | null): 
       isSpecial: true,
     },
     {
-      name: 'FFmpeg macOS binaries',
+      name: 'FFmpeg binaries',
       license: 'GPL-2.0-or-later',
-      link: 'https://www.osxexperts.net/',
-      note: 'Pre-built macOS binaries provided by OSXExperts.',
-      isSpecial: true,
-    },
-    {
-      name: 'FFmpeg Windows/Linux binaries',
-      license: 'GPL-2.0-or-later',
-      link: 'https://github.com/BtbN/FFmpeg-Builds',
-      note: 'Pre-built Windows and Linux binaries by BtbN.',
+      link: 'https://github.com/BurntToasters/ffmpeg-static-builds',
+      note: 'Pre-built FFmpeg 8.0 static binaries for all platforms. Source code available at the linked repository.',
       isSpecial: true,
     },
     {
@@ -326,6 +320,7 @@ const closeCreditsModal = (): void => {
 };
 
 const init = async () => {
+  convertBtnOriginalHTML = elements.convertBtn.innerHTML;
   await checkFFmpeg();
   await checkPlatform();
   await loadSettings();
@@ -340,15 +335,9 @@ const init = async () => {
 const checkPlatform = async () => {
   const platform = await window.electronAPI.getPlatform();
   if (platform === 'darwin') {
-    const option = document.createElement('option');
-    option.value = 'apple';
-    option.textContent = 'Apple Silicon (VideoToolbox)';
-    option.title = 'Apple VideoToolbox. Requires Apple Silicon (M1/M2/M3) or Intel Mac with T2.';
-    // Insert after CPU
-    if (elements.gpuSelect.children.length > 0) {
-      elements.gpuSelect.insertBefore(option, elements.gpuSelect.children[1]);
-    } else {
-      elements.gpuSelect.appendChild(option);
+    const appleOption = elements.gpuSelect.querySelector<HTMLOptionElement>('option[value="apple"]');
+    if (appleOption) {
+      appleOption.hidden = false;
     }
   }
 };
@@ -749,7 +738,7 @@ document.getElementById('rosie-run')?.addEventListener('click', (e) => {
     isConverting = false;
     elements.progressContainer.classList.remove('visible');
     elements.convertBtn.disabled = false;
-    elements.convertBtn.innerHTML = '<svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg>Convert';
+    elements.convertBtn.innerHTML = convertBtnOriginalHTML;
     elements.convertBtn.classList.remove('converting');
     elements.cancelBtn.style.display = 'none';
 
@@ -771,7 +760,7 @@ document.getElementById('rosie-run')?.addEventListener('click', (e) => {
     isConverting = false;
     elements.progressContainer.classList.remove('visible');
     elements.convertBtn.disabled = false;
-    elements.convertBtn.innerHTML = '<svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg>Convert';
+    elements.convertBtn.innerHTML = convertBtnOriginalHTML;
     elements.convertBtn.classList.remove('converting');
     elements.cancelBtn.style.display = 'none';
 
@@ -918,7 +907,7 @@ const cancelConversion = async () => {
   isConverting = false;
   elements.progressContainer.classList.remove('visible');
   elements.convertBtn.disabled = false;
-  elements.convertBtn.innerHTML = '<svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg>Convert';
+  elements.convertBtn.innerHTML = convertBtnOriginalHTML;
   elements.convertBtn.classList.remove('converting');
 
   showStatus('warning', 'Conversion cancelled');

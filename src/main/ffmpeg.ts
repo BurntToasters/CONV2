@@ -115,11 +115,11 @@ const canceledProcesses = new Set<ChildProcess>();
 
 export const checkFFmpegInstalled = async (): Promise<boolean> => {
   return new Promise((resolve) => {
-    const process = spawn(getFFmpegPath(), ['-version']);
-    process.on('close', (code) => {
+    const proc = spawn(getFFmpegPath(), ['-version']);
+    proc.on('close', (code) => {
       resolve(code === 0);
     });
-    process.on('error', () => {
+    proc.on('error', () => {
       resolve(false);
     });
   });
@@ -128,20 +128,25 @@ export const checkFFmpegInstalled = async (): Promise<boolean> => {
 let encoderCache: Set<string> | null = null;
 let decoderCache: Set<string> | null = null;
 
+export const clearFFmpegCaches = (): void => {
+  encoderCache = null;
+  decoderCache = null;
+};
+
 export const getAvailableEncoders = async (): Promise<Set<string>> => {
   if (encoderCache) {
     return encoderCache;
   }
 
   return new Promise((resolve) => {
-    const process = spawn(getFFmpegPath(), ['-encoders', '-hide_banner']);
+    const proc = spawn(getFFmpegPath(), ['-encoders', '-hide_banner']);
     let output = '';
 
-    process.stdout?.on('data', (data) => {
+    proc.stdout?.on('data', (data) => {
       output += data.toString();
     });
 
-    process.on('close', () => {
+    proc.on('close', () => {
       const encoders = new Set<string>();
       const lines = output.split('\n');
       for (const line of lines) {
@@ -154,7 +159,7 @@ export const getAvailableEncoders = async (): Promise<Set<string>> => {
       resolve(encoders);
     });
 
-    process.on('error', () => {
+    proc.on('error', () => {
       resolve(new Set());
     });
   });
@@ -171,14 +176,14 @@ export const getAvailableDecoders = async (): Promise<Set<string>> => {
   }
 
   return new Promise((resolve) => {
-    const process = spawn(getFFmpegPath(), ['-decoders', '-hide_banner']);
+    const proc = spawn(getFFmpegPath(), ['-decoders', '-hide_banner']);
     let output = '';
 
-    process.stdout?.on('data', (data) => {
+    proc.stdout?.on('data', (data) => {
       output += data.toString();
     });
 
-    process.on('close', () => {
+    proc.on('close', () => {
       const decoders = new Set<string>();
       const lines = output.split('\n');
       for (const line of lines) {
@@ -191,7 +196,7 @@ export const getAvailableDecoders = async (): Promise<Set<string>> => {
       resolve(decoders);
     });
 
-    process.on('error', () => {
+    proc.on('error', () => {
       resolve(new Set());
     });
   });

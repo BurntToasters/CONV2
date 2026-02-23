@@ -1,12 +1,16 @@
 node_modules/
 dist/
 release/
-build-dir/
+build-dir*/
+repo/
 .flatpak-builder/
 *.log
+*.bak
+*.flatpak
 .DS_Store
 Thumbs.db
 .env
+licenses.json
 **/.*/
 !.github/
 

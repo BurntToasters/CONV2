@@ -12,6 +12,7 @@ import {
 } from './ffmpeg';
 import { initUpdater, checkForUpdates, checkForUpdatesSilent, isUpdateDisabled } from './updater';
 import { setUseSystemFFmpeg } from './ffmpegPath';
+import { clearFFmpegCaches } from './ffmpeg';
 
 if (process.platform === 'darwin') {
   const commonPaths = [
@@ -74,6 +75,7 @@ const loadSettings = (): void => {
     settings = { ...defaultSettings };
   }
   setUseSystemFFmpeg(settings.useSystemFFmpeg);
+  clearFFmpegCaches();
 };
 
 const saveSettings = (): void => {
@@ -288,6 +290,7 @@ ipcMain.handle('save-settings', (_, newSettings: Partial<AppSettings>) => {
   saveSettings();
   if (newSettings.useSystemFFmpeg !== undefined) {
     setUseSystemFFmpeg(settings.useSystemFFmpeg);
+    clearFFmpegCaches();
   }
 });
 

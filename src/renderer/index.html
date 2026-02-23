@@ -64,6 +64,7 @@
         <label for="gpuSelect">Hardware Acceleration</label>
         <select id="gpuSelect">
           <option value="cpu" title="Uses CPU for encoding. Slower but always available.">CPU (Software)</option>
+          <option value="apple" hidden title="Apple VideoToolbox. Requires Apple Silicon (M1/M2/M3) or Intel Mac with T2.">Apple Silicon (VideoToolbox)</option>
           <option value="nvidia" title="NVIDIA NVENC. Requires NVIDIA GPU with NVENC support.">NVIDIA (NVENC)</option>
           <option value="amd" title="AMD AMF. Requires AMD GPU with AMF support.">AMD (AMF)</option>
           <option value="intel" title="Intel Quick Sync. Requires Intel CPU/GPU with QSV support.">Intel (Quick Sync)</option>
