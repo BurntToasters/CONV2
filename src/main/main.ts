@@ -21,7 +21,7 @@ if (process.platform === 'darwin') {
     '/usr/bin',
     '/bin',
     '/usr/sbin',
-    '/sbin'
+    '/sbin',
   ];
 
   const currentPath = process.env.PATH || '';
@@ -140,27 +140,32 @@ const createWindow = (): void => {
   mainWindow.on('close', (e) => {
     if (isConversionActive) {
       e.preventDefault();
-      dialog.showMessageBox(mainWindow!, {
-        type: 'warning',
-        title: 'Conversion in Progress',
-        message: 'A conversion is currently running. Are you sure you want to quit?',
-        buttons: ['Cancel', 'Quit Anyway'],
-        defaultId: 0,
-        cancelId: 0,
-      }).then((result) => {
-        if (result.response === 1) {
-          cancelConversion(true);
-          isConversionActive = false;
-          mainWindow?.destroy();
-        }
-      });
+      dialog
+        .showMessageBox(mainWindow!, {
+          type: 'warning',
+          title: 'Conversion in Progress',
+          message: 'A conversion is currently running. Are you sure you want to quit?',
+          buttons: ['Cancel', 'Quit Anyway'],
+          defaultId: 0,
+          cancelId: 0,
+        })
+        .then((result) => {
+          if (result.response === 1) {
+            cancelConversion(true);
+            isConversionActive = false;
+            mainWindow?.destroy();
+          }
+        });
     }
   });
 
   initUpdater(mainWindow);
 
   nativeTheme.on('updated', () => {
-    mainWindow?.webContents.send('theme-changed', nativeTheme.shouldUseDarkColors ? 'dark' : 'light');
+    mainWindow?.webContents.send(
+      'theme-changed',
+      nativeTheme.shouldUseDarkColors ? 'dark' : 'light'
+    );
   });
 };
 
@@ -185,7 +190,10 @@ ipcMain.handle('select-file', async () => {
   const result = await dialog.showOpenDialog(mainWindow!, {
     properties: ['openFile'],
     filters: [
-      { name: 'Video Files', extensions: ['mp4', 'mkv', 'avi', 'mov', 'wmv', 'flv', 'webm', 'm4v', 'mpeg', 'mpg', '3gp'] },
+      {
+        name: 'Video Files',
+        extensions: ['mp4', 'mkv', 'avi', 'mov', 'wmv', 'flv', 'webm', 'm4v', 'mpeg', 'mpg', '3gp'],
+      },
       { name: 'All Files', extensions: ['*'] },
     ],
   });
@@ -199,60 +207,65 @@ ipcMain.handle('select-output-directory', async () => {
   return result.canceled ? null : result.filePaths[0];
 });
 
-ipcMain.handle('start-conversion', async (_, inputPath: string, presetId: string, gpuOverride?: GPUVendor) => {
-  const preset = getPresetById(presetId);
-  if (!preset) {
-    mainWindow?.webContents.send('conversion-complete', {
-      success: false,
-      outputPath: '',
-      error: 'Invalid preset selected',
-    });
-    return;
-  }
-
-  const gpu = gpuOverride ?? settings.gpu;
-  const codecCategory = preset.category;
-  const isVideoPreset = ['av1', 'h264', 'h265'].includes(codecCategory);
-
-  if (isVideoPreset && gpu !== 'cpu') {
-    const codec = codecCategory as 'av1' | 'h264' | 'h265';
-    const encoderCheck = await checkGPUEncoderSupport(gpu, codec);
-    if (!encoderCheck.available && encoderCheck.error) {
-      mainWindow?.webContents.send('gpu-encoder-error', encoderCheck.error);
+ipcMain.handle(
+  'start-conversion',
+  async (_, inputPath: string, presetId: string, gpuOverride?: GPUVendor) => {
+    const preset = getPresetById(presetId);
+    if (!preset) {
+      mainWindow?.webContents.send('conversion-complete', {
+        success: false,
+        outputPath: '',
+        error: 'Invalid preset selected',
+      });
       return;
     }
-  }
 
-  const outputDir = settings.outputDirectory || path.dirname(inputPath);
-  isConversionActive = true;
+    const gpu = gpuOverride ?? settings.gpu;
+    const codecCategory = preset.category;
+    const isVideoPreset = ['av1', 'h264', 'h265'].includes(codecCategory);
 
-  const result = await convertVideo(
-    inputPath,
-    outputDir,
-    preset,
-    gpu,
-    (progress) => {
-      mainWindow?.webContents.send('conversion-progress', progress);
-    },
-    settings.showDebugOutput ? (message) => {
-      mainWindow?.webContents.send('conversion-log', message);
-    } : undefined
-  );
-
-  isConversionActive = false;
-  lastOutputPath = result.outputPath;
-
-  if (!result.success && result.error && gpu !== 'cpu' && isVideoPreset) {
-    const codec = codecCategory as 'av1' | 'h264' | 'h265';
-    const gpuError = parseGPUError(result.error, gpu, codec);
-    if (gpuError) {
-      mainWindow?.webContents.send('gpu-encoder-error', gpuError);
-      return;
+    if (isVideoPreset && gpu !== 'cpu') {
+      const codec = codecCategory as 'av1' | 'h264' | 'h265';
+      const encoderCheck = await checkGPUEncoderSupport(gpu, codec);
+      if (!encoderCheck.available && encoderCheck.error) {
+        mainWindow?.webContents.send('gpu-encoder-error', encoderCheck.error);
+        return;
+      }
     }
-  }
 
-  mainWindow?.webContents.send('conversion-complete', result);
-});
+    const outputDir = settings.outputDirectory || path.dirname(inputPath);
+    isConversionActive = true;
+
+    const result = await convertVideo(
+      inputPath,
+      outputDir,
+      preset,
+      gpu,
+      (progress) => {
+        mainWindow?.webContents.send('conversion-progress', progress);
+      },
+      settings.showDebugOutput
+        ? (message) => {
+            mainWindow?.webContents.send('conversion-log', message);
+          }
+        : undefined
+    );
+
+    isConversionActive = false;
+    lastOutputPath = result.outputPath;
+
+    if (!result.success && result.error && gpu !== 'cpu' && isVideoPreset) {
+      const codec = codecCategory as 'av1' | 'h264' | 'h265';
+      const gpuError = parseGPUError(result.error, gpu, codec);
+      if (gpuError) {
+        mainWindow?.webContents.send('gpu-encoder-error', gpuError);
+        return;
+      }
+    }
+
+    mainWindow?.webContents.send('conversion-complete', result);
+  }
+);
 
 ipcMain.handle('cancel-conversion', (_, force?: boolean) => {
   cancelConversion(!!force);

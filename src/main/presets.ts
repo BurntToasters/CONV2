@@ -47,7 +47,21 @@ export const presets: Preset[] = [
     getArgs: (input, output, gpu) => {
       const encoder = getVideoEncoder('av1', gpu);
       if (gpu === 'cpu') {
-        return ['-i', input, '-c:v', encoder, '-crf', '30', '-preset', '6', '-c:a', 'libopus', '-b:a', '128k', output];
+        return [
+          '-i',
+          input,
+          '-c:v',
+          encoder,
+          '-crf',
+          '30',
+          '-preset',
+          '6',
+          '-c:a',
+          'libopus',
+          '-b:a',
+          '128k',
+          output,
+        ];
       }
       return ['-i', input, '-c:v', encoder, '-cq', '30', '-c:a', 'libopus', '-b:a', '128k', output];
     },
@@ -61,7 +75,21 @@ export const presets: Preset[] = [
     getArgs: (input, output, gpu) => {
       const encoder = getVideoEncoder('av1', gpu);
       if (gpu === 'cpu') {
-        return ['-i', input, '-c:v', encoder, '-crf', '20', '-preset', '4', '-c:a', 'libopus', '-b:a', '192k', output];
+        return [
+          '-i',
+          input,
+          '-c:v',
+          encoder,
+          '-crf',
+          '20',
+          '-preset',
+          '4',
+          '-c:a',
+          'libopus',
+          '-b:a',
+          '192k',
+          output,
+        ];
       }
       return ['-i', input, '-c:v', encoder, '-cq', '20', '-c:a', 'libopus', '-b:a', '192k', output];
     },
@@ -75,7 +103,21 @@ export const presets: Preset[] = [
     getArgs: (input, output, gpu) => {
       const encoder = getVideoEncoder('av1', gpu);
       if (gpu === 'cpu') {
-        return ['-i', input, '-c:v', encoder, '-crf', '40', '-preset', '6', '-c:a', 'libopus', '-b:a', '96k', output];
+        return [
+          '-i',
+          input,
+          '-c:v',
+          encoder,
+          '-crf',
+          '40',
+          '-preset',
+          '6',
+          '-c:a',
+          'libopus',
+          '-b:a',
+          '96k',
+          output,
+        ];
       }
       return ['-i', input, '-c:v', encoder, '-cq', '40', '-c:a', 'libopus', '-b:a', '96k', output];
     },
@@ -91,9 +133,37 @@ export const presets: Preset[] = [
     getArgs: (input, output, gpu) => {
       const encoder = getVideoEncoder('h264', gpu);
       if (gpu === 'cpu') {
-        return ['-i', input, '-c:v', encoder, '-crf', '23', '-preset', 'fast', '-c:a', 'aac', '-b:a', '128k', output];
+        return [
+          '-i',
+          input,
+          '-c:v',
+          encoder,
+          '-crf',
+          '23',
+          '-preset',
+          'fast',
+          '-c:a',
+          'aac',
+          '-b:a',
+          '128k',
+          output,
+        ];
       }
-      return ['-i', input, '-c:v', encoder, '-cq', '23', '-preset', 'fast', '-c:a', 'aac', '-b:a', '128k', output];
+      return [
+        '-i',
+        input,
+        '-c:v',
+        encoder,
+        '-cq',
+        '23',
+        '-preset',
+        'fast',
+        '-c:a',
+        'aac',
+        '-b:a',
+        '128k',
+        output,
+      ];
     },
   },
   {
@@ -105,9 +175,37 @@ export const presets: Preset[] = [
     getArgs: (input, output, gpu) => {
       const encoder = getVideoEncoder('h264', gpu);
       if (gpu === 'cpu') {
-        return ['-i', input, '-c:v', encoder, '-crf', '18', '-preset', 'slow', '-c:a', 'aac', '-b:a', '192k', output];
+        return [
+          '-i',
+          input,
+          '-c:v',
+          encoder,
+          '-crf',
+          '18',
+          '-preset',
+          'slow',
+          '-c:a',
+          'aac',
+          '-b:a',
+          '192k',
+          output,
+        ];
       }
-      return ['-i', input, '-c:v', encoder, '-cq', '18', '-preset', 'slow', '-c:a', 'aac', '-b:a', '192k', output];
+      return [
+        '-i',
+        input,
+        '-c:v',
+        encoder,
+        '-cq',
+        '18',
+        '-preset',
+        'slow',
+        '-c:a',
+        'aac',
+        '-b:a',
+        '192k',
+        output,
+      ];
     },
   },
 
@@ -121,7 +219,21 @@ export const presets: Preset[] = [
     getArgs: (input, output, gpu) => {
       const encoder = getVideoEncoder('h265', gpu);
       if (gpu === 'cpu') {
-        return ['-i', input, '-c:v', encoder, '-crf', '28', '-preset', 'medium', '-c:a', 'aac', '-b:a', '128k', output];
+        return [
+          '-i',
+          input,
+          '-c:v',
+          encoder,
+          '-crf',
+          '28',
+          '-preset',
+          'medium',
+          '-c:a',
+          'aac',
+          '-b:a',
+          '128k',
+          output,
+        ];
       }
       return ['-i', input, '-c:v', encoder, '-cq', '28', '-c:a', 'aac', '-b:a', '128k', output];
     },
@@ -135,7 +247,21 @@ export const presets: Preset[] = [
     getArgs: (input, output, gpu) => {
       const encoder = getVideoEncoder('h265', gpu);
       if (gpu === 'cpu') {
-        return ['-i', input, '-c:v', encoder, '-crf', '22', '-preset', 'slow', '-c:a', 'aac', '-b:a', '192k', output];
+        return [
+          '-i',
+          input,
+          '-c:v',
+          encoder,
+          '-crf',
+          '22',
+          '-preset',
+          'slow',
+          '-c:a',
+          'aac',
+          '-b:a',
+          '192k',
+          output,
+        ];
       }
       return ['-i', input, '-c:v', encoder, '-cq', '22', '-c:a', 'aac', '-b:a', '192k', output];
     },

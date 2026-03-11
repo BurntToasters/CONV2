@@ -12,17 +12,14 @@ const checkMsiInstallation = (): boolean => {
     return false;
   }
 
-  const registryKeys = [
-    'HKLM\\Software\\CONV2',
-    'HKCU\\Software\\CONV2',
-  ];
+  const registryKeys = ['HKLM\\Software\\CONV2', 'HKCU\\Software\\CONV2'];
 
   for (const key of registryKeys) {
     try {
-      const result = execSync(
-        `reg query "${key}"`,
-        { encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] }
-      );
+      const result = execSync(`reg query "${key}"`, {
+        encoding: 'utf8',
+        stdio: ['pipe', 'pipe', 'pipe'],
+      });
       if (hasRegistryDwordValue(result, ['InstalledViaMsi', 'DisableAutoUpdates'])) {
         return true;
       }
@@ -78,18 +75,20 @@ export const initUpdater = (window: BrowserWindow): void => {
     }
 
     if (!silentCheck) {
-      dialog.showMessageBox(mainWindow!, {
-        type: 'info',
-        title: 'Update Available',
-        message: `A new version (${info.version}) is available. Would you like to download it now?`,
-        buttons: ['Download', 'Later'],
-        defaultId: 0,
-      }).then((result) => {
-        if (result.response === 0) {
-          autoUpdater.downloadUpdate();
-          sendStatusToWindow('Downloading update...');
-        }
-      });
+      dialog
+        .showMessageBox(mainWindow!, {
+          type: 'info',
+          title: 'Update Available',
+          message: `A new version (${info.version}) is available. Would you like to download it now?`,
+          buttons: ['Download', 'Later'],
+          defaultId: 0,
+        })
+        .then((result) => {
+          if (result.response === 0) {
+            autoUpdater.downloadUpdate();
+            sendStatusToWindow('Downloading update...');
+          }
+        });
     }
     silentCheck = false;
   });
@@ -112,13 +111,17 @@ export const initUpdater = (window: BrowserWindow): void => {
   });
 
   autoUpdater.on('error', (err) => {
+    const wasSilent = silentCheck;
+    silentCheck = false;
     sendStatusToWindow(`Update error: ${err.message}`);
-    dialog.showMessageBox(mainWindow!, {
-      type: 'error',
-      title: 'Update Error',
-      message: `An error occurred while checking for updates: ${err.message}`,
-      buttons: ['OK'],
-    });
+    if (!wasSilent) {
+      dialog.showMessageBox(mainWindow!, {
+        type: 'error',
+        title: 'Update Error',
+        message: `An error occurred while checking for updates: ${err.message}`,
+        buttons: ['OK'],
+      });
+    }
   });
 
   autoUpdater.on('download-progress', (progressObj) => {
@@ -131,17 +134,19 @@ export const initUpdater = (window: BrowserWindow): void => {
   });
 
   autoUpdater.on('update-downloaded', (info: UpdateInfo) => {
-    dialog.showMessageBox(mainWindow!, {
-      type: 'info',
-      title: 'Update Ready',
-      message: `Version ${info.version} has been downloaded. The application will restart to install the update.`,
-      buttons: ['Restart Now', 'Later'],
-      defaultId: 0,
-    }).then((result) => {
-      if (result.response === 0) {
-        autoUpdater.quitAndInstall();
-      }
-    });
+    dialog
+      .showMessageBox(mainWindow!, {
+        type: 'info',
+        title: 'Update Ready',
+        message: `Version ${info.version} has been downloaded. The application will restart to install the update.`,
+        buttons: ['Restart Now', 'Later'],
+        defaultId: 0,
+      })
+      .then((result) => {
+        if (result.response === 0) {
+          autoUpdater.quitAndInstall();
+        }
+      });
   });
 };
 
@@ -151,7 +156,8 @@ export const checkForUpdates = (): void => {
       dialog.showMessageBox(mainWindow, {
         type: 'info',
         title: 'Updates Disabled',
-        message: 'Auto-updates are disabled for this installation.\n\nThis is an enterprise/MSI deployment. Please contact your IT administrator for updates.',
+        message:
+          'Auto-updates are disabled for this installation.\n\nThis is an enterprise/MSI deployment. Please contact your IT administrator for updates.',
         buttons: ['OK'],
       });
     }

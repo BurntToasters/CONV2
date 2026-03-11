@@ -41,20 +41,25 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // File operations
   getPathForFile: (file: File): string => webUtils.getPathForFile(file),
   selectFile: (): Promise<string | null> => ipcRenderer.invoke('select-file'),
-  selectOutputDirectory: (): Promise<string | null> => ipcRenderer.invoke('select-output-directory'),
-  getFileInfo: (filePath: string): Promise<VideoInfo | null> => ipcRenderer.invoke('get-file-info', filePath),
+  selectOutputDirectory: (): Promise<string | null> =>
+    ipcRenderer.invoke('select-output-directory'),
+  getFileInfo: (filePath: string): Promise<VideoInfo | null> =>
+    ipcRenderer.invoke('get-file-info', filePath),
 
   // Conversion
   startConversion: (inputPath: string, presetId: string, gpu: AppSettings['gpu']): Promise<void> =>
     ipcRenderer.invoke('start-conversion', inputPath, presetId, gpu),
-  cancelConversion: (force?: boolean): Promise<void> => ipcRenderer.invoke('cancel-conversion', force),
+  cancelConversion: (force?: boolean): Promise<void> =>
+    ipcRenderer.invoke('cancel-conversion', force),
   onConversionProgress: (callback: (progress: ConversionProgress) => void): void => {
     ipcRenderer.on('conversion-progress', (_, progress) => callback(progress));
   },
   onConversionLog: (callback: (message: string) => void): void => {
     ipcRenderer.on('conversion-log', (_, message) => callback(message));
   },
-  onConversionComplete: (callback: (result: { success: boolean; outputPath: string; error?: string }) => void): void => {
+  onConversionComplete: (
+    callback: (result: { success: boolean; outputPath: string; error?: string }) => void
+  ): void => {
     ipcRenderer.on('conversion-complete', (_, result) => callback(result));
   },
   onGPUEncoderError: (callback: (error: GPUEncoderError) => void): void => {
@@ -62,8 +67,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
 
   // Presets
-  getPresets: (): Promise<Array<{ id: string; name: string; description: string; category: string }>> =>
-    ipcRenderer.invoke('get-presets'),
+  getPresets: (): Promise<
+    Array<{ id: string; name: string; description: string; category: string }>
+  > => ipcRenderer.invoke('get-presets'),
 
   // Settings
   getSettings: (): Promise<AppSettings> => ipcRenderer.invoke('get-settings'),
@@ -115,13 +121,21 @@ declare global {
       selectFile: () => Promise<string | null>;
       selectOutputDirectory: () => Promise<string | null>;
       getFileInfo: (filePath: string) => Promise<VideoInfo | null>;
-      startConversion: (inputPath: string, presetId: string, gpu: AppSettings['gpu']) => Promise<void>;
+      startConversion: (
+        inputPath: string,
+        presetId: string,
+        gpu: AppSettings['gpu']
+      ) => Promise<void>;
       cancelConversion: (force?: boolean) => Promise<void>;
       onConversionProgress: (callback: (progress: ConversionProgress) => void) => void;
       onConversionLog: (callback: (message: string) => void) => void;
-      onConversionComplete: (callback: (result: { success: boolean; outputPath: string; error?: string }) => void) => void;
+      onConversionComplete: (
+        callback: (result: { success: boolean; outputPath: string; error?: string }) => void
+      ) => void;
       onGPUEncoderError: (callback: (error: GPUEncoderError) => void) => void;
-      getPresets: () => Promise<Array<{ id: string; name: string; description: string; category: string }>>;
+      getPresets: () => Promise<
+        Array<{ id: string; name: string; description: string; category: string }>
+      >;
       getSettings: () => Promise<AppSettings>;
       saveSettings: (settings: Partial<AppSettings>) => Promise<void>;
       checkForUpdates: () => Promise<void>;

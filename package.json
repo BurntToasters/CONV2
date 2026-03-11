@@ -1,6 +1,6 @@
 {
   "name": "conv2",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "description": "A cross platform FFMPEG GUI front-end making it easy for quick video conversion!",
   "homepage": "https://github.com/BurntToasters/CONV2#readme",
   "bugs": {
@@ -51,21 +51,26 @@
     "flatpak:clean": "node build/flatpak.js clean",
     "patch:beta": "node build/patch-beta.js",
     "restore:release": "node build/restore-release.js",
-    "release:win": "npm run release:prepare && npm run compile && dotenv -- electron-builder --win nsis portable msi --arm64 --x64 --publish always && npm run sign:gpg",
+    "release:win": "npm run licenses && npm run release:prepare && npm run compile && dotenv -- electron-builder --win nsis portable msi --arm64 --x64 --publish always && npm run sign:gpg",
     "release:win:x64": "npm run release:prepare && npm run compile && dotenv -- electron-builder --win nsis portable msi --x64 --publish always && npm run sign:gpg",
     "release:win:arm64": "npm run release:prepare && npm run compile && dotenv -- electron-builder --win nsis portable msi --arm64 --publish always && npm run sign:gpg",
     "release:msstore": "npm run release:prepare && npm run compile && dotenv -- electron-builder --win appx --publish always",
-    "release:mac": "npm run release:prepare && npm run compile && dotenv -- electron-builder --mac --universal --publish always && npm run sign:gpg",
-    "release:linux": "npm run release:prepare && npm run compile && dotenv -- electron-builder --linux --publish always && npm run sign:gpg",
-    "release:linux:all": "npm run release:prepare && npm run compile && dotenv -- electron-builder --linux --publish always && npm run flatpak:clean && npm run flatpak:bundle && npm run sign:gpg",
+    "release:mac": "npm run licenses && npm run release:prepare && npm run compile && dotenv -- electron-builder --mac --universal --publish always && npm run sign:gpg",
+    "release:linux": "npm run licenses && npm run release:prepare && npm run compile && dotenv -- electron-builder --linux --publish always && npm run sign:gpg",
+    "release:linux:all": "npm run licenses && npm run release:prepare && npm run compile && dotenv -- electron-builder --linux --publish always && npm run flatpak:clean && npm run flatpak:bundle && npm run sign:gpg",
     "release:linux:native": "cross-env USE_SYSTEM_FPM=true npm run release:linux:all",
-    "release:all": "npm run release:prepare && npm run compile && dotenv -- electron-builder --win nsis portable msi --arm64 --x64 --publish always && dotenv -- electron-builder --mac --universal --publish always && dotenv -- electron-builder --linux --publish always && npm run sign:gpg",
+    "release:all": "npm run licenses && npm run release:prepare && npm run compile && dotenv -- electron-builder --win nsis portable msi --arm64 --x64 --publish always && dotenv -- electron-builder --mac --universal --publish always && dotenv -- electron-builder --linux --publish always && npm run sign:gpg",
     "release:beta:win": "npm run patch:beta && cross-env IS_BETA=true npm run release:win && npm run restore:release",
     "release:beta:mac": "npm run patch:beta && cross-env IS_BETA=true npm run release:mac && npm run restore:release",
     "release:beta:linux": "npm run patch:beta && cross-env IS_BETA=true npm run release:linux && npm run restore:release",
     "sign:gpg": "node build/gpg-sign.js",
     "licenses": "npx npm-license-crawler --production --json licenses.json",
-    "tests": "npm run build && node --test tests/*.test.js",
+    "format": "prettier --write \"src/**/*.{ts,js,html,css}\" \"build/**/*.js\" \"tests/**/*.js\" \"*.{json,md,yml,yaml}\"",
+    "format:check": "prettier --check \"src/**/*.{ts,js,html,css}\" \"build/**/*.js\" \"tests/**/*.js\" \"*.{json,md,yml,yaml}\"",
+    "test": "npm run tests",
+    "tests:node": "node --test tests/*.test.js",
+    "tests": "npm run build && npm run tests:node",
+    "test:all": "node build/test-all.js",
     "typecheck": "tsc --noEmit",
     "release:prepare": "node build/update-metainfo.js"
   },
@@ -81,6 +86,7 @@
     "dotenv-cli": "^11.0.0",
     "electron": "^40.6.0",
     "electron-builder": "^26.8.1",
+    "prettier": "^3.8.1",
     "typescript": "^5.9.3"
   },
   "dependencies": {
@@ -185,7 +191,10 @@
         {
           "from": "resources/ffmpeg/mac/${arch}",
           "to": "ffmpeg",
-          "filter": ["**/*", "!PLACE_BINARIES_HERE.txt"]
+          "filter": [
+            "**/*",
+            "!PLACE_BINARIES_HERE.txt"
+          ]
         },
         {
           "from": "resources/ffmpeg/NOTICE.txt",
