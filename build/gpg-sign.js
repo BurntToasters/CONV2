@@ -25,15 +25,19 @@ const SIGNABLE_EXTENSIONS = [
   '.appimage',
   '.deb',
   '.rpm',
-  '.flatpak'
+  '.flatpak',
 ];
 
 function getPlatformName() {
   switch (process.platform) {
-    case 'darwin': return 'macOS';
-    case 'win32': return 'Windows';
-    case 'linux': return 'Linux';
-    default: return process.platform;
+    case 'darwin':
+      return 'macOS';
+    case 'win32':
+      return 'Windows';
+    case 'linux':
+      return 'Linux';
+    default:
+      return process.platform;
   }
 }
 
@@ -44,13 +48,13 @@ function getFilesToSign() {
   }
 
   const files = fs.readdirSync(RELEASE_DIR);
-  return files.filter(file => {
+  return files.filter((file) => {
     const fullPath = path.join(RELEASE_DIR, file);
 
     if (!fs.statSync(fullPath).isFile()) return false;
 
     const lowerFile = file.toLowerCase();
-    return SIGNABLE_EXTENSIONS.some(ext => lowerFile.endsWith(ext));
+    return SIGNABLE_EXTENSIONS.some((ext) => lowerFile.endsWith(ext));
   });
 }
 
@@ -117,8 +121,8 @@ function githubRequest(method, endpoint, body) {
       method,
       headers: {
         'User-Agent': 'CONV2-Release-Script',
-        'Accept': 'application/vnd.github.v3+json'
-      }
+        Accept: 'application/vnd.github.v3+json',
+      },
     };
 
     if (GH_TOKEN) {
@@ -133,7 +137,7 @@ function githubRequest(method, endpoint, body) {
     const req = https.request(options, (res) => {
       let responseData = '';
 
-      res.on('data', (chunk) => responseData += chunk);
+      res.on('data', (chunk) => (responseData += chunk));
       res.on('end', () => {
         try {
           const parsed = responseData ? JSON.parse(responseData) : {};
@@ -158,34 +162,35 @@ function uploadToRelease(uploadUrl, filePath) {
   return new Promise((resolve, reject) => {
     const fileName = path.basename(filePath);
     const fileContent = fs.readFileSync(filePath);
-    const contentType = fileName.endsWith('.asc') || fileName.endsWith('.txt') 
-      ? 'text/plain' 
-      : 'application/octet-stream';
+    const contentType =
+      fileName.endsWith('.asc') || fileName.endsWith('.txt')
+        ? 'text/plain'
+        : 'application/octet-stream';
 
     const url = new URL(uploadUrl.replace('{?name,label}', ''));
     url.searchParams.set('name', fileName);
-    
+
     const options = {
       hostname: url.hostname,
       path: url.pathname + url.search,
       method: 'POST',
       headers: {
-        'Authorization': 'Bearer ' + GH_TOKEN,
+        Authorization: 'Bearer ' + GH_TOKEN,
         'User-Agent': 'CONV2-Release-Script',
-        'Accept': 'application/vnd.github.v3+json',
+        Accept: 'application/vnd.github.v3+json',
         'Content-Type': contentType,
-        'Content-Length': fileContent.length
-      }
+        'Content-Length': fileContent.length,
+      },
     };
 
     const req = https.request(options, (res) => {
       let data = '';
-      res.on('data', chunk => data += chunk);
+      res.on('data', (chunk) => (data += chunk));
       res.on('end', () => {
         if (res.statusCode && res.statusCode >= 200 && res.statusCode < 300) {
           resolve(true);
         } else {
-          const msg = data || ('HTTP ' + res.statusCode);
+          const msg = data || 'HTTP ' + res.statusCode;
           reject(new Error(msg));
         }
       });
@@ -214,16 +219,18 @@ async function getOrCreateRelease() {
         '/repos/' + REPO_OWNER + '/' + REPO_NAME + '/releases?per_page=20'
       );
 
-      const matchingReleases = releases.filter(function(r) {
+      const matchingReleases = releases.filter(function (r) {
         return r.tag_name === TAG_NAME;
       });
 
       if (matchingReleases.length > 0) {
-        matchingReleases.sort(function(a, b) {
+        matchingReleases.sort(function (a, b) {
           return b.assets.length - a.assets.length;
         });
         const release = matchingReleases[0];
-        console.log('   Found draft release: ' + release.name + ' (' + release.assets.length + ' assets)');
+        console.log(
+          '   Found draft release: ' + release.name + ' (' + release.assets.length + ' assets)'
+        );
         return release;
       }
     } catch (listError) {
@@ -239,7 +246,7 @@ async function getOrCreateRelease() {
           tag_name: TAG_NAME,
           name: 'CONV2 ' + VERSION,
           draft: true,
-          prerelease: VERSION.includes('beta') || VERSION.includes('alpha')
+          prerelease: VERSION.includes('beta') || VERSION.includes('alpha'),
         }
       );
       console.log('   Created draft release: ' + release.name);
@@ -258,13 +265,13 @@ async function uploadSignatures(release, filesToUpload) {
   }
 
   console.log('\nUploading to GitHub release...');
-  
+
   for (const filePath of filesToUpload) {
     if (!filePath) continue;
-    
+
     const fileName = path.basename(filePath);
     process.stdout.write('   Uploading: ' + fileName + '... ');
-    
+
     try {
       const result = await uploadToRelease(release.upload_url, filePath);
       if (result) {
@@ -278,7 +285,7 @@ async function uploadSignatures(release, filesToUpload) {
 
 async function main() {
   const platform = getPlatformName();
-  
+
   console.log('='.repeat(60));
   console.log('GPG Sign & Upload - CONV2 ' + VERSION);
   console.log('Platform: ' + platform);
@@ -300,28 +307,28 @@ async function main() {
   } else {
     console.log('\nGPG Key: ' + GPG_KEY_ID);
   }
-  
+
   if (!GH_TOKEN) {
     console.warn('WARN: GH_TOKEN not set - signatures will not be uploaded to GitHub');
   }
-  
+
   const files = getFilesToSign();
-  
+
   if (files.length === 0) {
     console.log('\nERROR: No release artifacts found to sign.');
     console.log('   Run a build command first, e.g.: npm run release:mac');
     process.exit(1);
   }
-  
+
   console.log('\nFound ' + files.length + ' artifacts to sign:');
-  files.forEach(f => console.log('   • ' + f));
+  files.forEach((f) => console.log('   • ' + f));
 
   const checksumFile = generateChecksumFile(files, platform);
 
   console.log('\nSigning artifacts...\n');
-  
+
   const signatureFiles = [];
-  
+
   for (const file of files) {
     const filePath = path.join(RELEASE_DIR, file);
     const sigFile = signFile(filePath);
@@ -353,11 +360,12 @@ async function main() {
   console.log('COMPLETE');
   console.log('='.repeat(60));
   console.log('\nGenerated files in release/:');
-  
-  const generatedFiles = fs.readdirSync(RELEASE_DIR)
-    .filter(f => f.endsWith('.asc') || f.startsWith('SHA256SUMS'));
-  generatedFiles.forEach(f => console.log('   • ' + f));
-  
+
+  const generatedFiles = fs
+    .readdirSync(RELEASE_DIR)
+    .filter((f) => f.endsWith('.asc') || f.startsWith('SHA256SUMS'));
+  generatedFiles.forEach((f) => console.log('   • ' + f));
+
   if (!GH_TOKEN) {
     console.log('\nTIP: To auto-upload, add GH_TOKEN to your .env file');
   }

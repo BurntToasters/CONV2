@@ -1,10 +1,11 @@
 const fs = require('fs');
 const path = require('path');
 
-exports.default = async function(wxsFilePath) {
+exports.default = async function (wxsFilePath) {
   console.log('MSI Hook: Called with path:', wxsFilePath);
 
-  const wxsFile = typeof wxsFilePath === 'string' ? wxsFilePath : wxsFilePath?.wxsFile || wxsFilePath?.path;
+  const wxsFile =
+    typeof wxsFilePath === 'string' ? wxsFilePath : wxsFilePath?.wxsFile || wxsFilePath?.path;
 
   if (!wxsFile || !fs.existsSync(wxsFile)) {
     console.warn('MSI Hook: Could not find .wxs file, path:', wxsFile);
@@ -75,7 +76,9 @@ exports.default = async function(wxsFilePath) {
       /(<Publish\s+Dialog="WelcomeDlg"\s+Control="Next"\s+Event="SpawnWaitDialog"[^>]*>[^<]*<\/Publish>)/i,
       '$1' + licenseNavRules
     );
-    console.log('MSI Hook: Added LicenseAgreementDlg->UpdateWarningDlg->InstallScopeDlg navigation');
+    console.log(
+      'MSI Hook: Added LicenseAgreementDlg->UpdateWarningDlg->InstallScopeDlg navigation'
+    );
   }
 
   const msiMarkerComponent = `

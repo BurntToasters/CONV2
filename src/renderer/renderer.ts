@@ -68,6 +68,10 @@ let conversionStartTime = 0;
 let lastOutputPath = '';
 let themeListenerRegistered = false;
 let convertBtnOriginalHTML = '';
+let checkUpdateDefaultHTML = '';
+let manualUpdateCheckInProgress = false;
+let updateDownloadInProgress = false;
+let ffmpegInstalled = true;
 
 const elements = {
   dropZone: document.getElementById('dropZone') as HTMLDivElement,
@@ -135,6 +139,27 @@ const formatDuration = (seconds: number): string => {
   return `${s}s`;
 };
 
+const getCheckingUpdateButtonHTML = (): string =>
+  '<svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>Checking...';
+
+const getDownloadingUpdateButtonHTML = (percent?: number): string => {
+  const suffix = typeof percent === 'number' ? ` ${Math.round(percent)}%` : '';
+  return `<svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="12 5 12 19"/><polyline points="19 12 12 19 5 12"/></svg>Downloading...${suffix}`;
+};
+
+const getUpdateAvailableButtonHTML = (): string =>
+  '<svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>Update Available!';
+
+const setCheckUpdateButtonState = (
+  html: string,
+  disabled: boolean,
+  highlightAvailable = false
+): void => {
+  elements.checkUpdateBtn.innerHTML = html;
+  elements.checkUpdateBtn.disabled = disabled;
+  elements.checkUpdateBtn.classList.toggle('btn-update-available', highlightAvailable);
+};
+
 const showModal = (options: ModalOptions): void => {
   const modal = elements.dynamicModal;
   const titleEl = modal.querySelector('.modal-header h2') as HTMLElement;
@@ -148,8 +173,16 @@ const showModal = (options: ModalOptions): void => {
   cancelBtn.textContent = options.cancelText || 'Cancel';
   confirmBtn.className = `btn btn-sm ${options.confirmClass || 'btn-primary'}`;
 
+  const overlayListener = (e: Event) => {
+    if (e.target === modal) {
+      cleanup();
+      options.onCancel?.();
+    }
+  };
+
   const cleanup = () => {
     modal.classList.remove('visible');
+    modal.removeEventListener('click', overlayListener);
     confirmBtn.replaceWith(confirmBtn.cloneNode(true));
     cancelBtn.replaceWith(cancelBtn.cloneNode(true));
   };
@@ -167,17 +200,14 @@ const showModal = (options: ModalOptions): void => {
     options.onCancel?.();
   });
 
-  modal.addEventListener('click', (e) => {
-    if (e.target === modal) {
-      cleanup();
-      options.onCancel?.();
-    }
-  }, { once: true });
+  modal.addEventListener('click', overlayListener);
 
   modal.classList.add('visible');
 };
 
-const buildLicenseEntries = (data: Record<string, LicenseCrawlerEntry> | null): LicenseDisplayEntry[] => {
+const buildLicenseEntries = (
+  data: Record<string, LicenseCrawlerEntry> | null
+): LicenseDisplayEntry[] => {
   const entries: LicenseDisplayEntry[] = [
     {
       name: 'FFmpeg',
@@ -221,9 +251,10 @@ const buildLicenseEntries = (data: Record<string, LicenseCrawlerEntry> | null): 
   const packageEntries = Object.entries(data)
     .filter(([pkg]) => typeof pkg === 'string')
     .map(([pkg, info]) => {
-      const entryInfo = (typeof info === 'object' && info !== null)
-        ? info as LicenseCrawlerEntry
-        : { licenses: String(info) as string };
+      const entryInfo =
+        typeof info === 'object' && info !== null
+          ? (info as LicenseCrawlerEntry)
+          : { licenses: String(info) as string };
 
       const licenses = Array.isArray(entryInfo.licenses)
         ? entryInfo.licenses.join(', ')
@@ -299,14 +330,16 @@ const openCreditsModal = async (): Promise<void> => {
 
   try {
     const data = await window.electronAPI.getLicenses();
-    const hasLicenses = !!data && typeof data === 'object' && Object.keys(data as Record<string, unknown>).length > 0;
+    const hasLicenses =
+      !!data && typeof data === 'object' && Object.keys(data as Record<string, unknown>).length > 0;
     const entries = buildLicenseEntries(data as Record<string, LicenseCrawlerEntry> | null);
     renderLicenses(entries);
 
     if (!hasLicenses) {
       const warning = document.createElement('div');
       warning.className = 'license-item license-error';
-      warning.textContent = 'licenses.json is missing or empty. Run "npm run licenses" before packaging to include dependency credits.';
+      warning.textContent =
+        'licenses.json is missing or empty. Run "npm run licenses" before packaging to include dependency credits.';
       elements.licensesList.appendChild(warning);
     }
   } catch {
@@ -321,6 +354,7 @@ const closeCreditsModal = (): void => {
 
 const init = async () => {
   convertBtnOriginalHTML = elements.convertBtn.innerHTML;
+  checkUpdateDefaultHTML = elements.checkUpdateBtn.innerHTML;
   await checkFFmpeg();
   await checkPlatform();
   await loadSettings();
@@ -335,7 +369,8 @@ const init = async () => {
 const checkPlatform = async () => {
   const platform = await window.electronAPI.getPlatform();
   if (platform === 'darwin') {
-    const appleOption = elements.gpuSelect.querySelector<HTMLOptionElement>('option[value="apple"]');
+    const appleOption =
+      elements.gpuSelect.querySelector<HTMLOptionElement>('option[value="apple"]');
     if (appleOption) {
       appleOption.hidden = false;
     }
@@ -344,9 +379,18 @@ const checkPlatform = async () => {
 
 const checkFFmpeg = async () => {
   const installed = await window.electronAPI.checkFFmpeg();
+  ffmpegInstalled = installed;
   if (!installed) {
     elements.ffmpegWarning.style.display = 'block';
-    elements.convertBtn.disabled = true;
+    if (!isConverting) {
+      elements.convertBtn.disabled = true;
+    }
+    return;
+  }
+
+  elements.ffmpegWarning.style.display = 'none';
+  if (!isConverting && selectedFile) {
+    elements.convertBtn.disabled = false;
   }
 };
 
@@ -470,9 +514,10 @@ const setupKeyboardShortcuts = () => {
 
     // Enter - start conversion (when file selected and not converting)
     if (e.key === 'Enter' && !e.ctrlKey && !e.metaKey) {
-      const isModalOpen = elements.settingsModal.classList.contains('visible') ||
-                          elements.dynamicModal.classList.contains('visible') ||
-                          elements.creditsModal.classList.contains('visible');
+      const isModalOpen =
+        elements.settingsModal.classList.contains('visible') ||
+        elements.dynamicModal.classList.contains('visible') ||
+        elements.creditsModal.classList.contains('visible');
       if (!isModalOpen && selectedFile && !isConverting && !elements.convertBtn.disabled) {
         startConversion();
       }
@@ -481,10 +526,10 @@ const setupKeyboardShortcuts = () => {
 };
 
 const setupEventListeners = () => {
-document.getElementById('support-link')?.addEventListener('click', (e) => {
-  e.preventDefault();
-  window.electronAPI.openExternal('https://rosie.run/support');
-});
+  document.getElementById('support-link')?.addEventListener('click', (e) => {
+    e.preventDefault();
+    window.electronAPI.openExternal('https://rosie.run/support');
+  });
 
   elements.supportBtn.addEventListener('click', () => {
     window.electronAPI.openExternal('https://rosie.run/support');
@@ -497,20 +542,20 @@ document.getElementById('support-link')?.addEventListener('click', (e) => {
     }
   });
 
-document.getElementById('help-link')?.addEventListener('click', (e) => {
-  e.preventDefault();
-  window.electronAPI.openExternal('https://help.rosie.run/conv2/en-us/faq');
-});
+  document.getElementById('help-link')?.addEventListener('click', (e) => {
+    e.preventDefault();
+    window.electronAPI.openExternal('https://help.rosie.run/conv2/en-us/faq');
+  });
 
-document.getElementById('about-privacy')?.addEventListener('click', (e) => {
-  e.preventDefault();
-  window.electronAPI.openExternal('https://help.rosie.run/conv2/en-us/privacy-policy');
-});
+  document.getElementById('about-privacy')?.addEventListener('click', (e) => {
+    e.preventDefault();
+    window.electronAPI.openExternal('https://help.rosie.run/conv2/en-us/privacy-policy');
+  });
 
-document.getElementById('rosie-run')?.addEventListener('click', (e) => {
-  e.preventDefault();
-  window.electronAPI.openExternal('https://rosie.run');
-});
+  document.getElementById('rosie-run')?.addEventListener('click', (e) => {
+    e.preventDefault();
+    window.electronAPI.openExternal('https://rosie.run');
+  });
 
   elements.dropZone.addEventListener('click', (e: MouseEvent) => {
     const target = e.target as HTMLElement;
@@ -598,11 +643,12 @@ document.getElementById('rosie-run')?.addEventListener('click', (e) => {
     if (isConverting) {
       showModal({
         title: 'Cancel Conversion',
-        message: 'Are you sure you want to cancel the conversion? The partial file will be deleted.',
+        message:
+          'Are you sure you want to cancel the conversion? The partial file will be deleted.',
         confirmText: 'Yes, Cancel',
         cancelText: 'No, Continue',
         confirmClass: 'btn-danger',
-        onConfirm: cancelConversion
+        onConfirm: cancelConversion,
       });
     } else {
       startConversion();
@@ -651,7 +697,8 @@ document.getElementById('rosie-run')?.addEventListener('click', (e) => {
   elements.copyLogsBtn.addEventListener('click', () => {
     navigator.clipboard.writeText(elements.logsContent.textContent || '');
     const originalHTML = elements.copyLogsBtn.innerHTML;
-    elements.copyLogsBtn.innerHTML = '<svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>Copied!';
+    elements.copyLogsBtn.innerHTML =
+      '<svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>Copied!';
     setTimeout(() => {
       elements.copyLogsBtn.innerHTML = originalHTML;
     }, 2000);
@@ -695,14 +742,49 @@ document.getElementById('rosie-run')?.addEventListener('click', (e) => {
   });
 
   elements.checkUpdateBtn.addEventListener('click', () => {
+    manualUpdateCheckInProgress = true;
+    updateDownloadInProgress = false;
+    setCheckUpdateButtonState(getCheckingUpdateButtonHTML(), true);
     window.electronAPI.checkForUpdates();
-    const originalHTML = elements.checkUpdateBtn.innerHTML;
-    elements.checkUpdateBtn.innerHTML = '<svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>Checking...';
-    elements.checkUpdateBtn.disabled = true;
-    setTimeout(() => {
-      elements.checkUpdateBtn.innerHTML = originalHTML;
-      elements.checkUpdateBtn.disabled = false;
-    }, 5000);
+  });
+
+  window.electronAPI.onUpdateStatus((message) => {
+    if (!manualUpdateCheckInProgress && !updateDownloadInProgress) {
+      return;
+    }
+
+    if (message === 'Checking for updates...') {
+      setCheckUpdateButtonState(getCheckingUpdateButtonHTML(), true);
+      return;
+    }
+
+    if (message === 'Downloading update...') {
+      updateDownloadInProgress = true;
+      setCheckUpdateButtonState(getDownloadingUpdateButtonHTML(), true);
+      return;
+    }
+
+    if (message.startsWith('Update error:')) {
+      manualUpdateCheckInProgress = false;
+      updateDownloadInProgress = false;
+      setCheckUpdateButtonState(checkUpdateDefaultHTML, false);
+      return;
+    }
+
+    if (message === 'You have the latest version.') {
+      manualUpdateCheckInProgress = false;
+      updateDownloadInProgress = false;
+      setCheckUpdateButtonState(checkUpdateDefaultHTML, false);
+    }
+  });
+
+  window.electronAPI.onUpdateProgress((percent) => {
+    if (!manualUpdateCheckInProgress && !updateDownloadInProgress) {
+      return;
+    }
+
+    updateDownloadInProgress = true;
+    setCheckUpdateButtonState(getDownloadingUpdateButtonHTML(percent), true);
   });
 
   window.electronAPI.onConversionProgress((progress) => {
@@ -728,7 +810,7 @@ document.getElementById('rosie-run')?.addEventListener('click', (e) => {
       elements.progressSpeed.textContent = progress.speed;
     }
   });
-  
+
   window.electronAPI.onConversionLog((message) => {
     elements.logsContent.textContent += message;
     elements.logsContent.scrollTop = elements.logsContent.scrollHeight;
@@ -770,13 +852,14 @@ document.getElementById('rosie-run')?.addEventListener('click', (e) => {
   window.electronAPI.onUpdateAvailable((available: boolean) => {
     if (available) {
       elements.updateBadge.style.display = 'flex';
-      elements.checkUpdateBtn.innerHTML = '<svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>Update Available!';
-      elements.checkUpdateBtn.classList.add('btn-update-available');
+      setCheckUpdateButtonState(getUpdateAvailableButtonHTML(), false, true);
     } else {
       elements.updateBadge.style.display = 'none';
-      elements.checkUpdateBtn.innerHTML = '<svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>Check for Updates';
-      elements.checkUpdateBtn.classList.remove('btn-update-available');
+      setCheckUpdateButtonState(checkUpdateDefaultHTML, false);
     }
+
+    manualUpdateCheckInProgress = false;
+    updateDownloadInProgress = false;
   });
 };
 
@@ -807,8 +890,16 @@ const showGPUErrorModal = (error: GPUEncoderError): void => {
     confirmBtn.className = 'btn btn-sm btn-primary';
   }
 
+  const overlayListener = (e: Event) => {
+    if (e.target === modal) {
+      cleanup();
+      showStatus('error', error.message);
+    }
+  };
+
   const cleanup = () => {
     modal.classList.remove('visible');
+    modal.removeEventListener('click', overlayListener);
     cancelBtn.style.display = '';
     bodyEl.innerHTML = '';
     confirmBtn.replaceWith(confirmBtn.cloneNode(true));
@@ -836,12 +927,7 @@ const showGPUErrorModal = (error: GPUEncoderError): void => {
     showStatus('error', error.message);
   });
 
-  modal.addEventListener('click', (e) => {
-    if (e.target === modal) {
-      cleanup();
-      showStatus('error', error.message);
-    }
-  }, { once: true });
+  modal.addEventListener('click', overlayListener);
 
   modal.classList.add('visible');
 };
@@ -872,7 +958,7 @@ const handleFileSelect = async (filePath: string) => {
   }
 
   elements.fileInfo.classList.add('visible');
-  elements.convertBtn.disabled = false;
+  elements.convertBtn.disabled = !ffmpegInstalled;
   elements.showInFolderBtn.style.display = 'none';
   hideStatus();
 };
@@ -892,10 +978,10 @@ const startConversion = async () => {
   elements.progressEta.textContent = '';
   elements.progressSpeed.textContent = '';
   elements.showInFolderBtn.style.display = 'none';
-  
+
   // Clear logs
   elements.logsContent.textContent = '';
-  
+
   hideStatus();
 
   const presetId = elements.presetSelect.value;

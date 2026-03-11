@@ -65,7 +65,12 @@
     "release:beta:linux": "npm run patch:beta && cross-env IS_BETA=true npm run release:linux && npm run restore:release",
     "sign:gpg": "node build/gpg-sign.js",
     "licenses": "npx npm-license-crawler --production --json licenses.json",
-    "tests": "npm run build && node --test tests/*.test.js",
+    "format": "prettier --write \"src/**/*.{ts,js,html,css}\" \"build/**/*.js\" \"tests/**/*.js\" \"*.{json,md,yml,yaml}\"",
+    "format:check": "prettier --check \"src/**/*.{ts,js,html,css}\" \"build/**/*.js\" \"tests/**/*.js\" \"*.{json,md,yml,yaml}\"",
+    "test": "npm run tests",
+    "tests:node": "node --test tests/*.test.js",
+    "tests": "npm run build && npm run tests:node",
+    "test:all": "node build/test-all.js",
     "typecheck": "tsc --noEmit",
     "release:prepare": "node build/update-metainfo.js"
   },
@@ -81,6 +86,7 @@
     "dotenv-cli": "^11.0.0",
     "electron": "^40.6.0",
     "electron-builder": "^26.8.1",
+    "prettier": "^3.8.1",
     "typescript": "^5.9.3"
   },
   "dependencies": {
@@ -185,7 +191,10 @@
         {
           "from": "resources/ffmpeg/mac/${arch}",
           "to": "ffmpeg",
-          "filter": ["**/*", "!PLACE_BINARIES_HERE.txt"]
+          "filter": [
+            "**/*",
+            "!PLACE_BINARIES_HERE.txt"
+          ]
         },
         {
           "from": "resources/ffmpeg/NOTICE.txt",

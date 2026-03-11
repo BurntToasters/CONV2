@@ -241,9 +241,10 @@ export const checkGPUEncoderSupport = async (
         type: 'encoder_unavailable',
         message: `${GPU_NAMES[gpu]} ${CODEC_NAMES[codec]} encoder not available`,
         details: `The encoder "${encoder}" was not found in your FFmpeg installation. This could mean:\n• Your GPU drivers don't support this codec\n• FFmpeg wasn't compiled with ${GPU_NAMES[gpu]} support\n• The required libraries are missing`,
-        suggestion: gpu === 'nvidia' && codec === 'av1'
-          ? 'AV1 encoding requires an RTX 40-series GPU or newer. Try H.264 or H.265 instead, or use CPU encoding.'
-          : `Try using CPU encoding, or ensure your ${GPU_NAMES[gpu]} drivers are up to date.`,
+        suggestion:
+          gpu === 'nvidia' && codec === 'av1'
+            ? 'AV1 encoding requires an RTX 40-series GPU or newer. Try H.264 or H.265 instead, or use CPU encoding.'
+            : `Try using CPU encoding, or ensure your ${GPU_NAMES[gpu]} drivers are up to date.`,
         canRetryWithCPU: true,
         codec,
         gpu,
@@ -254,19 +255,26 @@ export const checkGPUEncoderSupport = async (
   return { available: true, encoder };
 };
 
-export const parseGPUError = (errorOutput: string, gpu: GPUVendor, codec?: string): GPUEncoderError | null => {
+export const parseGPUError = (
+  errorOutput: string,
+  gpu: GPUVendor,
+  codec?: string
+): GPUEncoderError | null => {
   const gpuName = GPU_NAMES[gpu];
   const codecName = codec ? CODEC_NAMES[codec] || codec : 'video';
 
   // NVIDIA specific errors
   if (gpu === 'nvidia') {
-    if (errorOutput.includes('No capable devices found') ||
-        errorOutput.includes('Cannot load nvEncodeAPI') ||
-        errorOutput.includes('nvEncodeAPICreateInstance failed')) {
+    if (
+      errorOutput.includes('No capable devices found') ||
+      errorOutput.includes('Cannot load nvEncodeAPI') ||
+      errorOutput.includes('nvEncodeAPICreateInstance failed')
+    ) {
       return {
         type: 'gpu_capability',
         message: `${gpuName} encoder initialization failed`,
-        details: 'FFmpeg could not initialize the NVIDIA encoder. This usually means:\n• Your GPU doesn\'t support hardware encoding\n• NVIDIA drivers are not installed or outdated\n• Another application is using the encoder',
+        details:
+          "FFmpeg could not initialize the NVIDIA encoder. This usually means:\n• Your GPU doesn't support hardware encoding\n• NVIDIA drivers are not installed or outdated\n• Another application is using the encoder",
         suggestion: 'Update your NVIDIA drivers or try CPU encoding.',
         canRetryWithCPU: true,
         codec,
@@ -277,12 +285,14 @@ export const parseGPUError = (errorOutput: string, gpu: GPUVendor, codec?: strin
       return {
         type: 'gpu_capability',
         message: `Your ${gpuName} GPU doesn't support ${codecName} encoding`,
-        details: codec === 'av1'
-          ? 'AV1 hardware encoding requires an RTX 40-series (Ada Lovelace) GPU or newer.'
-          : `Your GPU model doesn't support hardware ${codecName} encoding.`,
-        suggestion: codec === 'av1'
-          ? 'Use H.264 or H.265 for hardware encoding, or switch to CPU for AV1.'
-          : 'Try using CPU encoding instead.',
+        details:
+          codec === 'av1'
+            ? 'AV1 hardware encoding requires an RTX 40-series (Ada Lovelace) GPU or newer.'
+            : `Your GPU model doesn't support hardware ${codecName} encoding.`,
+        suggestion:
+          codec === 'av1'
+            ? 'Use H.264 or H.265 for hardware encoding, or switch to CPU for AV1.'
+            : 'Try using CPU encoding instead.',
         canRetryWithCPU: true,
         codec,
         gpu,
@@ -292,11 +302,15 @@ export const parseGPUError = (errorOutput: string, gpu: GPUVendor, codec?: strin
 
   // AMD specific errors
   if (gpu === 'amd') {
-    if (errorOutput.includes('AMF') && (errorOutput.includes('failed') || errorOutput.includes('error'))) {
+    if (
+      errorOutput.includes('AMF') &&
+      (errorOutput.includes('failed') || errorOutput.includes('error'))
+    ) {
       return {
         type: 'gpu_capability',
         message: `${gpuName} encoder initialization failed`,
-        details: 'FFmpeg could not initialize the AMD AMF encoder. This usually means:\n• Your GPU doesn\'t support AMF encoding\n• AMD drivers are not installed or outdated',
+        details:
+          "FFmpeg could not initialize the AMD AMF encoder. This usually means:\n• Your GPU doesn't support AMF encoding\n• AMD drivers are not installed or outdated",
         suggestion: 'Update your AMD drivers or try CPU encoding.',
         canRetryWithCPU: true,
         codec,
@@ -307,12 +321,14 @@ export const parseGPUError = (errorOutput: string, gpu: GPUVendor, codec?: strin
       return {
         type: 'gpu_capability',
         message: `Your ${gpuName} GPU doesn't support ${codecName} encoding`,
-        details: codec === 'av1'
-          ? 'AV1 hardware encoding requires an RX 7000 series (RDNA 3) GPU or newer.'
-          : `Your GPU model doesn't support hardware ${codecName} encoding.`,
-        suggestion: codec === 'av1'
-          ? 'Use H.264 or H.265 for hardware encoding, or switch to CPU for AV1.'
-          : 'Try using CPU encoding instead.',
+        details:
+          codec === 'av1'
+            ? 'AV1 hardware encoding requires an RX 7000 series (RDNA 3) GPU or newer.'
+            : `Your GPU model doesn't support hardware ${codecName} encoding.`,
+        suggestion:
+          codec === 'av1'
+            ? 'Use H.264 or H.265 for hardware encoding, or switch to CPU for AV1.'
+            : 'Try using CPU encoding instead.',
         canRetryWithCPU: true,
         codec,
         gpu,
@@ -322,12 +338,19 @@ export const parseGPUError = (errorOutput: string, gpu: GPUVendor, codec?: strin
 
   // Intel specific errors
   if (gpu === 'intel') {
-    if (errorOutput.includes('QSV') && (errorOutput.includes('failed') || errorOutput.includes('error') || errorOutput.includes('not found'))) {
+    if (
+      errorOutput.includes('QSV') &&
+      (errorOutput.includes('failed') ||
+        errorOutput.includes('error') ||
+        errorOutput.includes('not found'))
+    ) {
       return {
         type: 'gpu_capability',
         message: `${gpuName} Quick Sync encoder not available`,
-        details: 'FFmpeg could not initialize Intel Quick Sync Video. This usually means:\n• Your CPU/GPU doesn\'t support Quick Sync\n• Intel graphics drivers are not installed\n• Quick Sync is disabled in BIOS',
-        suggestion: 'Ensure Intel graphics drivers are installed and Quick Sync is enabled in BIOS, or try CPU encoding.',
+        details:
+          "FFmpeg could not initialize Intel Quick Sync Video. This usually means:\n• Your CPU/GPU doesn't support Quick Sync\n• Intel graphics drivers are not installed\n• Quick Sync is disabled in BIOS",
+        suggestion:
+          'Ensure Intel graphics drivers are installed and Quick Sync is enabled in BIOS, or try CPU encoding.',
         canRetryWithCPU: true,
         codec,
         gpu,
@@ -337,11 +360,15 @@ export const parseGPUError = (errorOutput: string, gpu: GPUVendor, codec?: strin
 
   // Apple specific errors
   if (gpu === 'apple') {
-    if (errorOutput.includes('videotoolbox') && (errorOutput.includes('failed') || errorOutput.includes('error'))) {
+    if (
+      errorOutput.includes('videotoolbox') &&
+      (errorOutput.includes('failed') || errorOutput.includes('error'))
+    ) {
       return {
         type: 'gpu_capability',
         message: 'VideoToolbox encoder not available',
-        details: 'FFmpeg could not initialize Apple VideoToolbox. This usually means:\n• Your Mac doesn\'t support hardware encoding for this codec\n• macOS version doesn\'t support this encoder',
+        details:
+          "FFmpeg could not initialize Apple VideoToolbox. This usually means:\n• Your Mac doesn't support hardware encoding for this codec\n• macOS version doesn't support this encoder",
         suggestion: 'Try using CPU encoding instead.',
         canRetryWithCPU: true,
         codec,
@@ -386,10 +413,7 @@ const normalizeCodec = (codec?: string): string | null => {
   return normalized;
 };
 
-const getHardwareDecodeArgs = async (
-  gpu: GPUVendor,
-  codec?: string
-): Promise<string[]> => {
+const getHardwareDecodeArgs = async (gpu: GPUVendor, codec?: string): Promise<string[]> => {
   if (gpu === 'cpu') {
     return [];
   }
@@ -402,7 +426,7 @@ const getHardwareDecodeArgs = async (
   if (process.platform === 'darwin') {
     if (gpu !== 'apple') return [];
     const decoder = VIDEOTOOLBOX_DECODERS[normalized];
-    if (decoder && await checkDecoderAvailable(decoder)) {
+    if (decoder && (await checkDecoderAvailable(decoder))) {
       return ['-hwaccel', 'videotoolbox', '-c:v', decoder];
     }
     return ['-hwaccel', 'videotoolbox'];
@@ -411,7 +435,7 @@ const getHardwareDecodeArgs = async (
   if (process.platform === 'win32') {
     if (gpu === 'nvidia') {
       const decoder = NVIDIA_DECODERS[normalized];
-      if (decoder && await checkDecoderAvailable(decoder)) {
+      if (decoder && (await checkDecoderAvailable(decoder))) {
         return ['-hwaccel', 'cuda', '-hwaccel_output_format', 'cuda', '-c:v', decoder];
       }
       return [];
@@ -419,7 +443,7 @@ const getHardwareDecodeArgs = async (
 
     if (gpu === 'intel') {
       const decoder = INTEL_DECODERS[normalized];
-      if (decoder && await checkDecoderAvailable(decoder)) {
+      if (decoder && (await checkDecoderAvailable(decoder))) {
         return ['-hwaccel', 'qsv', '-hwaccel_output_format', 'qsv', '-c:v', decoder];
       }
       return [];
@@ -427,7 +451,7 @@ const getHardwareDecodeArgs = async (
 
     if (gpu === 'amd') {
       const decoder = D3D11_DECODERS[normalized];
-      if (decoder && await checkDecoderAvailable(decoder)) {
+      if (decoder && (await checkDecoderAvailable(decoder))) {
         return ['-hwaccel', 'd3d11va', '-hwaccel_output_format', 'd3d11', '-c:v', decoder];
       }
       return [];
@@ -437,7 +461,7 @@ const getHardwareDecodeArgs = async (
   if (process.platform === 'linux') {
     if (gpu === 'nvidia') {
       const decoder = NVIDIA_DECODERS[normalized];
-      if (decoder && await checkDecoderAvailable(decoder)) {
+      if (decoder && (await checkDecoderAvailable(decoder))) {
         return ['-hwaccel', 'cuda', '-hwaccel_output_format', 'cuda', '-c:v', decoder];
       }
       return [];
@@ -446,7 +470,14 @@ const getHardwareDecodeArgs = async (
     if (gpu === 'amd' || gpu === 'intel') {
       const vaapiDevice = '/dev/dri/renderD128';
       if (fs.existsSync(vaapiDevice) && ['h264', 'hevc', 'av1', 'vp9'].includes(normalized)) {
-        return ['-hwaccel', 'vaapi', '-hwaccel_device', vaapiDevice, '-hwaccel_output_format', 'vaapi'];
+        return [
+          '-hwaccel',
+          'vaapi',
+          '-hwaccel_device',
+          vaapiDevice,
+          '-hwaccel_output_format',
+          'vaapi',
+        ];
       }
       return [];
     }
@@ -458,11 +489,13 @@ const getHardwareDecodeArgs = async (
 export const getVideoInfo = async (inputPath: string): Promise<VideoInfo> => {
   return new Promise((resolve, reject) => {
     const args = [
-      '-v', 'quiet',
-      '-print_format', 'json',
+      '-v',
+      'quiet',
+      '-print_format',
+      'json',
       '-show_format',
       '-show_streams',
-      inputPath
+      inputPath,
     ];
 
     const process = spawn(getFFprobePath(), args);
@@ -476,7 +509,9 @@ export const getVideoInfo = async (inputPath: string): Promise<VideoInfo> => {
       if (code === 0) {
         try {
           const data = JSON.parse(output);
-          const videoStream = data.streams?.find((s: { codec_type: string }) => s.codec_type === 'video');
+          const videoStream = data.streams?.find(
+            (s: { codec_type: string }) => s.codec_type === 'video'
+          );
           resolve({
             duration: parseFloat(data.format?.duration || '0'),
             size: parseInt(data.format?.size || '0'),
@@ -502,10 +537,14 @@ export const getVideoInfo = async (inputPath: string): Promise<VideoInfo> => {
 export const getVideoDuration = async (inputPath: string): Promise<number> => {
   return new Promise((resolve, reject) => {
     const args = [
-      '-i', inputPath,
-      '-show_entries', 'format=duration',
-      '-v', 'quiet',
-      '-of', 'csv=p=0'
+      '-i',
+      inputPath,
+      '-show_entries',
+      'format=duration',
+      '-v',
+      'quiet',
+      '-of',
+      'csv=p=0',
     ];
 
     const process = spawn(getFFprobePath(), args);
@@ -540,9 +579,7 @@ const parseProgress = (line: string, totalDuration: number): ConversionProgress 
   if (timeMatch) {
     const timeParts = timeMatch[1].split(':');
     const seconds =
-      parseFloat(timeParts[0]) * 3600 +
-      parseFloat(timeParts[1]) * 60 +
-      parseFloat(timeParts[2]);
+      parseFloat(timeParts[0]) * 3600 + parseFloat(timeParts[1]) * 60 + parseFloat(timeParts[2]);
 
     const percent = totalDuration > 0 ? Math.min(100, (seconds / totalDuration) * 100) : 0;
 
@@ -586,8 +623,14 @@ export const convertVideo = async (
 
   const isVideoPreset = ['av1', 'h264', 'h265'].includes(preset.category);
   const decodeArgs = isVideoPreset ? await getHardwareDecodeArgs(gpu, inputCodec) : [];
-  const args = ['-y', '-progress', 'pipe:1', ...decodeArgs, ...preset.getArgs(inputPath, outputPath, gpu)];
-  
+  const args = [
+    '-y',
+    '-progress',
+    'pipe:1',
+    ...decodeArgs,
+    ...preset.getArgs(inputPath, outputPath, gpu),
+  ];
+
   if (onLog) {
     onLog(`Running command: ffmpeg ${args.join(' ')}\n`);
   }
@@ -602,7 +645,7 @@ export const convertVideo = async (
     ffmpegProcess.stdout?.on('data', (data) => {
       const output = data.toString();
       if (onLog) onLog(output);
-      
+
       const lines = output.split('\n');
       for (const line of lines) {
         if (line.includes('out_time_ms=')) {
@@ -689,7 +732,9 @@ const forceKillProcess = (processToKill: ChildProcess): void => {
 
   if (process.platform === 'win32' && processToKill.pid) {
     try {
-      spawnSync('taskkill', ['/pid', processToKill.pid.toString(), '/t', '/f'], { windowsHide: true });
+      spawnSync('taskkill', ['/pid', processToKill.pid.toString(), '/t', '/f'], {
+        windowsHide: true,
+      });
     } catch {
       try {
         processToKill.kill('SIGKILL');
@@ -715,8 +760,7 @@ export const cancelConversion = (force = false): void => {
     try {
       processToKill.stdin?.write('q');
       processToKill.stdin?.end();
-    } catch {
-    }
+    } catch {}
 
     try {
       processToKill.kill('SIGTERM');

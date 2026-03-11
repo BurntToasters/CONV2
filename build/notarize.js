@@ -1,4 +1,3 @@
-
 require('dotenv').config();
 const { notarize } = require('@electron/notarize');
 const path = require('path');
