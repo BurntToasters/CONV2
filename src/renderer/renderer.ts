@@ -749,7 +749,8 @@ const setupEventListeners = () => {
   });
 
   window.electronAPI.onUpdateStatus((message) => {
-    if (!manualUpdateCheckInProgress && !updateDownloadInProgress) {
+    const isDownloadStartMessage = message === 'Downloading update...';
+    if (!manualUpdateCheckInProgress && !updateDownloadInProgress && !isDownloadStartMessage) {
       return;
     }
 
@@ -779,7 +780,7 @@ const setupEventListeners = () => {
   });
 
   window.electronAPI.onUpdateProgress((percent) => {
-    if (!manualUpdateCheckInProgress && !updateDownloadInProgress) {
+    if (!Number.isFinite(percent)) {
       return;
     }
 
