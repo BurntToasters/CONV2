@@ -15,6 +15,7 @@ const colors = {
 };
 
 const results = {
+  compile: { status: 'pending' },
   unit: { status: 'pending', passed: 0, failed: 0 },
   format: { status: 'pending' },
   typecheck: { status: 'pending' },
@@ -38,12 +39,25 @@ ${colors.reset}`);
 
 function parseUnitTests(output) {
   const clean = stripAnsi(output);
-  const testsLine = clean.split(/\r?\n/).find((line) => line.trim().startsWith('Tests'));
-  if (!testsLine) return;
-  const passedMatch = testsLine.match(/(\d+)\s+passed/);
-  const failedMatch = testsLine.match(/(\d+)\s+failed/);
-  results.unit.passed = passedMatch ? parseInt(passedMatch[1], 10) : 0;
-  results.unit.failed = failedMatch ? parseInt(failedMatch[1], 10) : 0;
+  const lines = clean.split(/\r?\n/);
+
+  // vitest format: "Tests  5 passed (5)"
+  const vitestLine = lines.find((line) => line.trim().startsWith('Tests'));
+  if (vitestLine) {
+    const passedMatch = vitestLine.match(/(\d+)\s+passed/);
+    const failedMatch = vitestLine.match(/(\d+)\s+failed/);
+    results.unit.passed = passedMatch ? parseInt(passedMatch[1], 10) : 0;
+    results.unit.failed = failedMatch ? parseInt(failedMatch[1], 10) : 0;
+    return;
+  }
+
+  // node --test format (spec reporter: "ℹ pass N", TAP: "# pass N")
+  const passLine = lines.find((line) => /[ℹ#]\s*pass\s+\d+/.test(line));
+  const failLine = lines.find((line) => /[ℹ#]\s*fail\s+\d+/.test(line));
+  const passMatch = passLine?.match(/pass\s+(\d+)/);
+  const failMatch = failLine?.match(/fail\s+(\d+)/);
+  results.unit.passed = passMatch ? parseInt(passMatch[1], 10) : 0;
+  results.unit.failed = failMatch ? parseInt(failMatch[1], 10) : 0;
 }
 
 function runCommand(name, command, parser) {
@@ -206,7 +220,10 @@ function runConfigChecks() {
 printBanner('CONV2 Full Test Suite');
 
 function run() {
-  const unitResult = runCommand('unit', 'npm test', parseUnitTests);
+  const compileResult = runCommand('compile', 'npm run compile');
+  results.compile.status = compileResult.ok ? 'passed' : 'failed';
+
+  const unitResult = runCommand('unit', 'npm run tests:node', parseUnitTests);
   results.unit.status = unitResult.ok ? 'passed' : 'failed';
 
   const formatResult = runCommand('format', 'npm run format:check');
@@ -221,6 +238,7 @@ function run() {
   printBanner('SUMMARY');
 
   const summaryLines = [
+    `${colors.bold}Compile:${colors.reset}   ${results.compile.status === 'passed' ? colors.green + '✓ PASS' : colors.red + '✗ FAIL'}${colors.reset}`,
     `${colors.bold}Unit:${colors.reset}      ${results.unit.status === 'passed' ? colors.green + '✓ PASS' : colors.red + '✗ FAIL'}${colors.reset} (${results.unit.passed} passed${results.unit.failed > 0 ? `, ${results.unit.failed} failed` : ''})`,
     `${colors.bold}Format:${colors.reset}    ${results.format.status === 'passed' ? colors.green + '✓ PASS' : colors.red + '✗ FAIL'}${colors.reset}`,
     `${colors.bold}Typecheck:${colors.reset} ${results.typecheck.status === 'passed' ? colors.green + '✓ PASS' : colors.red + '✗ FAIL'}${colors.reset}`,

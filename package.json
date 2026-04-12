@@ -76,10 +76,10 @@
     "licenses": "npx npm-license-crawler --production --json licenses.json",
     "format": "prettier --write \"src/**/*.{ts,js,html,css}\" \"build/**/*.js\" \"tests/**/*.js\" \"*.{json,md,yml,yaml}\"",
     "format:check": "prettier --check \"src/**/*.{ts,js,html,css}\" \"build/**/*.js\" \"tests/**/*.js\" \"*.{json,md,yml,yaml}\"",
-    "test": "npm run tests",
+    "test": "npm run tests:node",
     "tests:node": "node --test tests/*.test.js",
     "tests": "npm run build && npm run tests:node",
-    "test:all": "node build/test-all.js",
+    "test:all": "node build-scripts/test-all.js",
     "typecheck": "tsc --noEmit",
     "release:prepare": "node build/update-metainfo.js",
     "release:finalize": "node build/post-release-assets.js"
@@ -96,8 +96,9 @@
     "dotenv-cli": "^11.0.0",
     "electron": "^41.0.2",
     "electron-builder": "^26.8.1",
+    "js-yaml": "^4.1.1",
     "prettier": "^3.8.1",
-    "typescript": "^5.9.3"
+    "typescript": "^6.0.2"
   },
   "dependencies": {
     "electron-updater": "^6.8.3"
