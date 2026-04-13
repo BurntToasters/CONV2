@@ -1,6 +1,7 @@
 require('dotenv').config();
 const { notarize } = require('@electron/notarize');
 const path = require('path');
+const fs = require('fs');
 
 exports.default = async function notarizing(context) {
   const { electronPlatformName, appOutDir } = context;
@@ -10,7 +11,8 @@ exports.default = async function notarizing(context) {
     return;
   }
 
-  if (context.packager.config.mac?.type === 'distribution') {
+  const isMasOutputDir = /(^|[\\/])mas([\\/.-]|$)/i.test(appOutDir);
+  if (isMasOutputDir) {
     console.log('Skipping notarization: MAS build');
     return;
   }
@@ -27,6 +29,10 @@ exports.default = async function notarizing(context) {
 
   const appName = context.packager.appInfo.productFilename;
   const appPath = path.join(appOutDir, `${appName}.app`);
+  if (!fs.existsSync(appPath)) {
+    console.log(`Skipping notarization: App bundle not found at ${appPath}`);
+    return;
+  }
 
   console.log(`Notarizing: ${appName}.app`);
 

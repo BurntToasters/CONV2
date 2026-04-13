@@ -9,6 +9,12 @@ export interface ConversionProgress {
   speed: string;
 }
 
+export interface ConversionResult {
+  success: boolean;
+  outputPath: string;
+  error?: string;
+}
+
 export interface AppSettings {
   outputDirectory: string;
   gpu: 'nvidia' | 'amd' | 'intel' | 'apple' | 'cpu';
@@ -18,6 +24,7 @@ export interface AppSettings {
   useSystemFFmpeg: boolean;
   updateChannel: 'auto' | 'stable' | 'beta';
   showAdvancedPresets: boolean;
+  removeSpacesFromFilenames: boolean;
 }
 
 export interface VideoInfo {
@@ -39,18 +46,30 @@ export interface GPUEncoderError {
   gpu?: 'nvidia' | 'amd' | 'intel' | 'apple' | 'cpu';
 }
 
+export interface StartConversionOptions {
+  suppressGpuErrorEvent?: boolean;
+  removeSpacesFromFilenames?: boolean;
+  outputDirectory?: string;
+  showDebugOutput?: boolean;
+}
+
 contextBridge.exposeInMainWorld('electronAPI', {
   // File operations
   getPathForFile: (file: File): string => webUtils.getPathForFile(file),
-  selectFile: (): Promise<string | null> => ipcRenderer.invoke('select-file'),
+  selectFile: (): Promise<string[]> => ipcRenderer.invoke('select-file'),
   selectOutputDirectory: (): Promise<string | null> =>
     ipcRenderer.invoke('select-output-directory'),
   getFileInfo: (filePath: string): Promise<VideoInfo | null> =>
     ipcRenderer.invoke('get-file-info', filePath),
 
   // Conversion
-  startConversion: (inputPath: string, presetId: string, gpu: AppSettings['gpu']): Promise<void> =>
-    ipcRenderer.invoke('start-conversion', inputPath, presetId, gpu),
+  startConversion: (
+    inputPath: string,
+    presetId: string,
+    gpu: AppSettings['gpu'],
+    options?: StartConversionOptions
+  ): Promise<ConversionResult> =>
+    ipcRenderer.invoke('start-conversion', inputPath, presetId, gpu, options),
   cancelConversion: (force?: boolean): Promise<void> =>
     ipcRenderer.invoke('cancel-conversion', force),
   onConversionProgress: (callback: (progress: ConversionProgress) => void): void => {
@@ -120,14 +139,15 @@ declare global {
   interface Window {
     electronAPI: {
       getPathForFile: (file: File) => string;
-      selectFile: () => Promise<string | null>;
+      selectFile: () => Promise<string[]>;
       selectOutputDirectory: () => Promise<string | null>;
       getFileInfo: (filePath: string) => Promise<VideoInfo | null>;
       startConversion: (
         inputPath: string,
         presetId: string,
-        gpu: AppSettings['gpu']
-      ) => Promise<void>;
+        gpu: AppSettings['gpu'],
+        options?: StartConversionOptions
+      ) => Promise<ConversionResult>;
       cancelConversion: (force?: boolean) => Promise<void>;
       onConversionProgress: (callback: (progress: ConversionProgress) => void) => void;
       onConversionLog: (callback: (message: string) => void) => void;

@@ -1,7 +1,13 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
 
-const { ensureMp4PlaybackCompatibilityArgs } = require('../dist/main/ffmpeg.js');
+const {
+  ensureMp4PlaybackCompatibilityArgs,
+  resolveUniqueOutputPath,
+} = require('../dist/main/ffmpeg.js');
 
 test('adds faststart and hvc1 for H.265 MP4 output', () => {
   const preset = {
@@ -91,4 +97,20 @@ test('does not modify non-MP4 args', () => {
   const args = ensureMp4PlaybackCompatibilityArgs(preset, inputArgs);
 
   assert.deepEqual(args, inputArgs);
+});
+
+test('resolveUniqueOutputPath increments suffix when output exists', () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'conv2-output-path-'));
+
+  try {
+    const firstPath = resolveUniqueOutputPath(tempDir, 'sample', 'mp4');
+    assert.equal(firstPath, path.join(tempDir, 'sample_converted.mp4'));
+
+    fs.writeFileSync(firstPath, 'occupied');
+
+    const secondPath = resolveUniqueOutputPath(tempDir, 'sample', 'mp4');
+    assert.equal(secondPath, path.join(tempDir, 'sample_converted_1.mp4'));
+  } finally {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
 });

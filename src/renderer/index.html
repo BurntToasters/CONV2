@@ -36,11 +36,17 @@
           <p>Please install FFmpeg and add it to your system PATH to use CONV2.</p>
         </div>
 
-        <div class="drop-zone" id="dropZone">
+        <div
+          class="drop-zone"
+          id="dropZone"
+          role="button"
+          tabindex="0"
+          aria-label="Select one or more video files"
+        >
           <div class="drop-zone-content">
             <img src="../../assets/twemoji/1f3ac.svg" alt="Video" class="drop-zone-icon" />
             <p class="drop-zone-title">Drop your video here</p>
-            <p class="drop-zone-subtitle">or click to browse files</p>
+            <p class="drop-zone-subtitle">or click to browse one or more files</p>
             <button class="btn btn-secondary">
               <svg
                 class="btn-icon"
@@ -58,7 +64,7 @@
               Browse Files
             </button>
           </div>
-          <input type="file" id="fileInput" accept="video/*" hidden />
+          <input type="file" id="fileInput" accept="video/*" multiple hidden />
         </div>
 
         <div class="card file-info" id="fileInfo">
@@ -270,33 +276,53 @@
           </div>
 
           <div class="settings-row">
-            <span class="settings-label">System FFmpeg</span>
+            <span class="settings-label" id="useSystemFFmpegLabel">System FFmpeg</span>
             <label class="toggle-switch">
-              <input type="checkbox" id="useSystemFFmpegCheck" />
+              <input
+                type="checkbox"
+                id="useSystemFFmpegCheck"
+                aria-labelledby="useSystemFFmpegLabel"
+              />
               <span class="toggle-slider"></span>
             </label>
           </div>
 
           <div class="settings-row">
-            <span class="settings-label">Debug Logs</span>
+            <span class="settings-label" id="debugOutputLabel">Debug Logs</span>
             <label class="toggle-switch">
-              <input type="checkbox" id="debugOutputCheck" />
+              <input type="checkbox" id="debugOutputCheck" aria-labelledby="debugOutputLabel" />
               <span class="toggle-slider"></span>
             </label>
           </div>
 
           <div class="settings-row settings-row-last-in-group">
-            <span class="settings-label">Advanced Presets</span>
+            <span class="settings-label" id="advancedPresetsLabel">Advanced Presets</span>
             <label class="toggle-switch">
-              <input type="checkbox" id="advancedPresetsCheck" />
+              <input
+                type="checkbox"
+                id="advancedPresetsCheck"
+                aria-labelledby="advancedPresetsLabel"
+              />
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
+
+          <div class="settings-row settings-row-last-in-group">
+            <span class="settings-label" id="removeSpacesLabel">Remove Spaces in Output Names</span>
+            <label class="toggle-switch">
+              <input type="checkbox" id="removeSpacesCheck" aria-labelledby="removeSpacesLabel" />
               <span class="toggle-slider"></span>
             </label>
           </div>
 
           <div class="settings-row">
-            <span class="settings-label">Auto-check updates</span>
+            <span class="settings-label" id="autoCheckUpdatesLabel">Auto-check updates</span>
             <label class="toggle-switch">
-              <input type="checkbox" id="autoCheckUpdatesCheck" />
+              <input
+                type="checkbox"
+                id="autoCheckUpdatesCheck"
+                aria-labelledby="autoCheckUpdatesLabel"
+              />
               <span class="toggle-slider"></span>
             </label>
           </div>
