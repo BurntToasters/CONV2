@@ -12,6 +12,7 @@ interface AppSettings {
   showDebugOutput: boolean;
   autoCheckUpdates: boolean;
   useSystemFFmpeg: boolean;
+  updateChannel: 'auto' | 'stable' | 'beta';
 }
 
 interface VideoInfo {
@@ -104,6 +105,7 @@ const elements = {
   checkUpdateBtn: document.getElementById('checkUpdateBtn') as HTMLButtonElement,
   updateBadge: document.getElementById('updateBadge') as HTMLSpanElement,
   autoCheckUpdatesCheck: document.getElementById('autoCheckUpdatesCheck') as HTMLInputElement,
+  updateChannelSelect: document.getElementById('updateChannelSelect') as HTMLSelectElement,
   versionInfo: document.getElementById('versionInfo') as HTMLSpanElement,
   versionLink: document.getElementById('versionLink') as HTMLAnchorElement,
   ffmpegWarning: document.getElementById('ffmpegWarning') as HTMLDivElement,
@@ -401,6 +403,7 @@ const loadSettings = async () => {
   elements.debugOutputCheck.checked = settings.showDebugOutput;
   elements.autoCheckUpdatesCheck.checked = settings.autoCheckUpdates;
   elements.useSystemFFmpegCheck.checked = settings.useSystemFFmpeg;
+  elements.updateChannelSelect.value = settings.updateChannel;
 
   if (settings.showDebugOutput) {
     elements.showLogsBtn.style.display = 'inline-block';
@@ -455,9 +458,14 @@ const loadVersion = async () => {
 
 const applyUpdateVisibility = async () => {
   const updatesDisabled = await window.electronAPI.isUpdatesDisabled();
+  const updateChannelSetting = document.getElementById('updateChannelSetting');
   if (updatesDisabled) {
     elements.checkUpdateBtn.style.display = 'none';
     elements.updateBadge.style.display = 'none';
+    elements.autoCheckUpdatesCheck.disabled = true;
+    if (updateChannelSetting) {
+      updateChannelSetting.style.display = 'none';
+    }
   }
 };
 
@@ -631,6 +639,11 @@ const setupEventListeners = () => {
   elements.autoCheckUpdatesCheck.addEventListener('change', async () => {
     settings.autoCheckUpdates = elements.autoCheckUpdatesCheck.checked;
     await window.electronAPI.saveSettings({ autoCheckUpdates: settings.autoCheckUpdates });
+  });
+
+  elements.updateChannelSelect.addEventListener('change', async () => {
+    settings.updateChannel = elements.updateChannelSelect.value as AppSettings['updateChannel'];
+    await window.electronAPI.saveSettings({ updateChannel: settings.updateChannel });
   });
 
   elements.useSystemFFmpegCheck.addEventListener('change', async () => {

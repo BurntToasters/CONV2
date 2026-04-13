@@ -1,11 +1,34 @@
 import { autoUpdater, UpdateInfo } from 'electron-updater';
-import { BrowserWindow, dialog } from 'electron';
+import { app, BrowserWindow, dialog } from 'electron';
 import { execSync } from 'child_process';
+
+type UpdateChannel = 'auto' | 'stable' | 'beta';
 
 let mainWindow: BrowserWindow | null = null;
 let updatesDisabled = false;
 let updateAvailable = false;
 let silentCheck = false;
+let updateChannel: UpdateChannel = 'auto';
+
+const isPrereleaseVersion = (version: string): boolean => {
+  return /-(beta|alpha|rc)/i.test(version);
+};
+
+const shouldUseBetaChannel = (): boolean => {
+  if (updateChannel === 'beta') {
+    return true;
+  }
+  if (updateChannel === 'stable') {
+    return false;
+  }
+  return isPrereleaseVersion(app.getVersion());
+};
+
+const applyUpdaterChannel = (): void => {
+  const useBetaChannel = shouldUseBetaChannel();
+  autoUpdater.channel = useBetaChannel ? 'beta' : 'latest';
+  autoUpdater.allowPrerelease = useBetaChannel;
+};
 
 const checkMsiInstallation = (): boolean => {
   if (process.platform !== 'win32') {
@@ -63,6 +86,7 @@ export const initUpdater = (window: BrowserWindow): void => {
 
   autoUpdater.autoDownload = false;
   autoUpdater.autoInstallOnAppQuit = true;
+  applyUpdaterChannel();
 
   autoUpdater.on('checking-for-update', () => {
     sendStatusToWindow('Checking for updates...');
@@ -164,6 +188,7 @@ export const checkForUpdates = (): void => {
     return;
   }
 
+  applyUpdaterChannel();
   autoUpdater.checkForUpdates();
 };
 
@@ -176,10 +201,18 @@ export const checkForUpdatesSilent = (): void => {
     return;
   }
 
+  applyUpdaterChannel();
   silentCheck = true;
   autoUpdater.checkForUpdates().catch(() => {
     silentCheck = false;
   });
+};
+
+export const setUpdateChannel = (channel: UpdateChannel): void => {
+  updateChannel = channel;
+  if (!updatesDisabled) {
+    applyUpdaterChannel();
+  }
 };
 
 const sendStatusToWindow = (message: string): void => {

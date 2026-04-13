@@ -1169,6 +1169,19 @@ select option {
   flex-shrink: 0;
 }
 
+#updateChannelSetting {
+  margin-top: 8px;
+}
+
+#updateChannelSetting .setting-inline-label {
+  min-width: 56px;
+}
+
+#updateChannelSetting select {
+  flex: 1;
+  min-width: 0;
+}
+
 .setting-item {
   display: flex;
   flex-direction: column;
