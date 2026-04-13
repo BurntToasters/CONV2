@@ -71,18 +71,25 @@ if (publish) {
   electronBuilderArgs.push('--publish', publish);
 }
 
-const npxCommand = process.platform === 'win32' ? 'npx.cmd' : 'npx';
+const isWindows = process.platform === 'win32';
+const npxCommand = isWindows ? 'npx.cmd' : 'npx';
 
 console.log(
   `[windows-build] version=${version} beta=${isBetaVersion ? 'yes' : 'no'} targets=${targets.join(',')} arch=${arch}`
 );
 
 if (dryRun) {
-  console.log(`[windows-build] dry-run command: ${npxCommand} ${electronBuilderArgs.join(' ')}`);
+  const preview = isWindows
+    ? `cmd.exe /c ${npxCommand} ${electronBuilderArgs.join(' ')}`
+    : `${npxCommand} ${electronBuilderArgs.join(' ')}`;
+  console.log(`[windows-build] dry-run command: ${preview}`);
   process.exit(0);
 }
 
-const result = spawnSync(npxCommand, electronBuilderArgs, {
+const spawnCommand = isWindows ? 'cmd.exe' : npxCommand;
+const spawnArgs = isWindows ? ['/c', npxCommand, ...electronBuilderArgs] : electronBuilderArgs;
+
+const result = spawnSync(spawnCommand, spawnArgs, {
   stdio: 'inherit',
   shell: false,
 });
