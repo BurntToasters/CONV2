@@ -241,3 +241,102 @@ test('gif presets normalize malformed advanced settings at arg boundary', () => 
   assert.ok(filter.includes('dither=sierra2_4a'));
   assert.equal(args[args.indexOf('-loop') + 1], '0');
 });
+
+test('av1 preset uses advanced quality, cpu preset, and audio bitrate', () => {
+  const preset = presets.find((entry) => entry.id === 'av1-best-quality');
+  assert.ok(preset);
+
+  const args = preset.getArgs('input.mp4', 'output.mp4', 'cpu', {
+    advancedFormatSettings: {
+      av1: {
+        tiers: {
+          bestQuality: {
+            quality: 12,
+            cpuPreset: 3,
+            audioBitrateKbps: 320,
+          },
+        },
+      },
+    },
+  });
+
+  assert.ok(args.includes('-crf'));
+  assert.equal(args[args.indexOf('-crf') + 1], '12');
+  assert.equal(args[args.indexOf('-preset') + 1], '3');
+  assert.equal(args[args.indexOf('-b:a') + 1], '320k');
+});
+
+test('h264 preset uses advanced quality, preset, and audio bitrate', () => {
+  const preset = presets.find((entry) => entry.id === 'h264-fast');
+  assert.ok(preset);
+
+  const args = preset.getArgs('input.mp4', 'output.mp4', 'cpu', {
+    advancedFormatSettings: {
+      h264: {
+        tiers: {
+          fast: {
+            quality: 19,
+            preset: 'veryslow',
+            audioBitrateKbps: 160,
+          },
+        },
+      },
+    },
+  });
+
+  assert.equal(args[args.indexOf('-crf') + 1], '19');
+  assert.equal(args[args.indexOf('-preset') + 1], 'veryslow');
+  assert.equal(args[args.indexOf('-b:a') + 1], '160k');
+});
+
+test('h265 preset toggles advanced x265 params based on settings', () => {
+  const preset = presets.find((entry) => entry.id === 'h265-best-quality');
+  assert.ok(preset);
+
+  const args = preset.getArgs('input.mp4', 'output.mp4', 'cpu', {
+    advancedFormatSettings: {
+      h265: {
+        tiers: {
+          bestQuality: {
+            quality: 14,
+            preset: 'slow',
+            audioBitrateKbps: 224,
+            useAdvancedParams: false,
+          },
+        },
+      },
+    },
+  });
+
+  assert.equal(args[args.indexOf('-crf') + 1], '14');
+  assert.equal(args[args.indexOf('-preset') + 1], 'slow');
+  assert.equal(args[args.indexOf('-b:a') + 1], '224k');
+  assert.equal(args.includes('-x265-params'), false);
+});
+
+test('avi preset uses advanced codec and parameters', () => {
+  const preset = presets.find((entry) => entry.id === 'avi-balanced');
+  assert.ok(preset);
+
+  const args = preset.getArgs('input.mp4', 'output.avi', 'cpu', {
+    advancedFormatSettings: {
+      avi: {
+        tiers: {
+          balanced: {
+            codec: 'h265',
+            quality: 24,
+            preset: 'slow',
+            audioBitrateKbps: 144,
+            useAdvancedParams: true,
+          },
+        },
+      },
+    },
+  });
+
+  assert.equal(args[args.indexOf('-c:v') + 1], 'libx265');
+  assert.equal(args[args.indexOf('-crf') + 1], '24');
+  assert.equal(args[args.indexOf('-preset') + 1], 'slow');
+  assert.equal(args[args.indexOf('-b:a') + 1], '144k');
+  assert.ok(args.includes('-x265-params'));
+});

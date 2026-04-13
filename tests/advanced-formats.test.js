@@ -34,6 +34,30 @@ test('normalizeAdvancedFormatSettings returns defaults when values are missing',
     maxColors: 128,
     dither: 'none',
   });
+
+  assert.deepEqual(normalized.av1.tiers.bestQuality, {
+    quality: 15,
+    cpuPreset: 2,
+    audioBitrateKbps: 256,
+  });
+  assert.deepEqual(normalized.h264.tiers.fast, {
+    quality: 23,
+    preset: 'fast',
+    audioBitrateKbps: 128,
+  });
+  assert.deepEqual(normalized.h265.tiers.bestCompression, {
+    quality: 26,
+    preset: 'veryslow',
+    audioBitrateKbps: 128,
+    useAdvancedParams: true,
+  });
+  assert.deepEqual(normalized.avi.tiers.balanced, {
+    codec: 'h264',
+    quality: 20,
+    preset: 'slow',
+    audioBitrateKbps: 192,
+    useAdvancedParams: false,
+  });
 });
 
 test('normalizeAdvancedFormatSettings clamps invalid gif tier values', () => {
@@ -119,6 +143,69 @@ test('normalizeAdvancedFormatSettings handles numeric strings and rounds values'
   assert.equal(normalized.gif.tiers.balanced.dither, 'floyd_steinberg');
 });
 
+test('normalizeAdvancedFormatSettings clamps invalid values for non-gif formats', () => {
+  const normalized = normalizeAdvancedFormatSettings({
+    av1: {
+      tiers: {
+        bestCompression: {
+          quality: -10,
+          cpuPreset: 99,
+          audioBitrateKbps: 10000,
+        },
+      },
+    },
+    h264: {
+      tiers: {
+        fast: {
+          quality: 999,
+          preset: 'invalid',
+          audioBitrateKbps: 1,
+        },
+      },
+    },
+    h265: {
+      tiers: {
+        quality: {
+          quality: 0,
+          preset: 'ultrafast',
+          audioBitrateKbps: 4096,
+          useAdvancedParams: 'nope',
+        },
+      },
+    },
+    avi: {
+      tiers: {
+        balanced: {
+          codec: 'invalid',
+          quality: 999,
+          preset: 'bad',
+          audioBitrateKbps: -1,
+          useAdvancedParams: true,
+        },
+      },
+    },
+  });
+
+  assert.equal(normalized.av1.tiers.bestCompression.quality, 1);
+  assert.equal(normalized.av1.tiers.bestCompression.cpuPreset, 13);
+  assert.equal(normalized.av1.tiers.bestCompression.audioBitrateKbps, 512);
+
+  assert.equal(normalized.h264.tiers.fast.quality, 51);
+  assert.equal(normalized.h264.tiers.fast.preset, 'fast');
+  assert.equal(normalized.h264.tiers.fast.audioBitrateKbps, 32);
+
+  assert.equal(normalized.h265.tiers.quality.quality, 1);
+  assert.equal(normalized.h265.tiers.quality.preset, 'ultrafast');
+  assert.equal(normalized.h265.tiers.quality.audioBitrateKbps, 512);
+  assert.equal(normalized.h265.tiers.quality.useAdvancedParams, false);
+
+  assert.equal(normalized.avi.tiers.balanced.codec, 'h264');
+  assert.equal(normalized.avi.tiers.balanced.quality, 51);
+  assert.equal(normalized.avi.tiers.balanced.preset, 'slow');
+  assert.equal(normalized.avi.tiers.balanced.audioBitrateKbps, 32);
+  assert.equal(normalized.avi.tiers.balanced.useAdvancedParams, true);
+});
+
 test('mergeAdvancedFormatSettings preserves unaffected tiers across partial updates', () => {
   const current = createDefaultAdvancedFormatSettings();
   const merged = mergeAdvancedFormatSettings(current, {
@@ -135,4 +222,49 @@ test('mergeAdvancedFormatSettings preserves unaffected tiers across partial upda
   assert.deepEqual(merged.gif.tiers.quality, current.gif.tiers.quality);
   assert.deepEqual(merged.gif.tiers.balanced, current.gif.tiers.balanced);
   assert.deepEqual(merged.gif.tiers.bestCompression, current.gif.tiers.bestCompression);
+});
+
+test('mergeAdvancedFormatSettings applies partial updates for non-gif formats', () => {
+  const current = createDefaultAdvancedFormatSettings();
+  const merged = mergeAdvancedFormatSettings(current, {
+    av1: {
+      tiers: {
+        compression: {
+          quality: 33,
+        },
+      },
+    },
+    h264: {
+      tiers: {
+        quality: {
+          preset: 'medium',
+        },
+      },
+    },
+    h265: {
+      tiers: {
+        bestQuality: {
+          useAdvancedParams: false,
+        },
+      },
+    },
+    avi: {
+      tiers: {
+        bestCompression: {
+          codec: 'h264',
+        },
+      },
+    },
+  });
+
+  assert.equal(merged.av1.tiers.compression.quality, 33);
+  assert.equal(merged.av1.tiers.compression.cpuPreset, current.av1.tiers.compression.cpuPreset);
+  assert.equal(merged.h264.tiers.quality.preset, 'medium');
+  assert.equal(
+    merged.h264.tiers.quality.audioBitrateKbps,
+    current.h264.tiers.quality.audioBitrateKbps
+  );
+  assert.equal(merged.h265.tiers.bestQuality.useAdvancedParams, false);
+  assert.equal(merged.avi.tiers.bestCompression.codec, 'h264');
+  assert.equal(merged.avi.tiers.balanced.codec, current.avi.tiers.balanced.codec);
 });

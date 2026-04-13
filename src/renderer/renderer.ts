@@ -11,6 +11,22 @@ interface Preset {
 type GifLoopMode = 'forever' | 'once';
 type GifDither = 'sierra2_4a' | 'floyd_steinberg' | 'bayer' | 'none';
 type GifTierKey = 'bestQuality' | 'quality' | 'balanced' | 'bestCompression';
+type VideoPreset =
+  | 'ultrafast'
+  | 'superfast'
+  | 'veryfast'
+  | 'faster'
+  | 'fast'
+  | 'medium'
+  | 'slow'
+  | 'slower'
+  | 'veryslow'
+  | 'placebo';
+type Av1TierKey = 'bestQuality' | 'quality' | 'balanced' | 'bestCompression' | 'compression';
+type H264TierKey = 'fast' | 'quality';
+type H265TierKey = 'bestQuality' | 'quality' | 'balanced' | 'bestCompression';
+type AviTierKey = 'bestQuality' | 'bestCompression' | 'balanced';
+type AviCodec = 'h264' | 'h265';
 
 interface GifTierSettings {
   fps: number;
@@ -31,8 +47,81 @@ interface GifAdvancedSettings {
   tiers: GifTierCollection;
 }
 
+interface Av1TierSettings {
+  quality: number;
+  cpuPreset: number;
+  audioBitrateKbps: number;
+}
+
+interface Av1TierCollection {
+  bestQuality: Av1TierSettings;
+  quality: Av1TierSettings;
+  balanced: Av1TierSettings;
+  bestCompression: Av1TierSettings;
+  compression: Av1TierSettings;
+}
+
+interface Av1AdvancedSettings {
+  tiers: Av1TierCollection;
+}
+
+interface H264TierSettings {
+  quality: number;
+  preset: VideoPreset;
+  audioBitrateKbps: number;
+}
+
+interface H264TierCollection {
+  fast: H264TierSettings;
+  quality: H264TierSettings;
+}
+
+interface H264AdvancedSettings {
+  tiers: H264TierCollection;
+}
+
+interface H265TierSettings {
+  quality: number;
+  preset: VideoPreset;
+  audioBitrateKbps: number;
+  useAdvancedParams: boolean;
+}
+
+interface H265TierCollection {
+  bestQuality: H265TierSettings;
+  quality: H265TierSettings;
+  balanced: H265TierSettings;
+  bestCompression: H265TierSettings;
+}
+
+interface H265AdvancedSettings {
+  tiers: H265TierCollection;
+}
+
+interface AviTierSettings {
+  codec: AviCodec;
+  quality: number;
+  preset: VideoPreset;
+  audioBitrateKbps: number;
+  useAdvancedParams: boolean;
+}
+
+interface AviTierCollection {
+  bestQuality: AviTierSettings;
+  bestCompression: AviTierSettings;
+  balanced: AviTierSettings;
+}
+
+interface AviAdvancedSettings {
+  tiers: AviTierCollection;
+}
+
 interface AdvancedFormatSettings {
   gif: GifAdvancedSettings;
+  av1: Av1AdvancedSettings;
+  h264: H264AdvancedSettings;
+  h265: H265AdvancedSettings;
+  avi: AviAdvancedSettings;
 }
 
 interface AppSettings {
@@ -121,7 +210,7 @@ let ffmpegInstalled = true;
 let cancelRequested = false;
 let closeDynamicModal: (() => void) | null = null;
 let fileSelectionToken = 0;
-let gifSaveDebounceTimer: ReturnType<typeof setTimeout> | null = null;
+let advancedSaveDebounceTimer: ReturnType<typeof setTimeout> | null = null;
 
 const getRequiredElement = <T extends HTMLElement>(id: string): T => {
   const element = document.getElementById(id);
@@ -157,8 +246,20 @@ const elements = {
   settingsGeneralPanel: getRequiredElement<HTMLDivElement>('settingsGeneralPanel'),
   settingsAdvancedFormatsPanel: getRequiredElement<HTMLDivElement>('settingsAdvancedFormatsPanel'),
   formatTabGif: getRequiredElement<HTMLButtonElement>('formatTabGif'),
+  formatTabAv1: getRequiredElement<HTMLButtonElement>('formatTabAv1'),
+  formatTabH264: getRequiredElement<HTMLButtonElement>('formatTabH264'),
+  formatTabH265: getRequiredElement<HTMLButtonElement>('formatTabH265'),
+  formatTabAvi: getRequiredElement<HTMLButtonElement>('formatTabAvi'),
   formatPanelGif: getRequiredElement<HTMLDivElement>('formatPanelGif'),
+  formatPanelAv1: getRequiredElement<HTMLDivElement>('formatPanelAv1'),
+  formatPanelH264: getRequiredElement<HTMLDivElement>('formatPanelH264'),
+  formatPanelH265: getRequiredElement<HTMLDivElement>('formatPanelH265'),
+  formatPanelAvi: getRequiredElement<HTMLDivElement>('formatPanelAvi'),
   resetGifDefaultsBtn: getRequiredElement<HTMLButtonElement>('resetGifDefaultsBtn'),
+  resetAv1DefaultsBtn: getRequiredElement<HTMLButtonElement>('resetAv1DefaultsBtn'),
+  resetH264DefaultsBtn: getRequiredElement<HTMLButtonElement>('resetH264DefaultsBtn'),
+  resetH265DefaultsBtn: getRequiredElement<HTMLButtonElement>('resetH265DefaultsBtn'),
+  resetAviDefaultsBtn: getRequiredElement<HTMLButtonElement>('resetAviDefaultsBtn'),
   gifLoopModeSelect: getRequiredElement<HTMLSelectElement>('gifLoopModeSelect'),
   gifBestQualityFps: getRequiredElement<HTMLInputElement>('gifBestQualityFps'),
   gifBestQualityMaxDimension: getRequiredElement<HTMLInputElement>('gifBestQualityMaxDimension'),
@@ -243,11 +344,146 @@ const gifTierInputs: Record<
   },
 };
 
+const av1TierInputs: Record<
+  Av1TierKey,
+  {
+    quality: HTMLInputElement;
+    cpuPreset: HTMLInputElement;
+    audioBitrateKbps: HTMLInputElement;
+  }
+> = {
+  bestQuality: {
+    quality: getRequiredElement<HTMLInputElement>('av1BestQualityQuality'),
+    cpuPreset: getRequiredElement<HTMLInputElement>('av1BestQualityCpuPreset'),
+    audioBitrateKbps: getRequiredElement<HTMLInputElement>('av1BestQualityAudioBitrateKbps'),
+  },
+  quality: {
+    quality: getRequiredElement<HTMLInputElement>('av1QualityQuality'),
+    cpuPreset: getRequiredElement<HTMLInputElement>('av1QualityCpuPreset'),
+    audioBitrateKbps: getRequiredElement<HTMLInputElement>('av1QualityAudioBitrateKbps'),
+  },
+  balanced: {
+    quality: getRequiredElement<HTMLInputElement>('av1BalancedQuality'),
+    cpuPreset: getRequiredElement<HTMLInputElement>('av1BalancedCpuPreset'),
+    audioBitrateKbps: getRequiredElement<HTMLInputElement>('av1BalancedAudioBitrateKbps'),
+  },
+  bestCompression: {
+    quality: getRequiredElement<HTMLInputElement>('av1BestCompressionQuality'),
+    cpuPreset: getRequiredElement<HTMLInputElement>('av1BestCompressionCpuPreset'),
+    audioBitrateKbps: getRequiredElement<HTMLInputElement>('av1BestCompressionAudioBitrateKbps'),
+  },
+  compression: {
+    quality: getRequiredElement<HTMLInputElement>('av1CompressionQuality'),
+    cpuPreset: getRequiredElement<HTMLInputElement>('av1CompressionCpuPreset'),
+    audioBitrateKbps: getRequiredElement<HTMLInputElement>('av1CompressionAudioBitrateKbps'),
+  },
+};
+
+const h264TierInputs: Record<
+  H264TierKey,
+  {
+    quality: HTMLInputElement;
+    preset: HTMLSelectElement;
+    audioBitrateKbps: HTMLInputElement;
+  }
+> = {
+  fast: {
+    quality: getRequiredElement<HTMLInputElement>('h264FastQuality'),
+    preset: getRequiredElement<HTMLSelectElement>('h264FastPreset'),
+    audioBitrateKbps: getRequiredElement<HTMLInputElement>('h264FastAudioBitrateKbps'),
+  },
+  quality: {
+    quality: getRequiredElement<HTMLInputElement>('h264QualityQuality'),
+    preset: getRequiredElement<HTMLSelectElement>('h264QualityPreset'),
+    audioBitrateKbps: getRequiredElement<HTMLInputElement>('h264QualityAudioBitrateKbps'),
+  },
+};
+
+const h265TierInputs: Record<
+  H265TierKey,
+  {
+    quality: HTMLInputElement;
+    preset: HTMLSelectElement;
+    audioBitrateKbps: HTMLInputElement;
+    useAdvancedParams: HTMLInputElement;
+  }
+> = {
+  bestQuality: {
+    quality: getRequiredElement<HTMLInputElement>('h265BestQualityQuality'),
+    preset: getRequiredElement<HTMLSelectElement>('h265BestQualityPreset'),
+    audioBitrateKbps: getRequiredElement<HTMLInputElement>('h265BestQualityAudioBitrateKbps'),
+    useAdvancedParams: getRequiredElement<HTMLInputElement>('h265BestQualityUseAdvancedParams'),
+  },
+  quality: {
+    quality: getRequiredElement<HTMLInputElement>('h265QualityQuality'),
+    preset: getRequiredElement<HTMLSelectElement>('h265QualityPreset'),
+    audioBitrateKbps: getRequiredElement<HTMLInputElement>('h265QualityAudioBitrateKbps'),
+    useAdvancedParams: getRequiredElement<HTMLInputElement>('h265QualityUseAdvancedParams'),
+  },
+  balanced: {
+    quality: getRequiredElement<HTMLInputElement>('h265BalancedQuality'),
+    preset: getRequiredElement<HTMLSelectElement>('h265BalancedPreset'),
+    audioBitrateKbps: getRequiredElement<HTMLInputElement>('h265BalancedAudioBitrateKbps'),
+    useAdvancedParams: getRequiredElement<HTMLInputElement>('h265BalancedUseAdvancedParams'),
+  },
+  bestCompression: {
+    quality: getRequiredElement<HTMLInputElement>('h265BestCompressionQuality'),
+    preset: getRequiredElement<HTMLSelectElement>('h265BestCompressionPreset'),
+    audioBitrateKbps: getRequiredElement<HTMLInputElement>('h265BestCompressionAudioBitrateKbps'),
+    useAdvancedParams: getRequiredElement<HTMLInputElement>('h265BestCompressionUseAdvancedParams'),
+  },
+};
+
+const aviTierInputs: Record<
+  AviTierKey,
+  {
+    codec: HTMLSelectElement;
+    quality: HTMLInputElement;
+    preset: HTMLSelectElement;
+    audioBitrateKbps: HTMLInputElement;
+    useAdvancedParams: HTMLInputElement;
+  }
+> = {
+  bestQuality: {
+    codec: getRequiredElement<HTMLSelectElement>('aviBestQualityCodec'),
+    quality: getRequiredElement<HTMLInputElement>('aviBestQualityQuality'),
+    preset: getRequiredElement<HTMLSelectElement>('aviBestQualityPreset'),
+    audioBitrateKbps: getRequiredElement<HTMLInputElement>('aviBestQualityAudioBitrateKbps'),
+    useAdvancedParams: getRequiredElement<HTMLInputElement>('aviBestQualityUseAdvancedParams'),
+  },
+  bestCompression: {
+    codec: getRequiredElement<HTMLSelectElement>('aviBestCompressionCodec'),
+    quality: getRequiredElement<HTMLInputElement>('aviBestCompressionQuality'),
+    preset: getRequiredElement<HTMLSelectElement>('aviBestCompressionPreset'),
+    audioBitrateKbps: getRequiredElement<HTMLInputElement>('aviBestCompressionAudioBitrateKbps'),
+    useAdvancedParams: getRequiredElement<HTMLInputElement>('aviBestCompressionUseAdvancedParams'),
+  },
+  balanced: {
+    codec: getRequiredElement<HTMLSelectElement>('aviBalancedCodec'),
+    quality: getRequiredElement<HTMLInputElement>('aviBalancedQuality'),
+    preset: getRequiredElement<HTMLSelectElement>('aviBalancedPreset'),
+    audioBitrateKbps: getRequiredElement<HTMLInputElement>('aviBalancedAudioBitrateKbps'),
+    useAdvancedParams: getRequiredElement<HTMLInputElement>('aviBalancedUseAdvancedParams'),
+  },
+};
+
 const settingsTabButtons = [elements.settingsGeneralTab, elements.settingsAdvancedFormatsTab];
 const settingsPanels = [elements.settingsGeneralPanel, elements.settingsAdvancedFormatsPanel];
 
-const formatTabs = [elements.formatTabGif];
-const formatPanels = [elements.formatPanelGif];
+const formatTabs = [
+  elements.formatTabGif,
+  elements.formatTabAv1,
+  elements.formatTabH264,
+  elements.formatTabH265,
+  elements.formatTabAvi,
+];
+const formatPanels = [
+  elements.formatPanelGif,
+  elements.formatPanelAv1,
+  elements.formatPanelH264,
+  elements.formatPanelH265,
+  elements.formatPanelAvi,
+];
 
 const formatFileSize = (bytes: number): string => {
   if (bytes === 0) return '0 B';
@@ -283,7 +519,14 @@ const setSettingsPanel = (
   });
 };
 
-const setFormatPanel = (panelId: 'formatPanelGif'): void => {
+type FormatPanelId =
+  | 'formatPanelGif'
+  | 'formatPanelAv1'
+  | 'formatPanelH264'
+  | 'formatPanelH265'
+  | 'formatPanelAvi';
+
+const setFormatPanel = (panelId: FormatPanelId): void => {
   formatPanels.forEach((panel) => {
     const isActive = panel.id === panelId;
     panel.classList.toggle('is-active', isActive);
@@ -342,6 +585,57 @@ const setGifControlValues = (gif: GifAdvancedSettings): void => {
   });
 };
 
+const setAv1ControlValues = (av1: Av1AdvancedSettings): void => {
+  (Object.keys(av1TierInputs) as Av1TierKey[]).forEach((tier) => {
+    const tierInputs = av1TierInputs[tier];
+    const tierSettings = av1.tiers[tier];
+    tierInputs.quality.value = String(tierSettings.quality);
+    tierInputs.cpuPreset.value = String(tierSettings.cpuPreset);
+    tierInputs.audioBitrateKbps.value = String(tierSettings.audioBitrateKbps);
+  });
+};
+
+const setH264ControlValues = (h264: H264AdvancedSettings): void => {
+  (Object.keys(h264TierInputs) as H264TierKey[]).forEach((tier) => {
+    const tierInputs = h264TierInputs[tier];
+    const tierSettings = h264.tiers[tier];
+    tierInputs.quality.value = String(tierSettings.quality);
+    tierInputs.preset.value = tierSettings.preset;
+    tierInputs.audioBitrateKbps.value = String(tierSettings.audioBitrateKbps);
+  });
+};
+
+const setH265ControlValues = (h265: H265AdvancedSettings): void => {
+  (Object.keys(h265TierInputs) as H265TierKey[]).forEach((tier) => {
+    const tierInputs = h265TierInputs[tier];
+    const tierSettings = h265.tiers[tier];
+    tierInputs.quality.value = String(tierSettings.quality);
+    tierInputs.preset.value = tierSettings.preset;
+    tierInputs.audioBitrateKbps.value = String(tierSettings.audioBitrateKbps);
+    tierInputs.useAdvancedParams.checked = tierSettings.useAdvancedParams;
+  });
+};
+
+const setAviControlValues = (avi: AviAdvancedSettings): void => {
+  (Object.keys(aviTierInputs) as AviTierKey[]).forEach((tier) => {
+    const tierInputs = aviTierInputs[tier];
+    const tierSettings = avi.tiers[tier];
+    tierInputs.codec.value = tierSettings.codec;
+    tierInputs.quality.value = String(tierSettings.quality);
+    tierInputs.preset.value = tierSettings.preset;
+    tierInputs.audioBitrateKbps.value = String(tierSettings.audioBitrateKbps);
+    tierInputs.useAdvancedParams.checked = tierSettings.useAdvancedParams;
+  });
+};
+
+const setAdvancedFormatControlValues = (advanced: AdvancedFormatSettings): void => {
+  setGifControlValues(advanced.gif);
+  setAv1ControlValues(advanced.av1);
+  setH264ControlValues(advanced.h264);
+  setH265ControlValues(advanced.h265);
+  setAviControlValues(advanced.avi);
+};
+
 const parseNumericInput = (value: string): number => {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : 0;
@@ -379,64 +673,187 @@ const readGifControls = (): GifAdvancedSettings => {
   };
 };
 
-const saveGifSettingsFromControls = async (): Promise<void> => {
+const readAv1Controls = (): Av1AdvancedSettings => {
+  return {
+    tiers: {
+      bestQuality: {
+        quality: parseNumericInput(av1TierInputs.bestQuality.quality.value),
+        cpuPreset: parseNumericInput(av1TierInputs.bestQuality.cpuPreset.value),
+        audioBitrateKbps: parseNumericInput(av1TierInputs.bestQuality.audioBitrateKbps.value),
+      },
+      quality: {
+        quality: parseNumericInput(av1TierInputs.quality.quality.value),
+        cpuPreset: parseNumericInput(av1TierInputs.quality.cpuPreset.value),
+        audioBitrateKbps: parseNumericInput(av1TierInputs.quality.audioBitrateKbps.value),
+      },
+      balanced: {
+        quality: parseNumericInput(av1TierInputs.balanced.quality.value),
+        cpuPreset: parseNumericInput(av1TierInputs.balanced.cpuPreset.value),
+        audioBitrateKbps: parseNumericInput(av1TierInputs.balanced.audioBitrateKbps.value),
+      },
+      bestCompression: {
+        quality: parseNumericInput(av1TierInputs.bestCompression.quality.value),
+        cpuPreset: parseNumericInput(av1TierInputs.bestCompression.cpuPreset.value),
+        audioBitrateKbps: parseNumericInput(av1TierInputs.bestCompression.audioBitrateKbps.value),
+      },
+      compression: {
+        quality: parseNumericInput(av1TierInputs.compression.quality.value),
+        cpuPreset: parseNumericInput(av1TierInputs.compression.cpuPreset.value),
+        audioBitrateKbps: parseNumericInput(av1TierInputs.compression.audioBitrateKbps.value),
+      },
+    },
+  };
+};
+
+const readH264Controls = (): H264AdvancedSettings => {
+  return {
+    tiers: {
+      fast: {
+        quality: parseNumericInput(h264TierInputs.fast.quality.value),
+        preset: h264TierInputs.fast.preset.value as VideoPreset,
+        audioBitrateKbps: parseNumericInput(h264TierInputs.fast.audioBitrateKbps.value),
+      },
+      quality: {
+        quality: parseNumericInput(h264TierInputs.quality.quality.value),
+        preset: h264TierInputs.quality.preset.value as VideoPreset,
+        audioBitrateKbps: parseNumericInput(h264TierInputs.quality.audioBitrateKbps.value),
+      },
+    },
+  };
+};
+
+const readH265Controls = (): H265AdvancedSettings => {
+  return {
+    tiers: {
+      bestQuality: {
+        quality: parseNumericInput(h265TierInputs.bestQuality.quality.value),
+        preset: h265TierInputs.bestQuality.preset.value as VideoPreset,
+        audioBitrateKbps: parseNumericInput(h265TierInputs.bestQuality.audioBitrateKbps.value),
+        useAdvancedParams: h265TierInputs.bestQuality.useAdvancedParams.checked,
+      },
+      quality: {
+        quality: parseNumericInput(h265TierInputs.quality.quality.value),
+        preset: h265TierInputs.quality.preset.value as VideoPreset,
+        audioBitrateKbps: parseNumericInput(h265TierInputs.quality.audioBitrateKbps.value),
+        useAdvancedParams: h265TierInputs.quality.useAdvancedParams.checked,
+      },
+      balanced: {
+        quality: parseNumericInput(h265TierInputs.balanced.quality.value),
+        preset: h265TierInputs.balanced.preset.value as VideoPreset,
+        audioBitrateKbps: parseNumericInput(h265TierInputs.balanced.audioBitrateKbps.value),
+        useAdvancedParams: h265TierInputs.balanced.useAdvancedParams.checked,
+      },
+      bestCompression: {
+        quality: parseNumericInput(h265TierInputs.bestCompression.quality.value),
+        preset: h265TierInputs.bestCompression.preset.value as VideoPreset,
+        audioBitrateKbps: parseNumericInput(h265TierInputs.bestCompression.audioBitrateKbps.value),
+        useAdvancedParams: h265TierInputs.bestCompression.useAdvancedParams.checked,
+      },
+    },
+  };
+};
+
+const readAviControls = (): AviAdvancedSettings => {
+  return {
+    tiers: {
+      bestQuality: {
+        codec: aviTierInputs.bestQuality.codec.value as AviCodec,
+        quality: parseNumericInput(aviTierInputs.bestQuality.quality.value),
+        preset: aviTierInputs.bestQuality.preset.value as VideoPreset,
+        audioBitrateKbps: parseNumericInput(aviTierInputs.bestQuality.audioBitrateKbps.value),
+        useAdvancedParams: aviTierInputs.bestQuality.useAdvancedParams.checked,
+      },
+      bestCompression: {
+        codec: aviTierInputs.bestCompression.codec.value as AviCodec,
+        quality: parseNumericInput(aviTierInputs.bestCompression.quality.value),
+        preset: aviTierInputs.bestCompression.preset.value as VideoPreset,
+        audioBitrateKbps: parseNumericInput(aviTierInputs.bestCompression.audioBitrateKbps.value),
+        useAdvancedParams: aviTierInputs.bestCompression.useAdvancedParams.checked,
+      },
+      balanced: {
+        codec: aviTierInputs.balanced.codec.value as AviCodec,
+        quality: parseNumericInput(aviTierInputs.balanced.quality.value),
+        preset: aviTierInputs.balanced.preset.value as VideoPreset,
+        audioBitrateKbps: parseNumericInput(aviTierInputs.balanced.audioBitrateKbps.value),
+        useAdvancedParams: aviTierInputs.balanced.useAdvancedParams.checked,
+      },
+    },
+  };
+};
+
+const readAdvancedFormatControls = (): AdvancedFormatSettings => {
+  return {
+    gif: readGifControls(),
+    av1: readAv1Controls(),
+    h264: readH264Controls(),
+    h265: readH265Controls(),
+    avi: readAviControls(),
+  };
+};
+
+const saveAdvancedFormatSettingsFromControls = async (): Promise<void> => {
   const previousSettings = settings.advancedFormatSettings;
 
   try {
     await window.electronAPI.saveSettings({
-      advancedFormatSettings: {
-        gif: readGifControls(),
-      },
+      advancedFormatSettings: readAdvancedFormatControls(),
     });
     settings = await window.electronAPI.getSettings();
-    setGifControlValues(settings.advancedFormatSettings.gif);
+    setAdvancedFormatControlValues(settings.advancedFormatSettings);
   } catch (err) {
     settings.advancedFormatSettings = previousSettings;
-    setGifControlValues(previousSettings.gif);
+    setAdvancedFormatControlValues(previousSettings);
     showStatus(
       'error',
-      `Failed to save GIF settings: ${err instanceof Error ? err.message : String(err)}`
+      `Failed to save advanced format settings: ${err instanceof Error ? err.message : String(err)}`
     );
   }
 };
 
-const resetGifSettingsToDefaults = async (): Promise<void> => {
+type AdvancedFormatKey = keyof AdvancedFormatSettings;
+
+const resetFormatSettingsToDefaults = async (
+  format: AdvancedFormatKey,
+  label: string
+): Promise<void> => {
   const previousSettings = settings.advancedFormatSettings;
 
   try {
     const defaults = await window.electronAPI.getDefaultAdvancedFormatSettings();
     await window.electronAPI.saveSettings({
-      advancedFormatSettings: defaults,
+      advancedFormatSettings: {
+        [format]: defaults[format],
+      } as unknown as AdvancedFormatSettings,
     });
     settings = await window.electronAPI.getSettings();
-    setGifControlValues(settings.advancedFormatSettings.gif);
+    setAdvancedFormatControlValues(settings.advancedFormatSettings);
   } catch (err) {
     settings.advancedFormatSettings = previousSettings;
-    setGifControlValues(previousSettings.gif);
+    setAdvancedFormatControlValues(previousSettings);
     showStatus(
       'error',
-      `Failed to reset GIF settings: ${err instanceof Error ? err.message : String(err)}`
+      `Failed to reset ${label} settings: ${err instanceof Error ? err.message : String(err)}`
     );
   }
 };
 
-const scheduleGifSettingsSave = (): void => {
-  if (gifSaveDebounceTimer) {
-    clearTimeout(gifSaveDebounceTimer);
+const scheduleAdvancedSettingsSave = (): void => {
+  if (advancedSaveDebounceTimer) {
+    clearTimeout(advancedSaveDebounceTimer);
   }
-  gifSaveDebounceTimer = setTimeout(() => {
-    gifSaveDebounceTimer = null;
-    void saveGifSettingsFromControls();
+  advancedSaveDebounceTimer = setTimeout(() => {
+    advancedSaveDebounceTimer = null;
+    void saveAdvancedFormatSettingsFromControls();
   }, 220);
 };
 
-const flushPendingGifSettingsSave = (): void => {
-  if (!gifSaveDebounceTimer) {
+const flushPendingAdvancedSettingsSave = (): void => {
+  if (!advancedSaveDebounceTimer) {
     return;
   }
-  clearTimeout(gifSaveDebounceTimer);
-  gifSaveDebounceTimer = null;
-  void saveGifSettingsFromControls();
+  clearTimeout(advancedSaveDebounceTimer);
+  advancedSaveDebounceTimer = null;
+  void saveAdvancedFormatSettingsFromControls();
 };
 
 const getCheckingUpdateButtonHTML = (): string =>
@@ -704,7 +1121,14 @@ const checkFFmpeg = async () => {
 
 const loadSettings = async () => {
   settings = await window.electronAPI.getSettings();
-  if (!settings.advancedFormatSettings || !settings.advancedFormatSettings.gif) {
+  if (
+    !settings.advancedFormatSettings ||
+    !settings.advancedFormatSettings.gif ||
+    !settings.advancedFormatSettings.av1 ||
+    !settings.advancedFormatSettings.h264 ||
+    !settings.advancedFormatSettings.h265 ||
+    !settings.advancedFormatSettings.avi
+  ) {
     settings.advancedFormatSettings = await window.electronAPI.getDefaultAdvancedFormatSettings();
   }
   elements.gpuSelect.value = settings.gpu;
@@ -717,7 +1141,7 @@ const loadSettings = async () => {
   elements.updateChannelSelect.value = settings.updateChannel;
   setSettingsPanel('settingsGeneralPanel');
   setFormatPanel('formatPanelGif');
-  setGifControlValues(settings.advancedFormatSettings.gif);
+  setAdvancedFormatControlValues(settings.advancedFormatSettings);
 
   if (settings.showDebugOutput) {
     elements.showLogsBtn.style.display = 'inline-block';
@@ -831,7 +1255,7 @@ const setupKeyboardShortcuts = () => {
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') {
       if (elements.settingsModal.classList.contains('visible')) {
-        flushPendingGifSettingsSave();
+        flushPendingAdvancedSettingsSave();
         elements.settingsModal.classList.remove('visible');
       }
       if (elements.dynamicModal.classList.contains('visible')) {
@@ -898,42 +1322,64 @@ const setupEventListeners = () => {
   formatTabs.forEach((tab) => {
     tab.addEventListener('click', () => {
       const panelId = tab.dataset.formatPanel;
-      if (panelId === 'formatPanelGif') {
+      if (
+        panelId === 'formatPanelGif' ||
+        panelId === 'formatPanelAv1' ||
+        panelId === 'formatPanelH264' ||
+        panelId === 'formatPanelH265' ||
+        panelId === 'formatPanelAvi'
+      ) {
         setFormatPanel(panelId);
       }
     });
     tab.addEventListener('keydown', (event) => {
       handleTabKeyboardNavigation(event, formatTabs, (nextTab) => {
         const panelId = nextTab.dataset.formatPanel;
-        if (panelId === 'formatPanelGif') {
+        if (
+          panelId === 'formatPanelGif' ||
+          panelId === 'formatPanelAv1' ||
+          panelId === 'formatPanelH264' ||
+          panelId === 'formatPanelH265' ||
+          panelId === 'formatPanelAvi'
+        ) {
           setFormatPanel(panelId);
         }
       });
     });
   });
 
-  elements.gifLoopModeSelect.addEventListener('change', async () => {
-    await saveGifSettingsFromControls();
-  });
+  document
+    .querySelectorAll<HTMLInputElement | HTMLSelectElement>('.advanced-control')
+    .forEach((control) => {
+      if (control instanceof HTMLInputElement && control.type === 'number') {
+        control.addEventListener('input', () => {
+          scheduleAdvancedSettingsSave();
+        });
+      }
 
-  (Object.keys(gifTierInputs) as GifTierKey[]).forEach((tier) => {
-    const tierInputs = gifTierInputs[tier];
-    tierInputs.fps.addEventListener('input', () => {
-      scheduleGifSettingsSave();
+      control.addEventListener('change', async () => {
+        await saveAdvancedFormatSettingsFromControls();
+      });
     });
-    tierInputs.maxDimension.addEventListener('input', () => {
-      scheduleGifSettingsSave();
-    });
-    tierInputs.maxColors.addEventListener('input', () => {
-      scheduleGifSettingsSave();
-    });
-    tierInputs.dither.addEventListener('change', async () => {
-      await saveGifSettingsFromControls();
-    });
-  });
 
   elements.resetGifDefaultsBtn.addEventListener('click', async () => {
-    await resetGifSettingsToDefaults();
+    await resetFormatSettingsToDefaults('gif', 'GIF');
+  });
+
+  elements.resetAv1DefaultsBtn.addEventListener('click', async () => {
+    await resetFormatSettingsToDefaults('av1', 'AV1');
+  });
+
+  elements.resetH264DefaultsBtn.addEventListener('click', async () => {
+    await resetFormatSettingsToDefaults('h264', 'H.264');
+  });
+
+  elements.resetH265DefaultsBtn.addEventListener('click', async () => {
+    await resetFormatSettingsToDefaults('h265', 'H.265');
+  });
+
+  elements.resetAviDefaultsBtn.addEventListener('click', async () => {
+    await resetFormatSettingsToDefaults('avi', 'AVI');
   });
 
   document.getElementById('support-link')?.addEventListener('click', (e) => {
@@ -1108,18 +1554,18 @@ const setupEventListeners = () => {
 
   elements.settingsBtn.addEventListener('click', () => {
     setSettingsPanel('settingsGeneralPanel');
-    setGifControlValues(settings.advancedFormatSettings.gif);
+    setAdvancedFormatControlValues(settings.advancedFormatSettings);
     elements.settingsModal.classList.add('visible');
   });
 
   elements.closeSettings.addEventListener('click', () => {
-    flushPendingGifSettingsSave();
+    flushPendingAdvancedSettingsSave();
     elements.settingsModal.classList.remove('visible');
   });
 
   elements.settingsModal.addEventListener('click', (e) => {
     if (e.target === elements.settingsModal) {
-      flushPendingGifSettingsSave();
+      flushPendingAdvancedSettingsSave();
       elements.settingsModal.classList.remove('visible');
     }
   });

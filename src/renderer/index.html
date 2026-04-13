@@ -417,21 +417,49 @@
               >
                 GIF
               </button>
-              <button class="format-tab format-tab-disabled" id="formatTabAv1" disabled>
+              <button
+                class="format-tab"
+                id="formatTabAv1"
+                data-format-panel="formatPanelAv1"
+                role="tab"
+                aria-selected="false"
+                aria-controls="formatPanelAv1"
+                tabindex="-1"
+              >
                 AV1
-                <span class="coming-soon-badge">Coming soon</span>
               </button>
-              <button class="format-tab format-tab-disabled" id="formatTabH264" disabled>
+              <button
+                class="format-tab"
+                id="formatTabH264"
+                data-format-panel="formatPanelH264"
+                role="tab"
+                aria-selected="false"
+                aria-controls="formatPanelH264"
+                tabindex="-1"
+              >
                 H.264
-                <span class="coming-soon-badge">Coming soon</span>
               </button>
-              <button class="format-tab format-tab-disabled" id="formatTabH265" disabled>
+              <button
+                class="format-tab"
+                id="formatTabH265"
+                data-format-panel="formatPanelH265"
+                role="tab"
+                aria-selected="false"
+                aria-controls="formatPanelH265"
+                tabindex="-1"
+              >
                 H.265
-                <span class="coming-soon-badge">Coming soon</span>
               </button>
-              <button class="format-tab format-tab-disabled" id="formatTabAvi" disabled>
+              <button
+                class="format-tab"
+                id="formatTabAvi"
+                data-format-panel="formatPanelAvi"
+                role="tab"
+                aria-selected="false"
+                aria-controls="formatPanelAvi"
+                tabindex="-1"
+              >
                 AVI
-                <span class="coming-soon-badge">Coming soon</span>
               </button>
             </div>
 
@@ -450,16 +478,16 @@
 
               <div class="advanced-format-row">
                 <label class="advanced-format-label" for="gifLoopModeSelect">Loop</label>
-                <select id="gifLoopModeSelect" class="advanced-format-select">
+                <select id="gifLoopModeSelect" class="advanced-format-select advanced-control">
                   <option value="forever">Forever</option>
                   <option value="once">Once</option>
                 </select>
               </div>
 
-              <div class="gif-tier-grid">
-                <div class="gif-tier-card">
+              <div class="advanced-tier-grid">
+                <div class="advanced-tier-card">
                   <h4>Best Quality</h4>
-                  <div class="gif-tier-fields">
+                  <div class="advanced-tier-fields">
                     <label>
                       FPS
                       <input
@@ -469,6 +497,7 @@
                         max="60"
                         data-gif-tier="bestQuality"
                         data-gif-field="fps"
+                        class="advanced-control"
                       />
                     </label>
                     <label>
@@ -480,6 +509,7 @@
                         max="2160"
                         data-gif-tier="bestQuality"
                         data-gif-field="maxDimension"
+                        class="advanced-control"
                       />
                     </label>
                     <label>
@@ -491,6 +521,7 @@
                         max="256"
                         data-gif-tier="bestQuality"
                         data-gif-field="maxColors"
+                        class="advanced-control"
                       />
                     </label>
                     <label>
@@ -499,6 +530,7 @@
                         id="gifBestQualityDither"
                         data-gif-tier="bestQuality"
                         data-gif-field="dither"
+                        class="advanced-control"
                       >
                         <option value="sierra2_4a">Sierra 2-4A</option>
                         <option value="floyd_steinberg">Floyd-Steinberg</option>
@@ -509,9 +541,9 @@
                   </div>
                 </div>
 
-                <div class="gif-tier-card">
+                <div class="advanced-tier-card">
                   <h4>Quality</h4>
-                  <div class="gif-tier-fields">
+                  <div class="advanced-tier-fields">
                     <label>
                       FPS
                       <input
@@ -521,6 +553,7 @@
                         max="60"
                         data-gif-tier="quality"
                         data-gif-field="fps"
+                        class="advanced-control"
                       />
                     </label>
                     <label>
@@ -532,6 +565,7 @@
                         max="2160"
                         data-gif-tier="quality"
                         data-gif-field="maxDimension"
+                        class="advanced-control"
                       />
                     </label>
                     <label>
@@ -543,11 +577,17 @@
                         max="256"
                         data-gif-tier="quality"
                         data-gif-field="maxColors"
+                        class="advanced-control"
                       />
                     </label>
                     <label>
                       Dither
-                      <select id="gifQualityDither" data-gif-tier="quality" data-gif-field="dither">
+                      <select
+                        id="gifQualityDither"
+                        data-gif-tier="quality"
+                        data-gif-field="dither"
+                        class="advanced-control"
+                      >
                         <option value="sierra2_4a">Sierra 2-4A</option>
                         <option value="floyd_steinberg">Floyd-Steinberg</option>
                         <option value="bayer">Bayer</option>
@@ -557,9 +597,9 @@
                   </div>
                 </div>
 
-                <div class="gif-tier-card">
+                <div class="advanced-tier-card">
                   <h4>Balanced</h4>
-                  <div class="gif-tier-fields">
+                  <div class="advanced-tier-fields">
                     <label>
                       FPS
                       <input
@@ -569,6 +609,7 @@
                         max="60"
                         data-gif-tier="balanced"
                         data-gif-field="fps"
+                        class="advanced-control"
                       />
                     </label>
                     <label>
@@ -580,6 +621,7 @@
                         max="2160"
                         data-gif-tier="balanced"
                         data-gif-field="maxDimension"
+                        class="advanced-control"
                       />
                     </label>
                     <label>
@@ -591,6 +633,7 @@
                         max="256"
                         data-gif-tier="balanced"
                         data-gif-field="maxColors"
+                        class="advanced-control"
                       />
                     </label>
                     <label>
@@ -599,6 +642,7 @@
                         id="gifBalancedDither"
                         data-gif-tier="balanced"
                         data-gif-field="dither"
+                        class="advanced-control"
                       >
                         <option value="sierra2_4a">Sierra 2-4A</option>
                         <option value="floyd_steinberg">Floyd-Steinberg</option>
@@ -609,9 +653,9 @@
                   </div>
                 </div>
 
-                <div class="gif-tier-card">
+                <div class="advanced-tier-card">
                   <h4>Best Compression</h4>
-                  <div class="gif-tier-fields">
+                  <div class="advanced-tier-fields">
                     <label>
                       FPS
                       <input
@@ -621,6 +665,7 @@
                         max="60"
                         data-gif-tier="bestCompression"
                         data-gif-field="fps"
+                        class="advanced-control"
                       />
                     </label>
                     <label>
@@ -632,6 +677,7 @@
                         max="2160"
                         data-gif-tier="bestCompression"
                         data-gif-field="maxDimension"
+                        class="advanced-control"
                       />
                     </label>
                     <label>
@@ -643,6 +689,7 @@
                         max="256"
                         data-gif-tier="bestCompression"
                         data-gif-field="maxColors"
+                        class="advanced-control"
                       />
                     </label>
                     <label>
@@ -651,12 +698,707 @@
                         id="gifBestCompressionDither"
                         data-gif-tier="bestCompression"
                         data-gif-field="dither"
+                        class="advanced-control"
                       >
                         <option value="sierra2_4a">Sierra 2-4A</option>
                         <option value="floyd_steinberg">Floyd-Steinberg</option>
                         <option value="bayer">Bayer</option>
                         <option value="none">None</option>
                       </select>
+                    </label>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div
+              class="format-panel"
+              id="formatPanelAv1"
+              role="tabpanel"
+              aria-labelledby="formatTabAv1"
+              hidden
+            >
+              <div class="advanced-format-header">
+                <h3>AV1 Preset Tuning</h3>
+                <button class="btn btn-secondary btn-xs" id="resetAv1DefaultsBtn">
+                  Reset AV1 Defaults
+                </button>
+              </div>
+
+              <div class="advanced-tier-grid">
+                <div class="advanced-tier-card">
+                  <h4>Best Quality</h4>
+                  <div class="advanced-tier-fields">
+                    <label>
+                      Quality (CRF/CQ)
+                      <input
+                        type="number"
+                        id="av1BestQualityQuality"
+                        min="1"
+                        max="63"
+                        class="advanced-control"
+                      />
+                    </label>
+                    <label>
+                      CPU Preset (0-13)
+                      <input
+                        type="number"
+                        id="av1BestQualityCpuPreset"
+                        min="0"
+                        max="13"
+                        class="advanced-control"
+                      />
+                    </label>
+                    <label>
+                      Audio kbps
+                      <input
+                        type="number"
+                        id="av1BestQualityAudioBitrateKbps"
+                        min="32"
+                        max="512"
+                        class="advanced-control"
+                      />
+                    </label>
+                  </div>
+                </div>
+
+                <div class="advanced-tier-card">
+                  <h4>Quality</h4>
+                  <div class="advanced-tier-fields">
+                    <label>
+                      Quality (CRF/CQ)
+                      <input
+                        type="number"
+                        id="av1QualityQuality"
+                        min="1"
+                        max="63"
+                        class="advanced-control"
+                      />
+                    </label>
+                    <label>
+                      CPU Preset (0-13)
+                      <input
+                        type="number"
+                        id="av1QualityCpuPreset"
+                        min="0"
+                        max="13"
+                        class="advanced-control"
+                      />
+                    </label>
+                    <label>
+                      Audio kbps
+                      <input
+                        type="number"
+                        id="av1QualityAudioBitrateKbps"
+                        min="32"
+                        max="512"
+                        class="advanced-control"
+                      />
+                    </label>
+                  </div>
+                </div>
+
+                <div class="advanced-tier-card">
+                  <h4>Balanced</h4>
+                  <div class="advanced-tier-fields">
+                    <label>
+                      Quality (CRF/CQ)
+                      <input
+                        type="number"
+                        id="av1BalancedQuality"
+                        min="1"
+                        max="63"
+                        class="advanced-control"
+                      />
+                    </label>
+                    <label>
+                      CPU Preset (0-13)
+                      <input
+                        type="number"
+                        id="av1BalancedCpuPreset"
+                        min="0"
+                        max="13"
+                        class="advanced-control"
+                      />
+                    </label>
+                    <label>
+                      Audio kbps
+                      <input
+                        type="number"
+                        id="av1BalancedAudioBitrateKbps"
+                        min="32"
+                        max="512"
+                        class="advanced-control"
+                      />
+                    </label>
+                  </div>
+                </div>
+
+                <div class="advanced-tier-card">
+                  <h4>Best Compression</h4>
+                  <div class="advanced-tier-fields">
+                    <label>
+                      Quality (CRF/CQ)
+                      <input
+                        type="number"
+                        id="av1BestCompressionQuality"
+                        min="1"
+                        max="63"
+                        class="advanced-control"
+                      />
+                    </label>
+                    <label>
+                      CPU Preset (0-13)
+                      <input
+                        type="number"
+                        id="av1BestCompressionCpuPreset"
+                        min="0"
+                        max="13"
+                        class="advanced-control"
+                      />
+                    </label>
+                    <label>
+                      Audio kbps
+                      <input
+                        type="number"
+                        id="av1BestCompressionAudioBitrateKbps"
+                        min="32"
+                        max="512"
+                        class="advanced-control"
+                      />
+                    </label>
+                  </div>
+                </div>
+
+                <div class="advanced-tier-card">
+                  <h4>Small File</h4>
+                  <div class="advanced-tier-fields">
+                    <label>
+                      Quality (CRF/CQ)
+                      <input
+                        type="number"
+                        id="av1CompressionQuality"
+                        min="1"
+                        max="63"
+                        class="advanced-control"
+                      />
+                    </label>
+                    <label>
+                      CPU Preset (0-13)
+                      <input
+                        type="number"
+                        id="av1CompressionCpuPreset"
+                        min="0"
+                        max="13"
+                        class="advanced-control"
+                      />
+                    </label>
+                    <label>
+                      Audio kbps
+                      <input
+                        type="number"
+                        id="av1CompressionAudioBitrateKbps"
+                        min="32"
+                        max="512"
+                        class="advanced-control"
+                      />
+                    </label>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div
+              class="format-panel"
+              id="formatPanelH264"
+              role="tabpanel"
+              aria-labelledby="formatTabH264"
+              hidden
+            >
+              <div class="advanced-format-header">
+                <h3>H.264 Preset Tuning</h3>
+                <button class="btn btn-secondary btn-xs" id="resetH264DefaultsBtn">
+                  Reset H.264 Defaults
+                </button>
+              </div>
+
+              <div class="advanced-tier-grid">
+                <div class="advanced-tier-card">
+                  <h4>Fast</h4>
+                  <div class="advanced-tier-fields">
+                    <label>
+                      Quality (CRF/CQ)
+                      <input
+                        type="number"
+                        id="h264FastQuality"
+                        min="1"
+                        max="51"
+                        class="advanced-control"
+                      />
+                    </label>
+                    <label>
+                      Preset
+                      <select id="h264FastPreset" class="advanced-control">
+                        <option value="ultrafast">ultrafast</option>
+                        <option value="superfast">superfast</option>
+                        <option value="veryfast">veryfast</option>
+                        <option value="faster">faster</option>
+                        <option value="fast">fast</option>
+                        <option value="medium">medium</option>
+                        <option value="slow">slow</option>
+                        <option value="slower">slower</option>
+                        <option value="veryslow">veryslow</option>
+                        <option value="placebo">placebo</option>
+                      </select>
+                    </label>
+                    <label>
+                      Audio kbps
+                      <input
+                        type="number"
+                        id="h264FastAudioBitrateKbps"
+                        min="32"
+                        max="512"
+                        class="advanced-control"
+                      />
+                    </label>
+                  </div>
+                </div>
+
+                <div class="advanced-tier-card">
+                  <h4>Quality</h4>
+                  <div class="advanced-tier-fields">
+                    <label>
+                      Quality (CRF/CQ)
+                      <input
+                        type="number"
+                        id="h264QualityQuality"
+                        min="1"
+                        max="51"
+                        class="advanced-control"
+                      />
+                    </label>
+                    <label>
+                      Preset
+                      <select id="h264QualityPreset" class="advanced-control">
+                        <option value="ultrafast">ultrafast</option>
+                        <option value="superfast">superfast</option>
+                        <option value="veryfast">veryfast</option>
+                        <option value="faster">faster</option>
+                        <option value="fast">fast</option>
+                        <option value="medium">medium</option>
+                        <option value="slow">slow</option>
+                        <option value="slower">slower</option>
+                        <option value="veryslow">veryslow</option>
+                        <option value="placebo">placebo</option>
+                      </select>
+                    </label>
+                    <label>
+                      Audio kbps
+                      <input
+                        type="number"
+                        id="h264QualityAudioBitrateKbps"
+                        min="32"
+                        max="512"
+                        class="advanced-control"
+                      />
+                    </label>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div
+              class="format-panel"
+              id="formatPanelH265"
+              role="tabpanel"
+              aria-labelledby="formatTabH265"
+              hidden
+            >
+              <div class="advanced-format-header">
+                <h3>H.265/HEVC Preset Tuning</h3>
+                <button class="btn btn-secondary btn-xs" id="resetH265DefaultsBtn">
+                  Reset H.265 Defaults
+                </button>
+              </div>
+
+              <div class="advanced-tier-grid">
+                <div class="advanced-tier-card">
+                  <h4>Best Quality</h4>
+                  <div class="advanced-tier-fields">
+                    <label>
+                      Quality (CRF/CQ)
+                      <input
+                        type="number"
+                        id="h265BestQualityQuality"
+                        min="1"
+                        max="51"
+                        class="advanced-control"
+                      />
+                    </label>
+                    <label>
+                      Preset
+                      <select id="h265BestQualityPreset" class="advanced-control">
+                        <option value="ultrafast">ultrafast</option>
+                        <option value="superfast">superfast</option>
+                        <option value="veryfast">veryfast</option>
+                        <option value="faster">faster</option>
+                        <option value="fast">fast</option>
+                        <option value="medium">medium</option>
+                        <option value="slow">slow</option>
+                        <option value="slower">slower</option>
+                        <option value="veryslow">veryslow</option>
+                        <option value="placebo">placebo</option>
+                      </select>
+                    </label>
+                    <label>
+                      Audio kbps
+                      <input
+                        type="number"
+                        id="h265BestQualityAudioBitrateKbps"
+                        min="32"
+                        max="512"
+                        class="advanced-control"
+                      />
+                    </label>
+                    <label class="advanced-tier-check">
+                      <input
+                        type="checkbox"
+                        id="h265BestQualityUseAdvancedParams"
+                        class="advanced-control"
+                      />
+                      Use Advanced x265 Params
+                    </label>
+                  </div>
+                </div>
+
+                <div class="advanced-tier-card">
+                  <h4>Quality</h4>
+                  <div class="advanced-tier-fields">
+                    <label>
+                      Quality (CRF/CQ)
+                      <input
+                        type="number"
+                        id="h265QualityQuality"
+                        min="1"
+                        max="51"
+                        class="advanced-control"
+                      />
+                    </label>
+                    <label>
+                      Preset
+                      <select id="h265QualityPreset" class="advanced-control">
+                        <option value="ultrafast">ultrafast</option>
+                        <option value="superfast">superfast</option>
+                        <option value="veryfast">veryfast</option>
+                        <option value="faster">faster</option>
+                        <option value="fast">fast</option>
+                        <option value="medium">medium</option>
+                        <option value="slow">slow</option>
+                        <option value="slower">slower</option>
+                        <option value="veryslow">veryslow</option>
+                        <option value="placebo">placebo</option>
+                      </select>
+                    </label>
+                    <label>
+                      Audio kbps
+                      <input
+                        type="number"
+                        id="h265QualityAudioBitrateKbps"
+                        min="32"
+                        max="512"
+                        class="advanced-control"
+                      />
+                    </label>
+                    <label class="advanced-tier-check">
+                      <input
+                        type="checkbox"
+                        id="h265QualityUseAdvancedParams"
+                        class="advanced-control"
+                      />
+                      Use Advanced x265 Params
+                    </label>
+                  </div>
+                </div>
+
+                <div class="advanced-tier-card">
+                  <h4>Balanced</h4>
+                  <div class="advanced-tier-fields">
+                    <label>
+                      Quality (CRF/CQ)
+                      <input
+                        type="number"
+                        id="h265BalancedQuality"
+                        min="1"
+                        max="51"
+                        class="advanced-control"
+                      />
+                    </label>
+                    <label>
+                      Preset
+                      <select id="h265BalancedPreset" class="advanced-control">
+                        <option value="ultrafast">ultrafast</option>
+                        <option value="superfast">superfast</option>
+                        <option value="veryfast">veryfast</option>
+                        <option value="faster">faster</option>
+                        <option value="fast">fast</option>
+                        <option value="medium">medium</option>
+                        <option value="slow">slow</option>
+                        <option value="slower">slower</option>
+                        <option value="veryslow">veryslow</option>
+                        <option value="placebo">placebo</option>
+                      </select>
+                    </label>
+                    <label>
+                      Audio kbps
+                      <input
+                        type="number"
+                        id="h265BalancedAudioBitrateKbps"
+                        min="32"
+                        max="512"
+                        class="advanced-control"
+                      />
+                    </label>
+                    <label class="advanced-tier-check">
+                      <input
+                        type="checkbox"
+                        id="h265BalancedUseAdvancedParams"
+                        class="advanced-control"
+                      />
+                      Use Advanced x265 Params
+                    </label>
+                  </div>
+                </div>
+
+                <div class="advanced-tier-card">
+                  <h4>Best Compression</h4>
+                  <div class="advanced-tier-fields">
+                    <label>
+                      Quality (CRF/CQ)
+                      <input
+                        type="number"
+                        id="h265BestCompressionQuality"
+                        min="1"
+                        max="51"
+                        class="advanced-control"
+                      />
+                    </label>
+                    <label>
+                      Preset
+                      <select id="h265BestCompressionPreset" class="advanced-control">
+                        <option value="ultrafast">ultrafast</option>
+                        <option value="superfast">superfast</option>
+                        <option value="veryfast">veryfast</option>
+                        <option value="faster">faster</option>
+                        <option value="fast">fast</option>
+                        <option value="medium">medium</option>
+                        <option value="slow">slow</option>
+                        <option value="slower">slower</option>
+                        <option value="veryslow">veryslow</option>
+                        <option value="placebo">placebo</option>
+                      </select>
+                    </label>
+                    <label>
+                      Audio kbps
+                      <input
+                        type="number"
+                        id="h265BestCompressionAudioBitrateKbps"
+                        min="32"
+                        max="512"
+                        class="advanced-control"
+                      />
+                    </label>
+                    <label class="advanced-tier-check">
+                      <input
+                        type="checkbox"
+                        id="h265BestCompressionUseAdvancedParams"
+                        class="advanced-control"
+                      />
+                      Use Advanced x265 Params
+                    </label>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div
+              class="format-panel"
+              id="formatPanelAvi"
+              role="tabpanel"
+              aria-labelledby="formatTabAvi"
+              hidden
+            >
+              <div class="advanced-format-header">
+                <h3>AVI Preset Tuning</h3>
+                <button class="btn btn-secondary btn-xs" id="resetAviDefaultsBtn">
+                  Reset AVI Defaults
+                </button>
+              </div>
+
+              <div class="advanced-tier-grid">
+                <div class="advanced-tier-card">
+                  <h4>Best Quality</h4>
+                  <div class="advanced-tier-fields">
+                    <label>
+                      Codec
+                      <select id="aviBestQualityCodec" class="advanced-control">
+                        <option value="h265">H.265/HEVC</option>
+                        <option value="h264">H.264</option>
+                      </select>
+                    </label>
+                    <label>
+                      Quality (CRF/CQ)
+                      <input
+                        type="number"
+                        id="aviBestQualityQuality"
+                        min="1"
+                        max="51"
+                        class="advanced-control"
+                      />
+                    </label>
+                    <label>
+                      Preset
+                      <select id="aviBestQualityPreset" class="advanced-control">
+                        <option value="ultrafast">ultrafast</option>
+                        <option value="superfast">superfast</option>
+                        <option value="veryfast">veryfast</option>
+                        <option value="faster">faster</option>
+                        <option value="fast">fast</option>
+                        <option value="medium">medium</option>
+                        <option value="slow">slow</option>
+                        <option value="slower">slower</option>
+                        <option value="veryslow">veryslow</option>
+                        <option value="placebo">placebo</option>
+                      </select>
+                    </label>
+                    <label>
+                      Audio kbps
+                      <input
+                        type="number"
+                        id="aviBestQualityAudioBitrateKbps"
+                        min="32"
+                        max="512"
+                        class="advanced-control"
+                      />
+                    </label>
+                    <label class="advanced-tier-check">
+                      <input
+                        type="checkbox"
+                        id="aviBestQualityUseAdvancedParams"
+                        class="advanced-control"
+                      />
+                      Use Advanced x265 Params
+                    </label>
+                  </div>
+                </div>
+
+                <div class="advanced-tier-card">
+                  <h4>Best Compression</h4>
+                  <div class="advanced-tier-fields">
+                    <label>
+                      Codec
+                      <select id="aviBestCompressionCodec" class="advanced-control">
+                        <option value="h265">H.265/HEVC</option>
+                        <option value="h264">H.264</option>
+                      </select>
+                    </label>
+                    <label>
+                      Quality (CRF/CQ)
+                      <input
+                        type="number"
+                        id="aviBestCompressionQuality"
+                        min="1"
+                        max="51"
+                        class="advanced-control"
+                      />
+                    </label>
+                    <label>
+                      Preset
+                      <select id="aviBestCompressionPreset" class="advanced-control">
+                        <option value="ultrafast">ultrafast</option>
+                        <option value="superfast">superfast</option>
+                        <option value="veryfast">veryfast</option>
+                        <option value="faster">faster</option>
+                        <option value="fast">fast</option>
+                        <option value="medium">medium</option>
+                        <option value="slow">slow</option>
+                        <option value="slower">slower</option>
+                        <option value="veryslow">veryslow</option>
+                        <option value="placebo">placebo</option>
+                      </select>
+                    </label>
+                    <label>
+                      Audio kbps
+                      <input
+                        type="number"
+                        id="aviBestCompressionAudioBitrateKbps"
+                        min="32"
+                        max="512"
+                        class="advanced-control"
+                      />
+                    </label>
+                    <label class="advanced-tier-check">
+                      <input
+                        type="checkbox"
+                        id="aviBestCompressionUseAdvancedParams"
+                        class="advanced-control"
+                      />
+                      Use Advanced x265 Params
+                    </label>
+                  </div>
+                </div>
+
+                <div class="advanced-tier-card">
+                  <h4>Balanced</h4>
+                  <div class="advanced-tier-fields">
+                    <label>
+                      Codec
+                      <select id="aviBalancedCodec" class="advanced-control">
+                        <option value="h264">H.264</option>
+                        <option value="h265">H.265/HEVC</option>
+                      </select>
+                    </label>
+                    <label>
+                      Quality (CRF/CQ)
+                      <input
+                        type="number"
+                        id="aviBalancedQuality"
+                        min="1"
+                        max="51"
+                        class="advanced-control"
+                      />
+                    </label>
+                    <label>
+                      Preset
+                      <select id="aviBalancedPreset" class="advanced-control">
+                        <option value="ultrafast">ultrafast</option>
+                        <option value="superfast">superfast</option>
+                        <option value="veryfast">veryfast</option>
+                        <option value="faster">faster</option>
+                        <option value="fast">fast</option>
+                        <option value="medium">medium</option>
+                        <option value="slow">slow</option>
+                        <option value="slower">slower</option>
+                        <option value="veryslow">veryslow</option>
+                        <option value="placebo">placebo</option>
+                      </select>
+                    </label>
+                    <label>
+                      Audio kbps
+                      <input
+                        type="number"
+                        id="aviBalancedAudioBitrateKbps"
+                        min="32"
+                        max="512"
+                        class="advanced-control"
+                      />
+                    </label>
+                    <label class="advanced-tier-check">
+                      <input
+                        type="checkbox"
+                        id="aviBalancedUseAdvancedParams"
+                        class="advanced-control"
+                      />
+                      Use Advanced x265 Params
                     </label>
                   </div>
                 </div>

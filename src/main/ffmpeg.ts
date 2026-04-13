@@ -683,7 +683,13 @@ export const convertVideo = async (
     }
   }
 
-  const isVideoPreset = getPresetGpuCodec(preset) !== null;
+  const isVideoPreset =
+    getPresetGpuCodec(
+      preset,
+      options.advancedFormatSettings
+        ? { advancedFormatSettings: options.advancedFormatSettings }
+        : undefined
+    ) !== null;
   const decodeArgs = isVideoPreset ? await getHardwareDecodeArgs(gpu, inputCodec) : [];
   const presetContext = options.advancedFormatSettings
     ? { advancedFormatSettings: options.advancedFormatSettings }

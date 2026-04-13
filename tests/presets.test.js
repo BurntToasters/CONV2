@@ -80,3 +80,24 @@ test('preset categories export labels and stable ordering', () => {
   assert.equal(PRESET_CATEGORY_LABELS.gif, 'GIF');
   assert.equal(PRESET_CATEGORY_LABELS.h265, 'H.265/HEVC');
 });
+
+test('avi gpu codec resolution follows advanced format settings context', () => {
+  const preset = presets.find((entry) => entry.id === 'avi-balanced');
+  assert.ok(preset);
+
+  const defaultCodec = getPresetGpuCodec(preset);
+  assert.equal(defaultCodec, 'h264');
+
+  const overriddenCodec = getPresetGpuCodec(preset, {
+    advancedFormatSettings: {
+      avi: {
+        tiers: {
+          balanced: {
+            codec: 'h265',
+          },
+        },
+      },
+    },
+  });
+  assert.equal(overriddenCodec, 'h265');
+});

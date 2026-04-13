@@ -1,6 +1,10 @@
 import {
   AdvancedFormatSettings,
+  Av1TierCollection,
+  AviTierCollection,
   GifTierCollection,
+  H264TierCollection,
+  H265TierCollection,
   createDefaultAdvancedFormatSettings,
   normalizeAdvancedFormatSettings,
 } from './advancedFormats';
@@ -48,7 +52,7 @@ const getVideoEncoder = (codec: 'h264' | 'h265' | 'av1', gpu: GPUVendor): string
       nvidia: 'av1_nvenc',
       amd: 'av1_amf',
       intel: 'av1_qsv',
-      apple: 'libsvtav1', // No AV1 hardware encoding support in ffmpeg for Apple Silicon yet
+      apple: 'libsvtav1',
       cpu: 'libsvtav1',
     },
   };
@@ -56,16 +60,45 @@ const getVideoEncoder = (codec: 'h264' | 'h265' | 'av1', gpu: GPUVendor): string
 };
 
 const defaultAdvancedFormatSettings = createDefaultAdvancedFormatSettings();
+const X265_ADVANCED_PARAMS =
+  'aq-mode=3:rd=6:psy-rd=2.0:psy-rdoq=1.0:rdoq-level=2:rc-lookahead=60:bframes=8:ref=6';
+const SVTAV1_ADVANCED_PARAMS = 'tune=0:film-grain=0:enable-overlays=1:scd=1:scm=0';
+
+const getNormalizedAdvancedSettings = (context?: PresetContext): AdvancedFormatSettings => {
+  return normalizeAdvancedFormatSettings(context?.advancedFormatSettings);
+};
 
 const getGifTierSettings = (tier: keyof GifTierCollection, context?: PresetContext) => {
-  const normalized = normalizeAdvancedFormatSettings(context?.advancedFormatSettings);
+  const normalized = getNormalizedAdvancedSettings(context);
   return normalized.gif.tiers[tier] ?? defaultAdvancedFormatSettings.gif.tiers[tier];
 };
 
+const getAv1TierSettings = (tier: keyof Av1TierCollection, context?: PresetContext) => {
+  const normalized = getNormalizedAdvancedSettings(context);
+  return normalized.av1.tiers[tier] ?? defaultAdvancedFormatSettings.av1.tiers[tier];
+};
+
+const getH264TierSettings = (tier: keyof H264TierCollection, context?: PresetContext) => {
+  const normalized = getNormalizedAdvancedSettings(context);
+  return normalized.h264.tiers[tier] ?? defaultAdvancedFormatSettings.h264.tiers[tier];
+};
+
+const getH265TierSettings = (tier: keyof H265TierCollection, context?: PresetContext) => {
+  const normalized = getNormalizedAdvancedSettings(context);
+  return normalized.h265.tiers[tier] ?? defaultAdvancedFormatSettings.h265.tiers[tier];
+};
+
+const getAviTierSettings = (tier: keyof AviTierCollection, context?: PresetContext) => {
+  const normalized = getNormalizedAdvancedSettings(context);
+  return normalized.avi.tiers[tier] ?? defaultAdvancedFormatSettings.avi.tiers[tier];
+};
+
 const getGifLoopArg = (context?: PresetContext): string => {
-  const normalized = normalizeAdvancedFormatSettings(context?.advancedFormatSettings);
+  const normalized = getNormalizedAdvancedSettings(context);
   return normalized.gif.loopMode === 'once' ? '-1' : '0';
 };
+
+const toBitrateKbps = (value: number): string => `${value}k`;
 
 const getGifPaletteArgs = (
   input: string,
@@ -91,6 +124,135 @@ const getGifPaletteArgs = (
     loop,
     output,
   ];
+};
+
+const buildAv1Args = (
+  input: string,
+  output: string,
+  gpu: GPUVendor,
+  tier: keyof Av1TierCollection,
+  context?: PresetContext,
+  includeAdvancedParams = false
+): string[] => {
+  const tierSettings = getAv1TierSettings(tier, context);
+  const encoder = getVideoEncoder('av1', gpu);
+  const args = [
+    '-i',
+    input,
+    '-c:v',
+    encoder,
+    gpu === 'cpu' ? '-crf' : '-cq',
+    String(tierSettings.quality),
+  ];
+
+  if (gpu === 'cpu') {
+    args.push('-preset', String(tierSettings.cpuPreset));
+    if (includeAdvancedParams) {
+      args.push('-svtav1-params', SVTAV1_ADVANCED_PARAMS);
+    }
+  }
+
+  args.push('-c:a', 'libopus', '-b:a', toBitrateKbps(tierSettings.audioBitrateKbps), output);
+  return args;
+};
+
+const buildH264Args = (
+  input: string,
+  output: string,
+  gpu: GPUVendor,
+  tier: keyof H264TierCollection,
+  context?: PresetContext
+): string[] => {
+  const tierSettings = getH264TierSettings(tier, context);
+  const encoder = getVideoEncoder('h264', gpu);
+  return [
+    '-i',
+    input,
+    '-c:v',
+    encoder,
+    gpu === 'cpu' ? '-crf' : '-cq',
+    String(tierSettings.quality),
+    '-preset',
+    tierSettings.preset,
+    '-c:a',
+    'aac',
+    '-b:a',
+    toBitrateKbps(tierSettings.audioBitrateKbps),
+    output,
+  ];
+};
+
+const buildH265Args = (
+  input: string,
+  output: string,
+  gpu: GPUVendor,
+  tier: keyof H265TierCollection,
+  context?: PresetContext
+): string[] => {
+  const tierSettings = getH265TierSettings(tier, context);
+  const encoder = getVideoEncoder('h265', gpu);
+  const args = [
+    '-i',
+    input,
+    '-c:v',
+    encoder,
+    gpu === 'cpu' ? '-crf' : '-cq',
+    String(tierSettings.quality),
+  ];
+
+  if (gpu === 'cpu') {
+    args.push('-preset', tierSettings.preset);
+    if (tierSettings.useAdvancedParams) {
+      args.push('-x265-params', X265_ADVANCED_PARAMS);
+    }
+  }
+
+  args.push('-c:a', 'aac', '-b:a', toBitrateKbps(tierSettings.audioBitrateKbps), output);
+  return args;
+};
+
+const buildAviArgs = (
+  input: string,
+  output: string,
+  gpu: GPUVendor,
+  tier: keyof AviTierCollection,
+  context?: PresetContext
+): string[] => {
+  const tierSettings = getAviTierSettings(tier, context);
+  const encoder = getVideoEncoder(tierSettings.codec, gpu);
+  const args = [
+    '-i',
+    input,
+    '-c:v',
+    encoder,
+    gpu === 'cpu' ? '-crf' : '-cq',
+    String(tierSettings.quality),
+  ];
+
+  if (tierSettings.codec === 'h264') {
+    args.push('-preset', tierSettings.preset);
+  } else if (gpu === 'cpu') {
+    args.push('-preset', tierSettings.preset);
+    if (tierSettings.useAdvancedParams) {
+      args.push('-x265-params', X265_ADVANCED_PARAMS);
+    }
+  }
+
+  args.push('-c:a', 'aac', '-b:a', toBitrateKbps(tierSettings.audioBitrateKbps), output);
+  return args;
+};
+
+const getAviTierFromPresetId = (presetId: string): keyof AviTierCollection | null => {
+  if (presetId === 'avi-best-quality') {
+    return 'bestQuality';
+  }
+  if (presetId === 'avi-best-compression') {
+    return 'bestCompression';
+  }
+  if (presetId === 'avi-balanced') {
+    return 'balanced';
+  }
+  return null;
 };
 
 export const PRESET_CATEGORY_ORDER: PresetCategory[] = [
@@ -126,10 +288,19 @@ export const getVisiblePresetCategories = (showAdvancedPresets: boolean): Preset
   );
 };
 
-export const getPresetGpuCodec = (preset: Preset): GPUCodec | null => {
+export const getPresetGpuCodec = (preset: Preset, context?: PresetContext): GPUCodec | null => {
   if (preset.category === 'av1' || preset.category === 'h264' || preset.category === 'h265') {
     return preset.category;
   }
+
+  if (preset.category === 'avi') {
+    const aviTier = getAviTierFromPresetId(preset.id);
+    if (aviTier) {
+      const settings = getNormalizedAdvancedSettings(context);
+      return settings.avi.tiers[aviTier].codec;
+    }
+  }
+
   if (preset.gpuCodec) {
     return preset.gpuCodec;
   }
@@ -137,7 +308,6 @@ export const getPresetGpuCodec = (preset: Preset): GPUCodec | null => {
 };
 
 export const presets: Preset[] = [
-  // AV1 Presets
   {
     id: 'av1-balanced',
     name: 'AV1 - Balanced',
@@ -145,27 +315,7 @@ export const presets: Preset[] = [
     category: 'av1',
     gpuCodec: 'av1',
     extension: 'mp4',
-    getArgs: (input, output, gpu) => {
-      const encoder = getVideoEncoder('av1', gpu);
-      if (gpu === 'cpu') {
-        return [
-          '-i',
-          input,
-          '-c:v',
-          encoder,
-          '-crf',
-          '30',
-          '-preset',
-          '6',
-          '-c:a',
-          'libopus',
-          '-b:a',
-          '128k',
-          output,
-        ];
-      }
-      return ['-i', input, '-c:v', encoder, '-cq', '30', '-c:a', 'libopus', '-b:a', '128k', output];
-    },
+    getArgs: (input, output, gpu, context) => buildAv1Args(input, output, gpu, 'balanced', context),
   },
   {
     id: 'av1-quality',
@@ -174,27 +324,7 @@ export const presets: Preset[] = [
     category: 'av1',
     gpuCodec: 'av1',
     extension: 'mp4',
-    getArgs: (input, output, gpu) => {
-      const encoder = getVideoEncoder('av1', gpu);
-      if (gpu === 'cpu') {
-        return [
-          '-i',
-          input,
-          '-c:v',
-          encoder,
-          '-crf',
-          '20',
-          '-preset',
-          '4',
-          '-c:a',
-          'libopus',
-          '-b:a',
-          '192k',
-          output,
-        ];
-      }
-      return ['-i', input, '-c:v', encoder, '-cq', '20', '-c:a', 'libopus', '-b:a', '192k', output];
-    },
+    getArgs: (input, output, gpu, context) => buildAv1Args(input, output, gpu, 'quality', context),
   },
   {
     id: 'av1-best-quality',
@@ -203,29 +333,8 @@ export const presets: Preset[] = [
     category: 'av1',
     gpuCodec: 'av1',
     extension: 'mp4',
-    getArgs: (input, output, gpu) => {
-      const encoder = getVideoEncoder('av1', gpu);
-      if (gpu === 'cpu') {
-        return [
-          '-i',
-          input,
-          '-c:v',
-          encoder,
-          '-crf',
-          '15',
-          '-preset',
-          '2',
-          '-svtav1-params',
-          'tune=0:film-grain=0:enable-overlays=1:scd=1:scm=0',
-          '-c:a',
-          'libopus',
-          '-b:a',
-          '256k',
-          output,
-        ];
-      }
-      return ['-i', input, '-c:v', encoder, '-cq', '15', '-c:a', 'libopus', '-b:a', '256k', output];
-    },
+    getArgs: (input, output, gpu, context) =>
+      buildAv1Args(input, output, gpu, 'bestQuality', context, true),
   },
   {
     id: 'av1-best-compression',
@@ -234,29 +343,8 @@ export const presets: Preset[] = [
     category: 'av1',
     gpuCodec: 'av1',
     extension: 'mp4',
-    getArgs: (input, output, gpu) => {
-      const encoder = getVideoEncoder('av1', gpu);
-      if (gpu === 'cpu') {
-        return [
-          '-i',
-          input,
-          '-c:v',
-          encoder,
-          '-crf',
-          '38',
-          '-preset',
-          '2',
-          '-svtav1-params',
-          'tune=0:film-grain=0:enable-overlays=1:scd=1:scm=0',
-          '-c:a',
-          'libopus',
-          '-b:a',
-          '96k',
-          output,
-        ];
-      }
-      return ['-i', input, '-c:v', encoder, '-cq', '38', '-c:a', 'libopus', '-b:a', '96k', output];
-    },
+    getArgs: (input, output, gpu, context) =>
+      buildAv1Args(input, output, gpu, 'bestCompression', context, true),
   },
   {
     id: 'av1-compression',
@@ -265,30 +353,9 @@ export const presets: Preset[] = [
     category: 'av1',
     gpuCodec: 'av1',
     extension: 'mp4',
-    getArgs: (input, output, gpu) => {
-      const encoder = getVideoEncoder('av1', gpu);
-      if (gpu === 'cpu') {
-        return [
-          '-i',
-          input,
-          '-c:v',
-          encoder,
-          '-crf',
-          '40',
-          '-preset',
-          '6',
-          '-c:a',
-          'libopus',
-          '-b:a',
-          '96k',
-          output,
-        ];
-      }
-      return ['-i', input, '-c:v', encoder, '-cq', '40', '-c:a', 'libopus', '-b:a', '96k', output];
-    },
+    getArgs: (input, output, gpu, context) =>
+      buildAv1Args(input, output, gpu, 'compression', context),
   },
-
-  // H.264 Presets
   {
     id: 'h264-fast',
     name: 'H.264 - Fast',
@@ -296,41 +363,7 @@ export const presets: Preset[] = [
     category: 'h264',
     gpuCodec: 'h264',
     extension: 'mp4',
-    getArgs: (input, output, gpu) => {
-      const encoder = getVideoEncoder('h264', gpu);
-      if (gpu === 'cpu') {
-        return [
-          '-i',
-          input,
-          '-c:v',
-          encoder,
-          '-crf',
-          '23',
-          '-preset',
-          'fast',
-          '-c:a',
-          'aac',
-          '-b:a',
-          '128k',
-          output,
-        ];
-      }
-      return [
-        '-i',
-        input,
-        '-c:v',
-        encoder,
-        '-cq',
-        '23',
-        '-preset',
-        'fast',
-        '-c:a',
-        'aac',
-        '-b:a',
-        '128k',
-        output,
-      ];
-    },
+    getArgs: (input, output, gpu, context) => buildH264Args(input, output, gpu, 'fast', context),
   },
   {
     id: 'h264-quality',
@@ -339,44 +372,8 @@ export const presets: Preset[] = [
     category: 'h264',
     gpuCodec: 'h264',
     extension: 'mp4',
-    getArgs: (input, output, gpu) => {
-      const encoder = getVideoEncoder('h264', gpu);
-      if (gpu === 'cpu') {
-        return [
-          '-i',
-          input,
-          '-c:v',
-          encoder,
-          '-crf',
-          '18',
-          '-preset',
-          'slow',
-          '-c:a',
-          'aac',
-          '-b:a',
-          '192k',
-          output,
-        ];
-      }
-      return [
-        '-i',
-        input,
-        '-c:v',
-        encoder,
-        '-cq',
-        '18',
-        '-preset',
-        'slow',
-        '-c:a',
-        'aac',
-        '-b:a',
-        '192k',
-        output,
-      ];
-    },
+    getArgs: (input, output, gpu, context) => buildH264Args(input, output, gpu, 'quality', context),
   },
-
-  // H.265/HEVC Presets
   {
     id: 'h265-balanced',
     name: 'H.265/HEVC - Balanced',
@@ -384,27 +381,8 @@ export const presets: Preset[] = [
     category: 'h265',
     gpuCodec: 'h265',
     extension: 'mp4',
-    getArgs: (input, output, gpu) => {
-      const encoder = getVideoEncoder('h265', gpu);
-      if (gpu === 'cpu') {
-        return [
-          '-i',
-          input,
-          '-c:v',
-          encoder,
-          '-crf',
-          '28',
-          '-preset',
-          'medium',
-          '-c:a',
-          'aac',
-          '-b:a',
-          '128k',
-          output,
-        ];
-      }
-      return ['-i', input, '-c:v', encoder, '-cq', '28', '-c:a', 'aac', '-b:a', '128k', output];
-    },
+    getArgs: (input, output, gpu, context) =>
+      buildH265Args(input, output, gpu, 'balanced', context),
   },
   {
     id: 'h265-quality',
@@ -413,27 +391,7 @@ export const presets: Preset[] = [
     category: 'h265',
     gpuCodec: 'h265',
     extension: 'mp4',
-    getArgs: (input, output, gpu) => {
-      const encoder = getVideoEncoder('h265', gpu);
-      if (gpu === 'cpu') {
-        return [
-          '-i',
-          input,
-          '-c:v',
-          encoder,
-          '-crf',
-          '22',
-          '-preset',
-          'slow',
-          '-c:a',
-          'aac',
-          '-b:a',
-          '192k',
-          output,
-        ];
-      }
-      return ['-i', input, '-c:v', encoder, '-cq', '22', '-c:a', 'aac', '-b:a', '192k', output];
-    },
+    getArgs: (input, output, gpu, context) => buildH265Args(input, output, gpu, 'quality', context),
   },
   {
     id: 'h265-best-quality',
@@ -442,29 +400,8 @@ export const presets: Preset[] = [
     category: 'h265',
     gpuCodec: 'h265',
     extension: 'mp4',
-    getArgs: (input, output, gpu) => {
-      const encoder = getVideoEncoder('h265', gpu);
-      if (gpu === 'cpu') {
-        return [
-          '-i',
-          input,
-          '-c:v',
-          encoder,
-          '-crf',
-          '16',
-          '-preset',
-          'veryslow',
-          '-x265-params',
-          'aq-mode=3:rd=6:psy-rd=2.0:psy-rdoq=1.0:rdoq-level=2:rc-lookahead=60:bframes=8:ref=6',
-          '-c:a',
-          'aac',
-          '-b:a',
-          '256k',
-          output,
-        ];
-      }
-      return ['-i', input, '-c:v', encoder, '-cq', '16', '-c:a', 'aac', '-b:a', '256k', output];
-    },
+    getArgs: (input, output, gpu, context) =>
+      buildH265Args(input, output, gpu, 'bestQuality', context),
   },
   {
     id: 'h265-best-compression',
@@ -473,32 +410,9 @@ export const presets: Preset[] = [
     category: 'h265',
     gpuCodec: 'h265',
     extension: 'mp4',
-    getArgs: (input, output, gpu) => {
-      const encoder = getVideoEncoder('h265', gpu);
-      if (gpu === 'cpu') {
-        return [
-          '-i',
-          input,
-          '-c:v',
-          encoder,
-          '-crf',
-          '26',
-          '-preset',
-          'veryslow',
-          '-x265-params',
-          'aq-mode=3:rd=6:psy-rd=2.0:psy-rdoq=1.0:rdoq-level=2:rc-lookahead=60:bframes=8:ref=6',
-          '-c:a',
-          'aac',
-          '-b:a',
-          '128k',
-          output,
-        ];
-      }
-      return ['-i', input, '-c:v', encoder, '-cq', '26', '-c:a', 'aac', '-b:a', '128k', output];
-    },
+    getArgs: (input, output, gpu, context) =>
+      buildH265Args(input, output, gpu, 'bestCompression', context),
   },
-
-  // AVI Presets
   {
     id: 'avi-best-quality',
     name: 'AVI - Best Quality',
@@ -506,29 +420,8 @@ export const presets: Preset[] = [
     category: 'avi',
     gpuCodec: 'h265',
     extension: 'avi',
-    getArgs: (input, output, gpu) => {
-      const encoder = getVideoEncoder('h265', gpu);
-      if (gpu === 'cpu') {
-        return [
-          '-i',
-          input,
-          '-c:v',
-          encoder,
-          '-crf',
-          '16',
-          '-preset',
-          'veryslow',
-          '-x265-params',
-          'aq-mode=3:rd=6:psy-rd=2.0:psy-rdoq=1.0:rdoq-level=2:rc-lookahead=60:bframes=8:ref=6',
-          '-c:a',
-          'aac',
-          '-b:a',
-          '256k',
-          output,
-        ];
-      }
-      return ['-i', input, '-c:v', encoder, '-cq', '16', '-c:a', 'aac', '-b:a', '256k', output];
-    },
+    getArgs: (input, output, gpu, context) =>
+      buildAviArgs(input, output, gpu, 'bestQuality', context),
   },
   {
     id: 'avi-best-compression',
@@ -537,29 +430,8 @@ export const presets: Preset[] = [
     category: 'avi',
     gpuCodec: 'h265',
     extension: 'avi',
-    getArgs: (input, output, gpu) => {
-      const encoder = getVideoEncoder('h265', gpu);
-      if (gpu === 'cpu') {
-        return [
-          '-i',
-          input,
-          '-c:v',
-          encoder,
-          '-crf',
-          '26',
-          '-preset',
-          'veryslow',
-          '-x265-params',
-          'aq-mode=3:rd=6:psy-rd=2.0:psy-rdoq=1.0:rdoq-level=2:rc-lookahead=60:bframes=8:ref=6',
-          '-c:a',
-          'aac',
-          '-b:a',
-          '128k',
-          output,
-        ];
-      }
-      return ['-i', input, '-c:v', encoder, '-cq', '26', '-c:a', 'aac', '-b:a', '128k', output];
-    },
+    getArgs: (input, output, gpu, context) =>
+      buildAviArgs(input, output, gpu, 'bestCompression', context),
   },
   {
     id: 'avi-balanced',
@@ -568,30 +440,8 @@ export const presets: Preset[] = [
     category: 'avi',
     gpuCodec: 'h264',
     extension: 'avi',
-    getArgs: (input, output, gpu) => {
-      const encoder = getVideoEncoder('h264', gpu);
-      if (gpu === 'cpu') {
-        return [
-          '-i',
-          input,
-          '-c:v',
-          encoder,
-          '-crf',
-          '20',
-          '-preset',
-          'slow',
-          '-c:a',
-          'aac',
-          '-b:a',
-          '192k',
-          output,
-        ];
-      }
-      return ['-i', input, '-c:v', encoder, '-cq', '20', '-c:a', 'aac', '-b:a', '192k', output];
-    },
+    getArgs: (input, output, gpu, context) => buildAviArgs(input, output, gpu, 'balanced', context),
   },
-
-  // GIF Presets
   {
     id: 'gif-best-quality',
     name: 'GIF - Best Quality',
@@ -627,8 +477,6 @@ export const presets: Preset[] = [
     getArgs: (input, output, _gpu, context) =>
       getGifPaletteArgs(input, output, 'bestCompression', context),
   },
-
-  // Remux Presets
   {
     id: 'remux-mp4',
     name: 'Remux to MP4',
@@ -653,8 +501,6 @@ export const presets: Preset[] = [
     extension: 'webm',
     getArgs: (input, output) => ['-i', input, '-c', 'copy', output],
   },
-
-  // Audio Extraction Presets
   {
     id: 'audio-mp3',
     name: 'Extract Audio (MP3)',

@@ -344,7 +344,9 @@ ipcMain.handle(
     }
 
     const gpu = gpuOverride ?? settings.gpu;
-    const codec = getPresetGpuCodec(preset);
+    const codec = getPresetGpuCodec(preset, {
+      advancedFormatSettings: settings.advancedFormatSettings,
+    });
 
     if (codec !== null && gpu !== 'cpu') {
       const encoderCheck = await checkGPUEncoderSupport(gpu, codec);
