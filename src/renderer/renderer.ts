@@ -1217,7 +1217,10 @@ const cancelConversion = async () => {
     await window.electronAPI.cancelConversion(true);
     showStatus('warning', 'Cancelling conversion...');
   } catch (err) {
-    showStatus('error', `Failed to cancel conversion: ${err instanceof Error ? err.message : String(err)}`);
+    showStatus(
+      'error',
+      `Failed to cancel conversion: ${err instanceof Error ? err.message : String(err)}`
+    );
   }
 };
 

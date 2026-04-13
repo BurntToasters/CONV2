@@ -99,7 +99,9 @@ const normalizeTheme = (value: unknown): AppSettings['theme'] => {
 
 const normalizeSettings = (value: unknown): AppSettings => {
   const incoming =
-    value && typeof value === 'object' ? (value as Partial<Record<keyof AppSettings, unknown>>) : {};
+    value && typeof value === 'object'
+      ? (value as Partial<Record<keyof AppSettings, unknown>>)
+      : {};
 
   return {
     outputDirectory: typeof incoming.outputDirectory === 'string' ? incoming.outputDirectory : '',
@@ -344,7 +346,8 @@ ipcMain.handle(
     const requestedOutputDir =
       typeof options?.outputDirectory === 'string' ? options.outputDirectory.trim() : '';
     const configuredOutputDir =
-      requestedOutputDir || (typeof settings.outputDirectory === 'string' ? settings.outputDirectory : '');
+      requestedOutputDir ||
+      (typeof settings.outputDirectory === 'string' ? settings.outputDirectory : '');
     const outputDir = path.isAbsolute(configuredOutputDir)
       ? configuredOutputDir
       : path.dirname(inputPath);

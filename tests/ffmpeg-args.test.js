@@ -4,7 +4,10 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 
-const { ensureMp4PlaybackCompatibilityArgs, resolveUniqueOutputPath } = require('../dist/main/ffmpeg.js');
+const {
+  ensureMp4PlaybackCompatibilityArgs,
+  resolveUniqueOutputPath,
+} = require('../dist/main/ffmpeg.js');
 
 test('adds faststart and hvc1 for H.265 MP4 output', () => {
   const preset = {
