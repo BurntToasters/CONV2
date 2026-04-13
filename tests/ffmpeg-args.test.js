@@ -130,6 +130,11 @@ test('gif preset includes palette workflow args and loop flag', () => {
   const filter = args[filterIndex + 1];
   assert.ok(filter.includes('palettegen'));
   assert.ok(filter.includes('paletteuse'));
+  assert.ok(args.includes('-map'));
+  assert.ok(args.includes('[gifout]'));
+  assert.ok(args.includes('-an'));
+  assert.ok(args.includes('-sn'));
+  assert.ok(args.includes('-dn'));
 });
 
 test('gif preset uses custom advanced settings in generated args', () => {
@@ -161,4 +166,78 @@ test('gif preset uses custom advanced settings in generated args', () => {
   assert.ok(filter.includes('max_colors=48'));
   assert.ok(filter.includes('dither=floyd_steinberg'));
   assert.equal(args[args.indexOf('-loop') + 1], '-1');
+});
+
+test('gif presets map to expected default tier values', () => {
+  const expectedByPreset = {
+    'gif-best-quality': {
+      fps: 15,
+      maxDimension: 1080,
+      maxColors: 256,
+      dither: 'sierra2_4a',
+    },
+    'gif-quality': {
+      fps: 12,
+      maxDimension: 900,
+      maxColors: 224,
+      dither: 'sierra2_4a',
+    },
+    'gif-balanced': {
+      fps: 10,
+      maxDimension: 720,
+      maxColors: 192,
+      dither: 'bayer',
+    },
+    'gif-best-compression': {
+      fps: 8,
+      maxDimension: 540,
+      maxColors: 128,
+      dither: 'none',
+    },
+  };
+
+  for (const [presetId, expected] of Object.entries(expectedByPreset)) {
+    const preset = presets.find((entry) => entry.id === presetId);
+    assert.ok(preset, `missing ${presetId}`);
+    const args = preset.getArgs('input.mp4', 'output.gif', 'cpu');
+    const filter = args[args.indexOf('-filter_complex') + 1];
+    assert.ok(filter.includes(`fps=${expected.fps}`), `${presetId} missing fps`);
+    assert.ok(
+      filter.includes(`scale=${expected.maxDimension}:${expected.maxDimension}`),
+      `${presetId} missing scale`
+    );
+    assert.ok(
+      filter.includes(`max_colors=${expected.maxColors}`),
+      `${presetId} missing max colors`
+    );
+    assert.ok(filter.includes(`dither=${expected.dither}`), `${presetId} missing dither`);
+  }
+});
+
+test('gif presets normalize malformed advanced settings at arg boundary', () => {
+  const preset = presets.find((entry) => entry.id === 'gif-best-quality');
+  assert.ok(preset);
+
+  const args = preset.getArgs('input.mp4', 'output.gif', 'cpu', {
+    advancedFormatSettings: {
+      gif: {
+        loopMode: 'bogus',
+        tiers: {
+          bestQuality: {
+            fps: 999,
+            maxDimension: 99,
+            maxColors: 9999,
+            dither: 'invalid',
+          },
+        },
+      },
+    },
+  });
+
+  const filter = args[args.indexOf('-filter_complex') + 1];
+  assert.ok(filter.includes('fps=60'));
+  assert.ok(filter.includes('scale=160:160'));
+  assert.ok(filter.includes('max_colors=256'));
+  assert.ok(filter.includes('dither=sierra2_4a'));
+  assert.equal(args[args.indexOf('-loop') + 1], '0');
 });

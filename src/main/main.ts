@@ -10,7 +10,15 @@ import {
 } from 'electron';
 import * as path from 'path';
 import * as fs from 'fs';
-import { presets, getPresetById, GPUVendor } from './presets';
+import {
+  presets,
+  getPresetById,
+  GPUVendor,
+  getPresetGpuCodec,
+  PRESET_CATEGORY_LABELS,
+  PRESET_CATEGORY_ORDER,
+  isPresetCategoryAdvanced,
+} from './presets';
 import {
   AdvancedFormatSettings,
   createDefaultAdvancedFormatSettings,
@@ -336,11 +344,9 @@ ipcMain.handle(
     }
 
     const gpu = gpuOverride ?? settings.gpu;
-    const codecCategory = preset.category;
-    const isVideoPreset = ['av1', 'h264', 'h265'].includes(codecCategory);
+    const codec = getPresetGpuCodec(preset);
 
-    if (isVideoPreset && gpu !== 'cpu') {
-      const codec = codecCategory as 'av1' | 'h264' | 'h265';
+    if (codec !== null && gpu !== 'cpu') {
       const encoderCheck = await checkGPUEncoderSupport(gpu, codec);
       if (!encoderCheck.available && encoderCheck.error) {
         if (!suppressGpuErrorEvent) {
@@ -399,8 +405,7 @@ ipcMain.handle(
 
     lastOutputPath = result.outputPath;
 
-    if (!result.success && result.error && gpu !== 'cpu' && isVideoPreset) {
-      const codec = codecCategory as 'av1' | 'h264' | 'h265';
+    if (!result.success && result.error && gpu !== 'cpu' && codec !== null) {
       const gpuError = parseGPUError(result.error, gpu, codec);
       if (gpuError) {
         if (!suppressGpuErrorEvent) {
@@ -431,24 +436,37 @@ ipcMain.handle('get-file-info', async (_, filePath: string) => {
   }
 });
 
-ipcMain.handle('get-presets', () => {
+ipcMain.handle('get-presets', (event: IpcMainInvokeEvent) => {
+  assertTrustedIpcSender(event);
   return presets.map((p) => ({
     id: p.id,
     name: p.name,
     description: p.description,
     category: p.category,
+    categoryLabel: PRESET_CATEGORY_LABELS[p.category] || p.category,
+    categoryOrder: PRESET_CATEGORY_ORDER.indexOf(p.category),
+    isAdvanced: isPresetCategoryAdvanced(p.category),
   }));
 });
 
-ipcMain.handle('get-settings', () => {
+ipcMain.handle('get-settings', (event: IpcMainInvokeEvent) => {
+  assertTrustedIpcSender(event);
   return settings;
 });
 
-ipcMain.handle('save-settings', (_, newSettings: Partial<AppSettings>) => {
-  const incomingSettings = newSettings as Partial<Record<keyof AppSettings, unknown>>;
+ipcMain.handle('get-default-advanced-format-settings', (event: IpcMainInvokeEvent) => {
+  assertTrustedIpcSender(event);
+  return createDefaultAdvancedFormatSettings();
+});
+
+ipcMain.handle('save-settings', (event: IpcMainInvokeEvent, newSettings: Partial<AppSettings>) => {
+  assertTrustedIpcSender(event);
+  const safeIncomingSettings =
+    newSettings && typeof newSettings === 'object' ? newSettings : ({} as Partial<AppSettings>);
+  const incomingSettings = safeIncomingSettings as Partial<Record<keyof AppSettings, unknown>>;
   const nextUpdateChannel =
-    newSettings.updateChannel !== undefined
-      ? normalizeUpdateChannel(newSettings.updateChannel)
+    safeIncomingSettings.updateChannel !== undefined
+      ? normalizeUpdateChannel(safeIncomingSettings.updateChannel)
       : settings.updateChannel;
   const nextAdvancedFormatSettings =
     incomingSettings.advancedFormatSettings === undefined
@@ -460,15 +478,15 @@ ipcMain.handle('save-settings', (_, newSettings: Partial<AppSettings>) => {
 
   settings = normalizeSettings({
     ...settings,
-    ...newSettings,
+    ...safeIncomingSettings,
     updateChannel: nextUpdateChannel,
     advancedFormatSettings: nextAdvancedFormatSettings,
   });
   saveSettings();
-  if (newSettings.updateChannel !== undefined) {
+  if (safeIncomingSettings.updateChannel !== undefined) {
     setUpdateChannel(nextUpdateChannel);
   }
-  if (newSettings.useSystemFFmpeg !== undefined) {
+  if (safeIncomingSettings.useSystemFFmpeg !== undefined) {
     setUseSystemFFmpeg(settings.useSystemFFmpeg);
     clearFFmpegCaches();
   }
@@ -526,7 +544,8 @@ ipcMain.handle('get-system-theme', () => {
   return nativeTheme.shouldUseDarkColors ? 'dark' : 'light';
 });
 
-ipcMain.handle('reset-settings', () => {
+ipcMain.handle('reset-settings', (event: IpcMainInvokeEvent) => {
+  assertTrustedIpcSender(event);
   settings = createDefaultSettings();
   setUpdateChannel(settings.updateChannel);
   setUseSystemFFmpeg(settings.useSystemFFmpeg);

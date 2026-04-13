@@ -55,6 +55,16 @@ export interface StartConversionOptions {
   showDebugOutput?: boolean;
 }
 
+export interface RendererPreset {
+  id: string;
+  name: string;
+  description: string;
+  category: string;
+  categoryLabel: string;
+  categoryOrder: number;
+  isAdvanced: boolean;
+}
+
 contextBridge.exposeInMainWorld('electronAPI', {
   // File operations
   getPathForFile: (file: File): string => webUtils.getPathForFile(file),
@@ -90,12 +100,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
 
   // Presets
-  getPresets: (): Promise<
-    Array<{ id: string; name: string; description: string; category: string }>
-  > => ipcRenderer.invoke('get-presets'),
+  getPresets: (): Promise<RendererPreset[]> => ipcRenderer.invoke('get-presets'),
 
   // Settings
   getSettings: (): Promise<AppSettings> => ipcRenderer.invoke('get-settings'),
+  getDefaultAdvancedFormatSettings: (): Promise<AdvancedFormatSettings> =>
+    ipcRenderer.invoke('get-default-advanced-format-settings'),
   saveSettings: (settings: Partial<AppSettings>): Promise<void> =>
     ipcRenderer.invoke('save-settings', settings),
 
@@ -157,10 +167,9 @@ declare global {
         callback: (result: { success: boolean; outputPath: string; error?: string }) => void
       ) => void;
       onGPUEncoderError: (callback: (error: GPUEncoderError) => void) => void;
-      getPresets: () => Promise<
-        Array<{ id: string; name: string; description: string; category: string }>
-      >;
+      getPresets: () => Promise<RendererPreset[]>;
       getSettings: () => Promise<AppSettings>;
+      getDefaultAdvancedFormatSettings: () => Promise<AdvancedFormatSettings>;
       saveSettings: (settings: Partial<AppSettings>) => Promise<void>;
       checkForUpdates: () => Promise<void>;
       isUpdatesDisabled: () => Promise<boolean>;

@@ -2,10 +2,12 @@ import {
   AdvancedFormatSettings,
   GifTierCollection,
   createDefaultAdvancedFormatSettings,
+  normalizeAdvancedFormatSettings,
 } from './advancedFormats';
 
 export type GPUVendor = 'nvidia' | 'amd' | 'intel' | 'apple' | 'cpu';
 export type PresetCategory = 'av1' | 'h264' | 'h265' | 'avi' | 'gif' | 'remux' | 'audio' | 'custom';
+export type GPUCodec = 'av1' | 'h264' | 'h265';
 
 export interface PresetContext {
   advancedFormatSettings?: AdvancedFormatSettings;
@@ -17,6 +19,7 @@ export interface Preset {
   description: string;
   category: PresetCategory;
   extension: string;
+  gpuCodec?: GPUCodec;
   getArgs: (
     inputFile: string,
     outputFile: string,
@@ -55,21 +58,13 @@ const getVideoEncoder = (codec: 'h264' | 'h265' | 'av1', gpu: GPUVendor): string
 const defaultAdvancedFormatSettings = createDefaultAdvancedFormatSettings();
 
 const getGifTierSettings = (tier: keyof GifTierCollection, context?: PresetContext) => {
-  const defaults = defaultAdvancedFormatSettings.gif.tiers[tier];
-  const custom = context?.advancedFormatSettings?.gif?.tiers?.[tier];
-  if (!custom) {
-    return defaults;
-  }
-  return {
-    fps: custom.fps,
-    maxDimension: custom.maxDimension,
-    maxColors: custom.maxColors,
-    dither: custom.dither,
-  };
+  const normalized = normalizeAdvancedFormatSettings(context?.advancedFormatSettings);
+  return normalized.gif.tiers[tier] ?? defaultAdvancedFormatSettings.gif.tiers[tier];
 };
 
 const getGifLoopArg = (context?: PresetContext): string => {
-  return context?.advancedFormatSettings?.gif?.loopMode === 'once' ? '-1' : '0';
+  const normalized = normalizeAdvancedFormatSettings(context?.advancedFormatSettings);
+  return normalized.gif.loopMode === 'once' ? '-1' : '0';
 };
 
 const getGifPaletteArgs = (
@@ -110,10 +105,35 @@ export const PRESET_CATEGORY_ORDER: PresetCategory[] = [
 
 export const ADVANCED_PRESET_CATEGORIES: PresetCategory[] = ['avi', 'gif'];
 
+export const PRESET_CATEGORY_LABELS: Record<PresetCategory, string> = {
+  av1: 'AV1',
+  h264: 'H.264',
+  h265: 'H.265/HEVC',
+  avi: 'AVI',
+  gif: 'GIF',
+  remux: 'Remux',
+  audio: 'Audio',
+  custom: 'Custom',
+};
+
+export const isPresetCategoryAdvanced = (category: PresetCategory): boolean => {
+  return ADVANCED_PRESET_CATEGORIES.includes(category);
+};
+
 export const getVisiblePresetCategories = (showAdvancedPresets: boolean): PresetCategory[] => {
   return PRESET_CATEGORY_ORDER.filter(
     (category) => showAdvancedPresets || !ADVANCED_PRESET_CATEGORIES.includes(category)
   );
+};
+
+export const getPresetGpuCodec = (preset: Preset): GPUCodec | null => {
+  if (preset.category === 'av1' || preset.category === 'h264' || preset.category === 'h265') {
+    return preset.category;
+  }
+  if (preset.gpuCodec) {
+    return preset.gpuCodec;
+  }
+  return null;
 };
 
 export const presets: Preset[] = [
@@ -123,6 +143,7 @@ export const presets: Preset[] = [
     name: 'AV1 - Balanced',
     description: 'Good balance between quality and file size',
     category: 'av1',
+    gpuCodec: 'av1',
     extension: 'mp4',
     getArgs: (input, output, gpu) => {
       const encoder = getVideoEncoder('av1', gpu);
@@ -151,6 +172,7 @@ export const presets: Preset[] = [
     name: 'AV1 - Quality',
     description: 'High quality AV1 encoding',
     category: 'av1',
+    gpuCodec: 'av1',
     extension: 'mp4',
     getArgs: (input, output, gpu) => {
       const encoder = getVideoEncoder('av1', gpu);
@@ -179,6 +201,7 @@ export const presets: Preset[] = [
     name: 'AV1 - Best Quality',
     description: 'Maximum quality with best compression (CRF 15, preset 2)',
     category: 'av1',
+    gpuCodec: 'av1',
     extension: 'mp4',
     getArgs: (input, output, gpu) => {
       const encoder = getVideoEncoder('av1', gpu);
@@ -209,6 +232,7 @@ export const presets: Preset[] = [
     name: 'AV1 - Best Compression',
     description: 'Smallest file size with comparable quality (CRF 38, preset 2)',
     category: 'av1',
+    gpuCodec: 'av1',
     extension: 'mp4',
     getArgs: (input, output, gpu) => {
       const encoder = getVideoEncoder('av1', gpu);
@@ -239,6 +263,7 @@ export const presets: Preset[] = [
     name: 'AV1 - Small File',
     description: 'Smaller file size, faster encoding',
     category: 'av1',
+    gpuCodec: 'av1',
     extension: 'mp4',
     getArgs: (input, output, gpu) => {
       const encoder = getVideoEncoder('av1', gpu);
@@ -269,6 +294,7 @@ export const presets: Preset[] = [
     name: 'H.264 - Fast',
     description: 'Quick encoding, universal compatibility',
     category: 'h264',
+    gpuCodec: 'h264',
     extension: 'mp4',
     getArgs: (input, output, gpu) => {
       const encoder = getVideoEncoder('h264', gpu);
@@ -311,6 +337,7 @@ export const presets: Preset[] = [
     name: 'H.264 - Quality',
     description: 'Better quality H.264 encoding',
     category: 'h264',
+    gpuCodec: 'h264',
     extension: 'mp4',
     getArgs: (input, output, gpu) => {
       const encoder = getVideoEncoder('h264', gpu);
@@ -355,6 +382,7 @@ export const presets: Preset[] = [
     name: 'H.265/HEVC - Balanced',
     description: 'Good compression with wide device support',
     category: 'h265',
+    gpuCodec: 'h265',
     extension: 'mp4',
     getArgs: (input, output, gpu) => {
       const encoder = getVideoEncoder('h265', gpu);
@@ -383,6 +411,7 @@ export const presets: Preset[] = [
     name: 'H.265/HEVC - Quality',
     description: 'High quality HEVC encoding',
     category: 'h265',
+    gpuCodec: 'h265',
     extension: 'mp4',
     getArgs: (input, output, gpu) => {
       const encoder = getVideoEncoder('h265', gpu);
@@ -411,6 +440,7 @@ export const presets: Preset[] = [
     name: 'H.265/HEVC - Best Quality',
     description: 'Maximum quality with best compression (CRF 16, veryslow)',
     category: 'h265',
+    gpuCodec: 'h265',
     extension: 'mp4',
     getArgs: (input, output, gpu) => {
       const encoder = getVideoEncoder('h265', gpu);
@@ -441,6 +471,7 @@ export const presets: Preset[] = [
     name: 'H.265/HEVC - Best Compression',
     description: 'Smallest file size with comparable quality (CRF 26, veryslow)',
     category: 'h265',
+    gpuCodec: 'h265',
     extension: 'mp4',
     getArgs: (input, output, gpu) => {
       const encoder = getVideoEncoder('h265', gpu);
@@ -473,6 +504,7 @@ export const presets: Preset[] = [
     name: 'AVI - Best Quality',
     description: 'AVI container with H.265 best quality encoding (CRF 16, veryslow)',
     category: 'avi',
+    gpuCodec: 'h265',
     extension: 'avi',
     getArgs: (input, output, gpu) => {
       const encoder = getVideoEncoder('h265', gpu);
@@ -503,6 +535,7 @@ export const presets: Preset[] = [
     name: 'AVI - Best Compression',
     description: 'AVI container with H.265 best compression (CRF 26, veryslow)',
     category: 'avi',
+    gpuCodec: 'h265',
     extension: 'avi',
     getArgs: (input, output, gpu) => {
       const encoder = getVideoEncoder('h265', gpu);
@@ -533,6 +566,7 @@ export const presets: Preset[] = [
     name: 'AVI - Balanced',
     description: 'AVI container with H.264 balanced encoding',
     category: 'avi',
+    gpuCodec: 'h264',
     extension: 'avi',
     getArgs: (input, output, gpu) => {
       const encoder = getVideoEncoder('h264', gpu);

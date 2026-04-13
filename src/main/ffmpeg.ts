@@ -1,7 +1,7 @@
 import { spawn, spawnSync, ChildProcess } from 'child_process';
 import * as path from 'path';
 import * as fs from 'fs';
-import { GPUVendor, Preset } from './presets';
+import { GPUVendor, Preset, getPresetGpuCodec } from './presets';
 import { getFFmpegPath, getFFprobePath } from './ffmpegPath';
 import { AdvancedFormatSettings } from './advancedFormats';
 
@@ -683,7 +683,7 @@ export const convertVideo = async (
     }
   }
 
-  const isVideoPreset = ['av1', 'h264', 'h265'].includes(preset.category);
+  const isVideoPreset = getPresetGpuCodec(preset) !== null;
   const decodeArgs = isVideoPreset ? await getHardwareDecodeArgs(gpu, inputCodec) : [];
   const presetContext = options.advancedFormatSettings
     ? { advancedFormatSettings: options.advancedFormatSettings }
