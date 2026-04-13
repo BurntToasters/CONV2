@@ -10,7 +10,13 @@ import {
   checkGPUEncoderSupport,
   parseGPUError,
 } from './ffmpeg';
-import { initUpdater, checkForUpdates, checkForUpdatesSilent, isUpdateDisabled } from './updater';
+import {
+  initUpdater,
+  checkForUpdates,
+  checkForUpdatesSilent,
+  isUpdateDisabled,
+  setUpdateChannel,
+} from './updater';
 import { setUseSystemFFmpeg } from './ffmpegPath';
 import { clearFFmpegCaches } from './ffmpeg';
 
@@ -45,6 +51,8 @@ interface AppSettings {
   showDebugOutput: boolean;
   autoCheckUpdates: boolean;
   useSystemFFmpeg: boolean;
+  updateChannel: 'auto' | 'stable' | 'beta';
+  showAdvancedPresets: boolean;
 }
 
 const defaultSettings: AppSettings = {
@@ -54,6 +62,12 @@ const defaultSettings: AppSettings = {
   showDebugOutput: false,
   autoCheckUpdates: true,
   useSystemFFmpeg: false,
+  updateChannel: 'auto',
+  showAdvancedPresets: false,
+};
+
+const normalizeUpdateChannel = (value: unknown): AppSettings['updateChannel'] => {
+  return value === 'stable' || value === 'beta' || value === 'auto' ? value : 'auto';
 };
 
 let mainWindow: BrowserWindow | null = null;
@@ -69,11 +83,16 @@ const loadSettings = (): void => {
     const settingsPath = getSettingsPath();
     if (fs.existsSync(settingsPath)) {
       const data = fs.readFileSync(settingsPath, 'utf-8');
-      settings = { ...defaultSettings, ...JSON.parse(data) };
+      const loaded = { ...defaultSettings, ...JSON.parse(data) };
+      settings = {
+        ...loaded,
+        updateChannel: normalizeUpdateChannel(loaded.updateChannel),
+      };
     }
   } catch {
     settings = { ...defaultSettings };
   }
+  setUpdateChannel(settings.updateChannel);
   setUseSystemFFmpeg(settings.useSystemFFmpeg);
   clearFFmpegCaches();
 };
@@ -125,7 +144,10 @@ const createWindow = (): void => {
   mainWindow.once('ready-to-show', () => {
     mainWindow?.show();
 
-    // Auto-check for updates if enabled and app is packaged
+    if (process.argv.includes('--dev')) {
+      mainWindow?.webContents.openDevTools({ mode: 'detach' });
+    }
+
     if (app.isPackaged && settings.autoCheckUpdates) {
       setTimeout(() => {
         checkForUpdatesSilent();
@@ -299,8 +321,15 @@ ipcMain.handle('get-settings', () => {
 });
 
 ipcMain.handle('save-settings', (_, newSettings: Partial<AppSettings>) => {
-  settings = { ...settings, ...newSettings };
+  const nextUpdateChannel =
+    newSettings.updateChannel !== undefined
+      ? normalizeUpdateChannel(newSettings.updateChannel)
+      : settings.updateChannel;
+  settings = { ...settings, ...newSettings, updateChannel: nextUpdateChannel };
   saveSettings();
+  if (newSettings.updateChannel !== undefined) {
+    setUpdateChannel(nextUpdateChannel);
+  }
   if (newSettings.useSystemFFmpeg !== undefined) {
     setUseSystemFFmpeg(settings.useSystemFFmpeg);
     clearFFmpegCaches();
@@ -343,6 +372,7 @@ ipcMain.handle('get-system-theme', () => {
 
 ipcMain.handle('reset-settings', () => {
   settings = { ...defaultSettings };
+  setUpdateChannel(settings.updateChannel);
   saveSettings();
   return settings;
 });

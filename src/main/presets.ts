@@ -4,7 +4,7 @@ export interface Preset {
   id: string;
   name: string;
   description: string;
-  category: 'av1' | 'h264' | 'h265' | 'remux' | 'audio' | 'custom';
+  category: 'av1' | 'h264' | 'h265' | 'avi' | 'remux' | 'audio' | 'custom';
   extension: string;
   getArgs: (inputFile: string, outputFile: string, gpu: GPUVendor) => string[];
 }
@@ -68,8 +68,8 @@ export const presets: Preset[] = [
   },
   {
     id: 'av1-quality',
-    name: 'AV1 - Best Quality',
-    description: 'Maximum quality, larger file size',
+    name: 'AV1 - Quality',
+    description: 'High quality AV1 encoding',
     category: 'av1',
     extension: 'mp4',
     getArgs: (input, output, gpu) => {
@@ -95,9 +95,69 @@ export const presets: Preset[] = [
     },
   },
   {
-    id: 'av1-compression',
+    id: 'av1-best-quality',
+    name: 'AV1 - Best Quality',
+    description: 'Maximum quality with best compression (CRF 15, preset 2)',
+    category: 'av1',
+    extension: 'mp4',
+    getArgs: (input, output, gpu) => {
+      const encoder = getVideoEncoder('av1', gpu);
+      if (gpu === 'cpu') {
+        return [
+          '-i',
+          input,
+          '-c:v',
+          encoder,
+          '-crf',
+          '15',
+          '-preset',
+          '2',
+          '-svtav1-params',
+          'tune=0:film-grain=0:enable-overlays=1:scd=1:scm=0',
+          '-c:a',
+          'libopus',
+          '-b:a',
+          '256k',
+          output,
+        ];
+      }
+      return ['-i', input, '-c:v', encoder, '-cq', '15', '-c:a', 'libopus', '-b:a', '256k', output];
+    },
+  },
+  {
+    id: 'av1-best-compression',
     name: 'AV1 - Best Compression',
-    description: 'Smallest file size, slower encoding',
+    description: 'Smallest file size with comparable quality (CRF 38, preset 2)',
+    category: 'av1',
+    extension: 'mp4',
+    getArgs: (input, output, gpu) => {
+      const encoder = getVideoEncoder('av1', gpu);
+      if (gpu === 'cpu') {
+        return [
+          '-i',
+          input,
+          '-c:v',
+          encoder,
+          '-crf',
+          '38',
+          '-preset',
+          '2',
+          '-svtav1-params',
+          'tune=0:film-grain=0:enable-overlays=1:scd=1:scm=0',
+          '-c:a',
+          'libopus',
+          '-b:a',
+          '96k',
+          output,
+        ];
+      }
+      return ['-i', input, '-c:v', encoder, '-cq', '38', '-c:a', 'libopus', '-b:a', '96k', output];
+    },
+  },
+  {
+    id: 'av1-compression',
+    name: 'AV1 - Small File',
+    description: 'Smaller file size, faster encoding',
     category: 'av1',
     extension: 'mp4',
     getArgs: (input, output, gpu) => {
@@ -264,6 +324,156 @@ export const presets: Preset[] = [
         ];
       }
       return ['-i', input, '-c:v', encoder, '-cq', '22', '-c:a', 'aac', '-b:a', '192k', output];
+    },
+  },
+  {
+    id: 'h265-best-quality',
+    name: 'H.265/HEVC - Best Quality',
+    description: 'Maximum quality with best compression (CRF 16, veryslow)',
+    category: 'h265',
+    extension: 'mp4',
+    getArgs: (input, output, gpu) => {
+      const encoder = getVideoEncoder('h265', gpu);
+      if (gpu === 'cpu') {
+        return [
+          '-i',
+          input,
+          '-c:v',
+          encoder,
+          '-crf',
+          '16',
+          '-preset',
+          'veryslow',
+          '-x265-params',
+          'aq-mode=3:rd=6:psy-rd=2.0:psy-rdoq=1.0:rdoq-level=2:rc-lookahead=60:bframes=8:ref=6',
+          '-c:a',
+          'aac',
+          '-b:a',
+          '256k',
+          output,
+        ];
+      }
+      return ['-i', input, '-c:v', encoder, '-cq', '16', '-c:a', 'aac', '-b:a', '256k', output];
+    },
+  },
+  {
+    id: 'h265-best-compression',
+    name: 'H.265/HEVC - Best Compression',
+    description: 'Smallest file size with comparable quality (CRF 26, veryslow)',
+    category: 'h265',
+    extension: 'mp4',
+    getArgs: (input, output, gpu) => {
+      const encoder = getVideoEncoder('h265', gpu);
+      if (gpu === 'cpu') {
+        return [
+          '-i',
+          input,
+          '-c:v',
+          encoder,
+          '-crf',
+          '26',
+          '-preset',
+          'veryslow',
+          '-x265-params',
+          'aq-mode=3:rd=6:psy-rd=2.0:psy-rdoq=1.0:rdoq-level=2:rc-lookahead=60:bframes=8:ref=6',
+          '-c:a',
+          'aac',
+          '-b:a',
+          '128k',
+          output,
+        ];
+      }
+      return ['-i', input, '-c:v', encoder, '-cq', '26', '-c:a', 'aac', '-b:a', '128k', output];
+    },
+  },
+
+  // AVI Presets
+  {
+    id: 'avi-best-quality',
+    name: 'AVI - Best Quality',
+    description: 'AVI container with H.265 best quality encoding (CRF 16, veryslow)',
+    category: 'avi',
+    extension: 'avi',
+    getArgs: (input, output, gpu) => {
+      const encoder = getVideoEncoder('h265', gpu);
+      if (gpu === 'cpu') {
+        return [
+          '-i',
+          input,
+          '-c:v',
+          encoder,
+          '-crf',
+          '16',
+          '-preset',
+          'veryslow',
+          '-x265-params',
+          'aq-mode=3:rd=6:psy-rd=2.0:psy-rdoq=1.0:rdoq-level=2:rc-lookahead=60:bframes=8:ref=6',
+          '-c:a',
+          'aac',
+          '-b:a',
+          '256k',
+          output,
+        ];
+      }
+      return ['-i', input, '-c:v', encoder, '-cq', '16', '-c:a', 'aac', '-b:a', '256k', output];
+    },
+  },
+  {
+    id: 'avi-best-compression',
+    name: 'AVI - Best Compression',
+    description: 'AVI container with H.265 best compression (CRF 26, veryslow)',
+    category: 'avi',
+    extension: 'avi',
+    getArgs: (input, output, gpu) => {
+      const encoder = getVideoEncoder('h265', gpu);
+      if (gpu === 'cpu') {
+        return [
+          '-i',
+          input,
+          '-c:v',
+          encoder,
+          '-crf',
+          '26',
+          '-preset',
+          'veryslow',
+          '-x265-params',
+          'aq-mode=3:rd=6:psy-rd=2.0:psy-rdoq=1.0:rdoq-level=2:rc-lookahead=60:bframes=8:ref=6',
+          '-c:a',
+          'aac',
+          '-b:a',
+          '128k',
+          output,
+        ];
+      }
+      return ['-i', input, '-c:v', encoder, '-cq', '26', '-c:a', 'aac', '-b:a', '128k', output];
+    },
+  },
+  {
+    id: 'avi-balanced',
+    name: 'AVI - Balanced',
+    description: 'AVI container with H.264 balanced encoding',
+    category: 'avi',
+    extension: 'avi',
+    getArgs: (input, output, gpu) => {
+      const encoder = getVideoEncoder('h264', gpu);
+      if (gpu === 'cpu') {
+        return [
+          '-i',
+          input,
+          '-c:v',
+          encoder,
+          '-crf',
+          '20',
+          '-preset',
+          'slow',
+          '-c:a',
+          'aac',
+          '-b:a',
+          '192k',
+          output,
+        ];
+      }
+      return ['-i', input, '-c:v', encoder, '-cq', '20', '-c:a', 'aac', '-b:a', '192k', output];
     },
   },
 

@@ -34,7 +34,7 @@ function copyRendererAssets() {
 
   fs.mkdirSync(destDir, { recursive: true });
 
-  const assets = ['index.html', 'main.css', 'extra.css'];
+  const assets = ['index.html', 'main.css', 'settings.css', 'exports-shim.js'];
   for (const file of assets) {
     const src = path.join(srcDir, file);
     const dest = path.join(destDir, file);

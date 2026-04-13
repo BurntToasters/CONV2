@@ -12,6 +12,8 @@ interface AppSettings {
   showDebugOutput: boolean;
   autoCheckUpdates: boolean;
   useSystemFFmpeg: boolean;
+  updateChannel: 'auto' | 'stable' | 'beta';
+  showAdvancedPresets: boolean;
 }
 
 interface VideoInfo {
@@ -85,7 +87,6 @@ const elements = {
   cancelBtn: document.getElementById('cancelBtn') as HTMLButtonElement,
   progressContainer: document.getElementById('progressContainer') as HTMLDivElement,
   progressFill: document.getElementById('progressFill') as HTMLDivElement,
-  progressGlow: document.getElementById('progressGlow') as HTMLDivElement,
   progressPercent: document.getElementById('progressPercent') as HTMLSpanElement,
   progressTime: document.getElementById('progressTime') as HTMLSpanElement,
   progressEta: document.getElementById('progressEta') as HTMLSpanElement,
@@ -104,6 +105,7 @@ const elements = {
   checkUpdateBtn: document.getElementById('checkUpdateBtn') as HTMLButtonElement,
   updateBadge: document.getElementById('updateBadge') as HTMLSpanElement,
   autoCheckUpdatesCheck: document.getElementById('autoCheckUpdatesCheck') as HTMLInputElement,
+  updateChannelSelect: document.getElementById('updateChannelSelect') as HTMLSelectElement,
   versionInfo: document.getElementById('versionInfo') as HTMLSpanElement,
   versionLink: document.getElementById('versionLink') as HTMLAnchorElement,
   ffmpegWarning: document.getElementById('ffmpegWarning') as HTMLDivElement,
@@ -113,6 +115,7 @@ const elements = {
   closeCredits: document.getElementById('closeCredits') as HTMLButtonElement,
   licensesList: document.getElementById('licensesList') as HTMLDivElement,
   debugOutputCheck: document.getElementById('debugOutputCheck') as HTMLInputElement,
+  advancedPresetsCheck: document.getElementById('advancedPresetsCheck') as HTMLInputElement,
   useSystemFFmpegCheck: document.getElementById('useSystemFFmpegCheck') as HTMLInputElement,
   showLogsBtn: document.getElementById('showLogsBtn') as HTMLButtonElement,
   logsModal: document.getElementById('logsModal') as HTMLDivElement,
@@ -201,7 +204,6 @@ const showModal = (options: ModalOptions): void => {
   });
 
   modal.addEventListener('click', overlayListener);
-
   modal.classList.add('visible');
 };
 
@@ -399,8 +401,10 @@ const loadSettings = async () => {
   elements.gpuSelect.value = settings.gpu;
   elements.themeSelect.value = settings.theme;
   elements.debugOutputCheck.checked = settings.showDebugOutput;
+  elements.advancedPresetsCheck.checked = settings.showAdvancedPresets;
   elements.autoCheckUpdatesCheck.checked = settings.autoCheckUpdates;
   elements.useSystemFFmpegCheck.checked = settings.useSystemFFmpeg;
+  elements.updateChannelSelect.value = settings.updateChannel;
 
   if (settings.showDebugOutput) {
     elements.showLogsBtn.style.display = 'inline-block';
@@ -419,11 +423,15 @@ const loadPresets = async () => {
   presets = await window.electronAPI.getPresets();
   elements.presetSelect.innerHTML = '';
 
-  const categories = ['av1', 'h264', 'h265', 'remux', 'audio'];
+  const advancedCategories = ['avi'];
+  const categories = ['av1', 'h264', 'h265', 'avi', 'remux', 'audio'].filter(
+    (cat) => settings.showAdvancedPresets || !advancedCategories.includes(cat)
+  );
   const categoryNames: Record<string, string> = {
     av1: 'AV1',
     h264: 'H.264',
     h265: 'H.265/HEVC',
+    avi: 'AVI',
     remux: 'Remux',
     audio: 'Audio',
   };
@@ -455,9 +463,14 @@ const loadVersion = async () => {
 
 const applyUpdateVisibility = async () => {
   const updatesDisabled = await window.electronAPI.isUpdatesDisabled();
+  const updateChannelSetting = document.getElementById('updateChannelSetting');
   if (updatesDisabled) {
     elements.checkUpdateBtn.style.display = 'none';
     elements.updateBadge.style.display = 'none';
+    elements.autoCheckUpdatesCheck.disabled = true;
+    if (updateChannelSetting) {
+      updateChannelSetting.style.display = 'none';
+    }
   }
 };
 
@@ -493,7 +506,6 @@ const applyTheme = async () => {
 
 const setupKeyboardShortcuts = () => {
   document.addEventListener('keydown', (e) => {
-    // Escape - close modals
     if (e.key === 'Escape') {
       if (elements.settingsModal.classList.contains('visible')) {
         elements.settingsModal.classList.remove('visible');
@@ -506,13 +518,11 @@ const setupKeyboardShortcuts = () => {
       }
     }
 
-    // Ctrl/Cmd + O - open file
     if ((e.ctrlKey || e.metaKey) && e.key === 'o') {
       e.preventDefault();
       elements.fileInput.click();
     }
 
-    // Enter - start conversion (when file selected and not converting)
     if (e.key === 'Enter' && !e.ctrlKey && !e.metaKey) {
       const isModalOpen =
         elements.settingsModal.classList.contains('visible') ||
@@ -628,9 +638,20 @@ const setupEventListeners = () => {
     elements.showLogsBtn.style.display = settings.showDebugOutput ? 'inline-block' : 'none';
   });
 
+  elements.advancedPresetsCheck.addEventListener('change', async () => {
+    settings.showAdvancedPresets = elements.advancedPresetsCheck.checked;
+    await window.electronAPI.saveSettings({ showAdvancedPresets: settings.showAdvancedPresets });
+    await loadPresets();
+  });
+
   elements.autoCheckUpdatesCheck.addEventListener('change', async () => {
     settings.autoCheckUpdates = elements.autoCheckUpdatesCheck.checked;
     await window.electronAPI.saveSettings({ autoCheckUpdates: settings.autoCheckUpdates });
+  });
+
+  elements.updateChannelSelect.addEventListener('change', async () => {
+    settings.updateChannel = elements.updateChannelSelect.value as AppSettings['updateChannel'];
+    await window.electronAPI.saveSettings({ updateChannel: settings.updateChannel });
   });
 
   elements.useSystemFFmpegCheck.addEventListener('change', async () => {
@@ -675,7 +696,6 @@ const setupEventListeners = () => {
     }
   });
 
-  // Logs listeners
   elements.showLogsBtn.addEventListener('click', () => {
     elements.logsModal.classList.add('visible');
   });
@@ -790,11 +810,9 @@ const setupEventListeners = () => {
 
   window.electronAPI.onConversionProgress((progress) => {
     elements.progressFill.style.width = `${progress.percent}%`;
-    elements.progressGlow.style.width = `${progress.percent}%`;
     elements.progressPercent.textContent = `${Math.floor(progress.percent)}%`;
     elements.progressTime.textContent = progress.time;
 
-    // Calculate ETA
     if (progress.percent > 0 && conversionStartTime > 0) {
       const elapsed = (Date.now() - conversionStartTime) / 1000;
       const estimatedTotal = elapsed / (progress.percent / 100);
@@ -804,7 +822,6 @@ const setupEventListeners = () => {
       }
     }
 
-    // Show speed
     if (progress.fps > 0) {
       elements.progressSpeed.textContent = `${progress.fps.toFixed(1)} fps`;
     } else if (progress.speed !== 'N/A') {
@@ -874,7 +891,7 @@ const showGPUErrorModal = (error: GPUEncoderError): void => {
   titleEl.textContent = 'GPU Encoding Error';
 
   bodyEl.innerHTML = `
-    <strong style="color: var(--danger-color);">${error.message}</strong>
+    <strong style="color: var(--error);">${error.message}</strong>
     <div style="margin-top: 12px; white-space: pre-line; opacity: 0.85; font-size: 0.9em;">${error.details}</div>
     <div style="margin-top: 12px; padding: 8px 12px; background: var(--bg-tertiary); border-radius: 6px; font-size: 0.9em;">
       <strong>Suggestion:</strong> ${error.suggestion}
@@ -929,7 +946,6 @@ const showGPUErrorModal = (error: GPUEncoderError): void => {
   });
 
   modal.addEventListener('click', overlayListener);
-
   modal.classList.add('visible');
 };
 
@@ -938,7 +954,6 @@ const handleFileSelect = async (filePath: string) => {
   const fileName = filePath.split(/[/\\]/).pop() || filePath;
   elements.fileName.textContent = fileName;
 
-  // Get file info
   const info = await window.electronAPI.getFileInfo(filePath);
   if (info) {
     selectedFileInfo = info;
@@ -953,7 +968,7 @@ const handleFileSelect = async (filePath: string) => {
     if (info.duration > 0) {
       details.push(formatDuration(info.duration));
     }
-    elements.fileDetails.textContent = details.join(' • ');
+    elements.fileDetails.textContent = details.join(' \u2022 ');
   } else {
     elements.fileDetails.textContent = '';
   }
@@ -973,14 +988,12 @@ const startConversion = async () => {
   elements.cancelBtn.style.display = 'none';
   elements.progressContainer.classList.add('visible');
   elements.progressFill.style.width = '0%';
-  elements.progressGlow.style.width = '0%';
   elements.progressPercent.textContent = '0%';
   elements.progressTime.textContent = '00:00:00';
   elements.progressEta.textContent = '';
   elements.progressSpeed.textContent = '';
   elements.showInFolderBtn.style.display = 'none';
 
-  // Clear logs
   elements.logsContent.textContent = '';
 
   hideStatus();
