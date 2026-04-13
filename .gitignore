@@ -1,5 +1,6 @@
 node_modules/
 dist/
+release/*
 release/
 build-dir*/
 repo/
@@ -13,6 +14,8 @@ Thumbs.db
 licenses.json
 **/.*/
 !.github/
+
+
 
 # FFmpeg binaries (too large for git)
 resources/ffmpeg/**/ffmpeg
