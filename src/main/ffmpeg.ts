@@ -660,13 +660,7 @@ export const convertVideo = async (
     preset,
     preset.getArgs(inputPath, outputPath, gpu)
   );
-  const args = [
-    '-y',
-    '-progress',
-    'pipe:1',
-    ...decodeArgs,
-    ...presetArgs,
-  ];
+  const args = ['-y', '-progress', 'pipe:1', ...decodeArgs, ...presetArgs];
 
   if (onLog) {
     onLog(`Running command: ffmpeg ${args.join(' ')}\n`);
