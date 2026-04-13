@@ -5,6 +5,33 @@ interface Preset {
   category: string;
 }
 
+type GifLoopMode = 'forever' | 'once';
+type GifDither = 'sierra2_4a' | 'floyd_steinberg' | 'bayer' | 'none';
+type GifTierKey = 'bestQuality' | 'quality' | 'balanced' | 'bestCompression';
+
+interface GifTierSettings {
+  fps: number;
+  maxDimension: number;
+  maxColors: number;
+  dither: GifDither;
+}
+
+interface GifTierCollection {
+  bestQuality: GifTierSettings;
+  quality: GifTierSettings;
+  balanced: GifTierSettings;
+  bestCompression: GifTierSettings;
+}
+
+interface GifAdvancedSettings {
+  loopMode: GifLoopMode;
+  tiers: GifTierCollection;
+}
+
+interface AdvancedFormatSettings {
+  gif: GifAdvancedSettings;
+}
+
 interface AppSettings {
   outputDirectory: string;
   gpu: 'nvidia' | 'amd' | 'intel' | 'apple' | 'cpu';
@@ -15,6 +42,7 @@ interface AppSettings {
   updateChannel: 'auto' | 'stable' | 'beta';
   showAdvancedPresets: boolean;
   removeSpacesFromFilenames: boolean;
+  advancedFormatSettings: AdvancedFormatSettings;
 }
 
 interface VideoInfo {
@@ -91,6 +119,120 @@ let cancelRequested = false;
 let closeDynamicModal: (() => void) | null = null;
 let fileSelectionToken = 0;
 
+const GIF_DITHER_VALUES: ReadonlySet<GifDither> = new Set([
+  'sierra2_4a',
+  'floyd_steinberg',
+  'bayer',
+  'none',
+]);
+
+const createDefaultGifAdvancedSettings = (): GifAdvancedSettings => ({
+  loopMode: 'forever',
+  tiers: {
+    bestQuality: {
+      fps: 15,
+      maxDimension: 1080,
+      maxColors: 256,
+      dither: 'sierra2_4a',
+    },
+    quality: {
+      fps: 12,
+      maxDimension: 900,
+      maxColors: 224,
+      dither: 'sierra2_4a',
+    },
+    balanced: {
+      fps: 10,
+      maxDimension: 720,
+      maxColors: 192,
+      dither: 'bayer',
+    },
+    bestCompression: {
+      fps: 8,
+      maxDimension: 540,
+      maxColors: 128,
+      dither: 'none',
+    },
+  },
+});
+
+const createDefaultAdvancedFormatSettings = (): AdvancedFormatSettings => ({
+  gif: createDefaultGifAdvancedSettings(),
+});
+
+const clampInteger = (value: unknown, min: number, max: number, fallback: number): number => {
+  const numeric =
+    typeof value === 'number'
+      ? value
+      : typeof value === 'string' && value.trim().length > 0
+        ? Number(value)
+        : NaN;
+  if (!Number.isFinite(numeric)) {
+    return fallback;
+  }
+  return Math.min(max, Math.max(min, Math.round(numeric)));
+};
+
+const normalizeGifDither = (value: unknown, fallback: GifDither): GifDither => {
+  if (typeof value !== 'string') {
+    return fallback;
+  }
+  return GIF_DITHER_VALUES.has(value as GifDither) ? (value as GifDither) : fallback;
+};
+
+const normalizeGifTierSettings = (
+  value: Partial<Record<keyof GifTierSettings, unknown>> | undefined,
+  fallback: GifTierSettings
+): GifTierSettings => {
+  const tier = value || {};
+  return {
+    fps: clampInteger(tier.fps, 1, 60, fallback.fps),
+    maxDimension: clampInteger(tier.maxDimension, 160, 2160, fallback.maxDimension),
+    maxColors: clampInteger(tier.maxColors, 2, 256, fallback.maxColors),
+    dither: normalizeGifDither(tier.dither, fallback.dither),
+  };
+};
+
+const normalizeGifAdvancedSettings = (value: unknown): GifAdvancedSettings => {
+  const defaults = createDefaultGifAdvancedSettings();
+  const incoming = value && typeof value === 'object' ? (value as Record<string, unknown>) : {};
+  const incomingTiers =
+    incoming.tiers && typeof incoming.tiers === 'object'
+      ? (incoming.tiers as Record<string, unknown>)
+      : {};
+
+  return {
+    loopMode: incoming.loopMode === 'once' ? 'once' : 'forever',
+    tiers: {
+      bestQuality: normalizeGifTierSettings(
+        incomingTiers.bestQuality as Partial<Record<keyof GifTierSettings, unknown>> | undefined,
+        defaults.tiers.bestQuality
+      ),
+      quality: normalizeGifTierSettings(
+        incomingTiers.quality as Partial<Record<keyof GifTierSettings, unknown>> | undefined,
+        defaults.tiers.quality
+      ),
+      balanced: normalizeGifTierSettings(
+        incomingTiers.balanced as Partial<Record<keyof GifTierSettings, unknown>> | undefined,
+        defaults.tiers.balanced
+      ),
+      bestCompression: normalizeGifTierSettings(
+        incomingTiers.bestCompression as
+          | Partial<Record<keyof GifTierSettings, unknown>>
+          | undefined,
+        defaults.tiers.bestCompression
+      ),
+    },
+  };
+};
+
+const normalizeAdvancedFormatSettings = (value: unknown): AdvancedFormatSettings => {
+  const incoming = value && typeof value === 'object' ? (value as Record<string, unknown>) : {};
+  return {
+    gif: normalizeGifAdvancedSettings(incoming.gif),
+  };
+};
+
 const elements = {
   dropZone: document.getElementById('dropZone') as HTMLDivElement,
   fileInput: document.getElementById('fileInput') as HTMLInputElement,
@@ -112,6 +254,42 @@ const elements = {
   settingsBtn: document.getElementById('settingsBtn') as HTMLButtonElement,
   supportBtn: document.getElementById('supportBtn') as HTMLButtonElement,
   settingsModal: document.getElementById('settingsModal') as HTMLDivElement,
+  settingsGeneralTab: document.getElementById('settingsGeneralTab') as HTMLButtonElement,
+  settingsAdvancedFormatsTab: document.getElementById(
+    'settingsAdvancedFormatsTab'
+  ) as HTMLButtonElement,
+  settingsGeneralPanel: document.getElementById('settingsGeneralPanel') as HTMLDivElement,
+  settingsAdvancedFormatsPanel: document.getElementById(
+    'settingsAdvancedFormatsPanel'
+  ) as HTMLDivElement,
+  formatTabGif: document.getElementById('formatTabGif') as HTMLButtonElement,
+  formatPanelGif: document.getElementById('formatPanelGif') as HTMLDivElement,
+  resetGifDefaultsBtn: document.getElementById('resetGifDefaultsBtn') as HTMLButtonElement,
+  gifLoopModeSelect: document.getElementById('gifLoopModeSelect') as HTMLSelectElement,
+  gifBestQualityFps: document.getElementById('gifBestQualityFps') as HTMLInputElement,
+  gifBestQualityMaxDimension: document.getElementById(
+    'gifBestQualityMaxDimension'
+  ) as HTMLInputElement,
+  gifBestQualityMaxColors: document.getElementById('gifBestQualityMaxColors') as HTMLInputElement,
+  gifBestQualityDither: document.getElementById('gifBestQualityDither') as HTMLSelectElement,
+  gifQualityFps: document.getElementById('gifQualityFps') as HTMLInputElement,
+  gifQualityMaxDimension: document.getElementById('gifQualityMaxDimension') as HTMLInputElement,
+  gifQualityMaxColors: document.getElementById('gifQualityMaxColors') as HTMLInputElement,
+  gifQualityDither: document.getElementById('gifQualityDither') as HTMLSelectElement,
+  gifBalancedFps: document.getElementById('gifBalancedFps') as HTMLInputElement,
+  gifBalancedMaxDimension: document.getElementById('gifBalancedMaxDimension') as HTMLInputElement,
+  gifBalancedMaxColors: document.getElementById('gifBalancedMaxColors') as HTMLInputElement,
+  gifBalancedDither: document.getElementById('gifBalancedDither') as HTMLSelectElement,
+  gifBestCompressionFps: document.getElementById('gifBestCompressionFps') as HTMLInputElement,
+  gifBestCompressionMaxDimension: document.getElementById(
+    'gifBestCompressionMaxDimension'
+  ) as HTMLInputElement,
+  gifBestCompressionMaxColors: document.getElementById(
+    'gifBestCompressionMaxColors'
+  ) as HTMLInputElement,
+  gifBestCompressionDither: document.getElementById(
+    'gifBestCompressionDither'
+  ) as HTMLSelectElement,
   closeSettings: document.getElementById('closeSettings') as HTMLButtonElement,
   outputDirBtn: document.getElementById('outputDirBtn') as HTMLButtonElement,
   outputPath: document.getElementById('outputPath') as HTMLSpanElement,
@@ -142,6 +320,47 @@ const elements = {
   copyLogsBtn: document.getElementById('copyLogsBtn') as HTMLButtonElement,
 };
 
+const gifTierInputs: Record<
+  GifTierKey,
+  {
+    fps: HTMLInputElement;
+    maxDimension: HTMLInputElement;
+    maxColors: HTMLInputElement;
+    dither: HTMLSelectElement;
+  }
+> = {
+  bestQuality: {
+    fps: elements.gifBestQualityFps,
+    maxDimension: elements.gifBestQualityMaxDimension,
+    maxColors: elements.gifBestQualityMaxColors,
+    dither: elements.gifBestQualityDither,
+  },
+  quality: {
+    fps: elements.gifQualityFps,
+    maxDimension: elements.gifQualityMaxDimension,
+    maxColors: elements.gifQualityMaxColors,
+    dither: elements.gifQualityDither,
+  },
+  balanced: {
+    fps: elements.gifBalancedFps,
+    maxDimension: elements.gifBalancedMaxDimension,
+    maxColors: elements.gifBalancedMaxColors,
+    dither: elements.gifBalancedDither,
+  },
+  bestCompression: {
+    fps: elements.gifBestCompressionFps,
+    maxDimension: elements.gifBestCompressionMaxDimension,
+    maxColors: elements.gifBestCompressionMaxColors,
+    dither: elements.gifBestCompressionDither,
+  },
+};
+
+const settingsTabButtons = [elements.settingsGeneralTab, elements.settingsAdvancedFormatsTab];
+const settingsPanels = [elements.settingsGeneralPanel, elements.settingsAdvancedFormatsPanel];
+
+const formatTabs = [elements.formatTabGif];
+const formatPanels = [elements.formatPanelGif];
+
 const formatFileSize = (bytes: number): string => {
   if (bytes === 0) return '0 B';
   const k = 1024;
@@ -157,6 +376,107 @@ const formatDuration = (seconds: number): string => {
   if (h > 0) return `${h}h ${m}m ${s}s`;
   if (m > 0) return `${m}m ${s}s`;
   return `${s}s`;
+};
+
+const setSettingsPanel = (
+  panelId: 'settingsGeneralPanel' | 'settingsAdvancedFormatsPanel'
+): void => {
+  settingsPanels.forEach((panel) => {
+    const isActive = panel.id === panelId;
+    panel.classList.toggle('is-active', isActive);
+    panel.hidden = !isActive;
+  });
+
+  settingsTabButtons.forEach((tab) => {
+    const isActive = tab.dataset.settingsPanel === panelId;
+    tab.classList.toggle('is-active', isActive);
+    tab.setAttribute('aria-selected', isActive ? 'true' : 'false');
+  });
+};
+
+const setFormatPanel = (panelId: 'formatPanelGif'): void => {
+  formatPanels.forEach((panel) => {
+    const isActive = panel.id === panelId;
+    panel.classList.toggle('is-active', isActive);
+    panel.hidden = !isActive;
+  });
+
+  formatTabs.forEach((tab) => {
+    const isActive = tab.dataset.formatPanel === panelId;
+    tab.classList.toggle('is-active', isActive);
+    tab.setAttribute('aria-selected', isActive ? 'true' : 'false');
+  });
+};
+
+const setGifControlValues = (gif: GifAdvancedSettings): void => {
+  elements.gifLoopModeSelect.value = gif.loopMode;
+  (Object.keys(gifTierInputs) as GifTierKey[]).forEach((tier) => {
+    const tierInputs = gifTierInputs[tier];
+    const tierSettings = gif.tiers[tier];
+    tierInputs.fps.value = String(tierSettings.fps);
+    tierInputs.maxDimension.value = String(tierSettings.maxDimension);
+    tierInputs.maxColors.value = String(tierSettings.maxColors);
+    tierInputs.dither.value = tierSettings.dither;
+  });
+};
+
+const readGifControls = (): GifAdvancedSettings => {
+  return normalizeGifAdvancedSettings({
+    loopMode: elements.gifLoopModeSelect.value,
+    tiers: {
+      bestQuality: {
+        fps: elements.gifBestQualityFps.value,
+        maxDimension: elements.gifBestQualityMaxDimension.value,
+        maxColors: elements.gifBestQualityMaxColors.value,
+        dither: elements.gifBestQualityDither.value,
+      },
+      quality: {
+        fps: elements.gifQualityFps.value,
+        maxDimension: elements.gifQualityMaxDimension.value,
+        maxColors: elements.gifQualityMaxColors.value,
+        dither: elements.gifQualityDither.value,
+      },
+      balanced: {
+        fps: elements.gifBalancedFps.value,
+        maxDimension: elements.gifBalancedMaxDimension.value,
+        maxColors: elements.gifBalancedMaxColors.value,
+        dither: elements.gifBalancedDither.value,
+      },
+      bestCompression: {
+        fps: elements.gifBestCompressionFps.value,
+        maxDimension: elements.gifBestCompressionMaxDimension.value,
+        maxColors: elements.gifBestCompressionMaxColors.value,
+        dither: elements.gifBestCompressionDither.value,
+      },
+    },
+  });
+};
+
+const saveGifSettingsFromControls = async (): Promise<void> => {
+  const nextGifSettings = readGifControls();
+  settings.advancedFormatSettings = normalizeAdvancedFormatSettings({
+    ...settings.advancedFormatSettings,
+    gif: nextGifSettings,
+  });
+  setGifControlValues(settings.advancedFormatSettings.gif);
+  await window.electronAPI.saveSettings({
+    advancedFormatSettings: {
+      gif: settings.advancedFormatSettings.gif,
+    },
+  });
+};
+
+const resetGifSettingsToDefaults = async (): Promise<void> => {
+  settings.advancedFormatSettings = normalizeAdvancedFormatSettings({
+    ...settings.advancedFormatSettings,
+    gif: createDefaultGifAdvancedSettings(),
+  });
+  setGifControlValues(settings.advancedFormatSettings.gif);
+  await window.electronAPI.saveSettings({
+    advancedFormatSettings: {
+      gif: settings.advancedFormatSettings.gif,
+    },
+  });
 };
 
 const getCheckingUpdateButtonHTML = (): string =>
@@ -424,6 +744,9 @@ const checkFFmpeg = async () => {
 
 const loadSettings = async () => {
   settings = await window.electronAPI.getSettings();
+  settings.advancedFormatSettings = normalizeAdvancedFormatSettings(
+    settings.advancedFormatSettings
+  );
   elements.gpuSelect.value = settings.gpu;
   elements.themeSelect.value = settings.theme;
   elements.debugOutputCheck.checked = settings.showDebugOutput;
@@ -432,6 +755,9 @@ const loadSettings = async () => {
   elements.autoCheckUpdatesCheck.checked = settings.autoCheckUpdates;
   elements.useSystemFFmpegCheck.checked = settings.useSystemFFmpeg;
   elements.updateChannelSelect.value = settings.updateChannel;
+  setSettingsPanel('settingsGeneralPanel');
+  setFormatPanel('formatPanelGif');
+  setGifControlValues(settings.advancedFormatSettings.gif);
 
   if (settings.showDebugOutput) {
     elements.showLogsBtn.style.display = 'inline-block';
@@ -450,8 +776,8 @@ const loadPresets = async () => {
   presets = await window.electronAPI.getPresets();
   elements.presetSelect.innerHTML = '';
 
-  const advancedCategories = ['avi'];
-  const categories = ['av1', 'h264', 'h265', 'avi', 'remux', 'audio'].filter(
+  const advancedCategories = ['avi', 'gif'];
+  const categories = ['av1', 'h264', 'h265', 'avi', 'gif', 'remux', 'audio'].filter(
     (cat) => settings.showAdvancedPresets || !advancedCategories.includes(cat)
   );
   const categoryNames: Record<string, string> = {
@@ -459,6 +785,7 @@ const loadPresets = async () => {
     h264: 'H.264',
     h265: 'H.265/HEVC',
     avi: 'AVI',
+    gif: 'GIF',
     remux: 'Remux',
     audio: 'Audio',
   };
@@ -581,6 +908,48 @@ const setupKeyboardShortcuts = () => {
 };
 
 const setupEventListeners = () => {
+  settingsTabButtons.forEach((tab) => {
+    tab.addEventListener('click', () => {
+      const panelId = tab.dataset.settingsPanel;
+      if (panelId === 'settingsGeneralPanel' || panelId === 'settingsAdvancedFormatsPanel') {
+        setSettingsPanel(panelId);
+      }
+    });
+  });
+
+  formatTabs.forEach((tab) => {
+    tab.addEventListener('click', () => {
+      const panelId = tab.dataset.formatPanel;
+      if (panelId === 'formatPanelGif') {
+        setFormatPanel(panelId);
+      }
+    });
+  });
+
+  elements.gifLoopModeSelect.addEventListener('change', async () => {
+    await saveGifSettingsFromControls();
+  });
+
+  (Object.keys(gifTierInputs) as GifTierKey[]).forEach((tier) => {
+    const tierInputs = gifTierInputs[tier];
+    tierInputs.fps.addEventListener('change', async () => {
+      await saveGifSettingsFromControls();
+    });
+    tierInputs.maxDimension.addEventListener('change', async () => {
+      await saveGifSettingsFromControls();
+    });
+    tierInputs.maxColors.addEventListener('change', async () => {
+      await saveGifSettingsFromControls();
+    });
+    tierInputs.dither.addEventListener('change', async () => {
+      await saveGifSettingsFromControls();
+    });
+  });
+
+  elements.resetGifDefaultsBtn.addEventListener('click', async () => {
+    await resetGifSettingsToDefaults();
+  });
+
   document.getElementById('support-link')?.addEventListener('click', (e) => {
     e.preventDefault();
     window.electronAPI.openExternal('https://rosie.run/support');
@@ -752,6 +1121,7 @@ const setupEventListeners = () => {
   });
 
   elements.settingsBtn.addEventListener('click', () => {
+    setSettingsPanel('settingsGeneralPanel');
     elements.settingsModal.classList.add('visible');
   });
 

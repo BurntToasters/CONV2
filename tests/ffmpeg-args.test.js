@@ -8,6 +8,7 @@ const {
   ensureMp4PlaybackCompatibilityArgs,
   resolveUniqueOutputPath,
 } = require('../dist/main/ffmpeg.js');
+const { presets } = require('../dist/main/presets.js');
 
 test('adds faststart and hvc1 for H.265 MP4 output', () => {
   const preset = {
@@ -113,4 +114,51 @@ test('resolveUniqueOutputPath increments suffix when output exists', () => {
   } finally {
     fs.rmSync(tempDir, { recursive: true, force: true });
   }
+});
+
+test('gif preset includes palette workflow args and loop flag', () => {
+  const preset = presets.find((entry) => entry.id === 'gif-best-quality');
+  assert.ok(preset);
+
+  const args = preset.getArgs('input.mp4', 'output.gif', 'cpu');
+  assert.equal(args[args.length - 1], 'output.gif');
+  assert.ok(args.includes('-filter_complex'));
+  assert.ok(args.includes('-loop'));
+
+  const filterIndex = args.indexOf('-filter_complex');
+  assert.ok(filterIndex >= 0);
+  const filter = args[filterIndex + 1];
+  assert.ok(filter.includes('palettegen'));
+  assert.ok(filter.includes('paletteuse'));
+});
+
+test('gif preset uses custom advanced settings in generated args', () => {
+  const preset = presets.find((entry) => entry.id === 'gif-best-compression');
+  assert.ok(preset);
+
+  const args = preset.getArgs('input.mp4', 'output.gif', 'cpu', {
+    advancedFormatSettings: {
+      gif: {
+        loopMode: 'once',
+        tiers: {
+          bestQuality: { fps: 15, maxDimension: 1080, maxColors: 256, dither: 'sierra2_4a' },
+          quality: { fps: 12, maxDimension: 900, maxColors: 224, dither: 'sierra2_4a' },
+          balanced: { fps: 10, maxDimension: 720, maxColors: 192, dither: 'bayer' },
+          bestCompression: {
+            fps: 22,
+            maxDimension: 480,
+            maxColors: 48,
+            dither: 'floyd_steinberg',
+          },
+        },
+      },
+    },
+  });
+
+  const filter = args[args.indexOf('-filter_complex') + 1];
+  assert.ok(filter.includes('fps=22'));
+  assert.ok(filter.includes('scale=480:480'));
+  assert.ok(filter.includes('max_colors=48'));
+  assert.ok(filter.includes('dither=floyd_steinberg'));
+  assert.equal(args[args.indexOf('-loop') + 1], '-1');
 });

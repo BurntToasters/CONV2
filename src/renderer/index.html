@@ -229,139 +229,433 @@
         </div>
 
         <div class="settings-content">
-          <div class="settings-row settings-row-appearance">
-            <span class="settings-label">Appearance</span>
-            <div class="theme-switcher" id="themeSwitcher">
-              <button class="theme-option" data-theme="system">
-                <img
-                  src="../../assets/twemoji/1f4bb.svg"
-                  alt=""
-                  aria-hidden="true"
-                  class="theme-option-icon"
-                />
-                Auto
-              </button>
-              <button class="theme-option" data-theme="dark">
-                <img
-                  src="../../assets/twemoji/1f319.svg"
-                  alt=""
-                  aria-hidden="true"
-                  class="theme-option-icon"
-                />
-                Dark
-              </button>
-              <button class="theme-option" data-theme="light">
-                <img
-                  src="../../assets/twemoji/2600.svg"
-                  alt=""
-                  aria-hidden="true"
-                  class="theme-option-icon"
-                />
-                Light
-              </button>
-            </div>
-            <select id="themeSelect" style="display: none">
-              <option value="system">System</option>
-              <option value="dark">Dark</option>
-              <option value="light">Light</option>
-            </select>
+          <div class="settings-tab-strip" role="tablist" aria-label="Settings sections">
+            <button
+              class="settings-tab is-active"
+              id="settingsGeneralTab"
+              data-settings-panel="settingsGeneralPanel"
+              role="tab"
+              aria-selected="true"
+            >
+              General
+            </button>
+            <button
+              class="settings-tab"
+              id="settingsAdvancedFormatsTab"
+              data-settings-panel="settingsAdvancedFormatsPanel"
+              role="tab"
+              aria-selected="false"
+            >
+              Advanced Formats
+            </button>
           </div>
 
-          <div class="settings-row">
-            <span class="settings-label">Output</span>
-            <div class="settings-inline">
-              <span class="output-path" id="outputPath">Same as input file</span>
-              <button class="btn btn-secondary btn-xs" id="outputDirBtn">Change</button>
-            </div>
-          </div>
-
-          <div class="settings-row">
-            <span class="settings-label" id="useSystemFFmpegLabel">System FFmpeg</span>
-            <label class="toggle-switch">
-              <input
-                type="checkbox"
-                id="useSystemFFmpegCheck"
-                aria-labelledby="useSystemFFmpegLabel"
-              />
-              <span class="toggle-slider"></span>
-            </label>
-          </div>
-
-          <div class="settings-row">
-            <span class="settings-label" id="debugOutputLabel">Debug Logs</span>
-            <label class="toggle-switch">
-              <input type="checkbox" id="debugOutputCheck" aria-labelledby="debugOutputLabel" />
-              <span class="toggle-slider"></span>
-            </label>
-          </div>
-
-          <div class="settings-row settings-row-last-in-group">
-            <span class="settings-label" id="advancedPresetsLabel">Advanced Presets</span>
-            <label class="toggle-switch">
-              <input
-                type="checkbox"
-                id="advancedPresetsCheck"
-                aria-labelledby="advancedPresetsLabel"
-              />
-              <span class="toggle-slider"></span>
-            </label>
-          </div>
-
-          <div class="settings-row settings-row-last-in-group">
-            <span class="settings-label" id="removeSpacesLabel">Remove Spaces in Output Names</span>
-            <label class="toggle-switch">
-              <input type="checkbox" id="removeSpacesCheck" aria-labelledby="removeSpacesLabel" />
-              <span class="toggle-slider"></span>
-            </label>
-          </div>
-
-          <div class="settings-row">
-            <span class="settings-label" id="autoCheckUpdatesLabel">Auto-check updates</span>
-            <label class="toggle-switch">
-              <input
-                type="checkbox"
-                id="autoCheckUpdatesCheck"
-                aria-labelledby="autoCheckUpdatesLabel"
-              />
-              <span class="toggle-slider"></span>
-            </label>
-          </div>
-
-          <div class="settings-row settings-row-last-in-group" id="updateChannelSetting">
-            <span class="settings-label">Channel</span>
-            <div class="settings-inline">
-              <select id="updateChannelSelect">
-                <option value="auto">Auto (follows version)</option>
-                <option value="stable">Stable</option>
-                <option value="beta">Beta</option>
+          <div
+            class="settings-panel is-active"
+            id="settingsGeneralPanel"
+            role="tabpanel"
+            aria-labelledby="settingsGeneralTab"
+          >
+            <div class="settings-row settings-row-appearance">
+              <span class="settings-label">Appearance</span>
+              <div class="theme-switcher" id="themeSwitcher">
+                <button class="theme-option" data-theme="system">
+                  <img
+                    src="../../assets/twemoji/1f4bb.svg"
+                    alt=""
+                    aria-hidden="true"
+                    class="theme-option-icon"
+                  />
+                  Auto
+                </button>
+                <button class="theme-option" data-theme="dark">
+                  <img
+                    src="../../assets/twemoji/1f319.svg"
+                    alt=""
+                    aria-hidden="true"
+                    class="theme-option-icon"
+                  />
+                  Dark
+                </button>
+                <button class="theme-option" data-theme="light">
+                  <img
+                    src="../../assets/twemoji/2600.svg"
+                    alt=""
+                    aria-hidden="true"
+                    class="theme-option-icon"
+                  />
+                  Light
+                </button>
+              </div>
+              <select id="themeSelect" style="display: none">
+                <option value="system">System</option>
+                <option value="dark">Dark</option>
+                <option value="light">Light</option>
               </select>
-              <button class="btn btn-secondary btn-xs" id="checkUpdateBtn">Check Now</button>
+            </div>
+
+            <div class="settings-row">
+              <span class="settings-label">Output</span>
+              <div class="settings-inline">
+                <span class="output-path" id="outputPath">Same as input file</span>
+                <button class="btn btn-secondary btn-xs" id="outputDirBtn">Change</button>
+              </div>
+            </div>
+
+            <div class="settings-row">
+              <span class="settings-label" id="useSystemFFmpegLabel">System FFmpeg</span>
+              <label class="toggle-switch">
+                <input
+                  type="checkbox"
+                  id="useSystemFFmpegCheck"
+                  aria-labelledby="useSystemFFmpegLabel"
+                />
+                <span class="toggle-slider"></span>
+              </label>
+            </div>
+
+            <div class="settings-row">
+              <span class="settings-label" id="debugOutputLabel">Debug Logs</span>
+              <label class="toggle-switch">
+                <input type="checkbox" id="debugOutputCheck" aria-labelledby="debugOutputLabel" />
+                <span class="toggle-slider"></span>
+              </label>
+            </div>
+
+            <div class="settings-row settings-row-last-in-group">
+              <span class="settings-label" id="advancedPresetsLabel">Advanced Presets</span>
+              <label class="toggle-switch">
+                <input
+                  type="checkbox"
+                  id="advancedPresetsCheck"
+                  aria-labelledby="advancedPresetsLabel"
+                />
+                <span class="toggle-slider"></span>
+              </label>
+            </div>
+
+            <div class="settings-row settings-row-last-in-group">
+              <span class="settings-label" id="removeSpacesLabel"
+                >Remove Spaces in Output Names</span
+              >
+              <label class="toggle-switch">
+                <input type="checkbox" id="removeSpacesCheck" aria-labelledby="removeSpacesLabel" />
+                <span class="toggle-slider"></span>
+              </label>
+            </div>
+
+            <div class="settings-row">
+              <span class="settings-label" id="autoCheckUpdatesLabel">Auto-check updates</span>
+              <label class="toggle-switch">
+                <input
+                  type="checkbox"
+                  id="autoCheckUpdatesCheck"
+                  aria-labelledby="autoCheckUpdatesLabel"
+                />
+                <span class="toggle-slider"></span>
+              </label>
+            </div>
+
+            <div class="settings-row settings-row-last-in-group" id="updateChannelSetting">
+              <span class="settings-label">Channel</span>
+              <div class="settings-inline">
+                <select id="updateChannelSelect">
+                  <option value="auto">Auto (follows version)</option>
+                  <option value="stable">Stable</option>
+                  <option value="beta">Beta</option>
+                </select>
+                <button class="btn btn-secondary btn-xs" id="checkUpdateBtn">Check Now</button>
+              </div>
+            </div>
+
+            <div class="settings-footer">
+              <div class="settings-footer-left">
+                <a href="#" id="versionLink"><span id="versionInfo">CONV2 v...</span></a>
+                <span class="about-divider">&middot;</span>
+                <a href="#" id="support-link">Support</a>
+                <span class="about-divider">&middot;</span>
+                <a href="#" id="help-link">Help</a>
+                <span class="about-divider">&middot;</span>
+                <a href="#" id="about-privacy">Privacy</a>
+                <span class="about-divider">&middot;</span>
+                <button class="btn-link" id="viewCreditsBtn">Credits</button>
+                <span class="about-divider">&middot;</span>
+                <span class="footer-attribution"
+                  >Made with
+                  <img
+                    src="../../assets/twemoji/2764.svg"
+                    aria-hidden="true"
+                    class="twemoji-inline"
+                  />
+                  by <a href="#" id="rosie-run">Rosie.run</a>
+                </span>
+              </div>
+              <button class="btn btn-danger btn-xs" id="resetSettingsBtn">Reset</button>
             </div>
           </div>
 
-          <div class="settings-footer">
-            <div class="settings-footer-left">
-              <a href="#" id="versionLink"><span id="versionInfo">CONV2 v...</span></a>
-              <span class="about-divider">&middot;</span>
-              <a href="#" id="support-link">Support</a>
-              <span class="about-divider">&middot;</span>
-              <a href="#" id="help-link">Help</a>
-              <span class="about-divider">&middot;</span>
-              <a href="#" id="about-privacy">Privacy</a>
-              <span class="about-divider">&middot;</span>
-              <button class="btn-link" id="viewCreditsBtn">Credits</button>
-              <span class="about-divider">&middot;</span>
-              <span class="footer-attribution"
-                >Made with
-                <img
-                  src="../../assets/twemoji/2764.svg"
-                  aria-hidden="true"
-                  class="twemoji-inline"
-                />
-                by <a href="#" id="rosie-run">Rosie.run</a>
-              </span>
+          <div
+            class="settings-panel"
+            id="settingsAdvancedFormatsPanel"
+            role="tabpanel"
+            aria-labelledby="settingsAdvancedFormatsTab"
+            hidden
+          >
+            <div class="format-tab-strip" role="tablist" aria-label="Advanced format settings">
+              <button
+                class="format-tab is-active"
+                id="formatTabGif"
+                data-format-panel="formatPanelGif"
+                role="tab"
+                aria-selected="true"
+              >
+                GIF
+              </button>
+              <button class="format-tab format-tab-disabled" id="formatTabAv1" disabled>
+                AV1
+                <span class="coming-soon-badge">Coming soon</span>
+              </button>
+              <button class="format-tab format-tab-disabled" id="formatTabH264" disabled>
+                H.264
+                <span class="coming-soon-badge">Coming soon</span>
+              </button>
+              <button class="format-tab format-tab-disabled" id="formatTabH265" disabled>
+                H.265
+                <span class="coming-soon-badge">Coming soon</span>
+              </button>
+              <button class="format-tab format-tab-disabled" id="formatTabAvi" disabled>
+                AVI
+                <span class="coming-soon-badge">Coming soon</span>
+              </button>
             </div>
-            <button class="btn btn-danger btn-xs" id="resetSettingsBtn">Reset</button>
+
+            <div
+              class="format-panel is-active"
+              id="formatPanelGif"
+              role="tabpanel"
+              aria-labelledby="formatTabGif"
+            >
+              <div class="advanced-format-header">
+                <h3>GIF Preset Tuning</h3>
+                <button class="btn btn-secondary btn-xs" id="resetGifDefaultsBtn">
+                  Reset GIF Defaults
+                </button>
+              </div>
+
+              <div class="advanced-format-row">
+                <label class="advanced-format-label" for="gifLoopModeSelect">Loop</label>
+                <select id="gifLoopModeSelect" class="advanced-format-select">
+                  <option value="forever">Forever</option>
+                  <option value="once">Once</option>
+                </select>
+              </div>
+
+              <div class="gif-tier-grid">
+                <div class="gif-tier-card">
+                  <h4>Best Quality</h4>
+                  <div class="gif-tier-fields">
+                    <label>
+                      FPS
+                      <input
+                        type="number"
+                        id="gifBestQualityFps"
+                        min="1"
+                        max="60"
+                        data-gif-tier="bestQuality"
+                        data-gif-field="fps"
+                      />
+                    </label>
+                    <label>
+                      Max Dimension
+                      <input
+                        type="number"
+                        id="gifBestQualityMaxDimension"
+                        min="160"
+                        max="2160"
+                        data-gif-tier="bestQuality"
+                        data-gif-field="maxDimension"
+                      />
+                    </label>
+                    <label>
+                      Max Colors
+                      <input
+                        type="number"
+                        id="gifBestQualityMaxColors"
+                        min="2"
+                        max="256"
+                        data-gif-tier="bestQuality"
+                        data-gif-field="maxColors"
+                      />
+                    </label>
+                    <label>
+                      Dither
+                      <select
+                        id="gifBestQualityDither"
+                        data-gif-tier="bestQuality"
+                        data-gif-field="dither"
+                      >
+                        <option value="sierra2_4a">Sierra 2-4A</option>
+                        <option value="floyd_steinberg">Floyd-Steinberg</option>
+                        <option value="bayer">Bayer</option>
+                        <option value="none">None</option>
+                      </select>
+                    </label>
+                  </div>
+                </div>
+
+                <div class="gif-tier-card">
+                  <h4>Quality</h4>
+                  <div class="gif-tier-fields">
+                    <label>
+                      FPS
+                      <input
+                        type="number"
+                        id="gifQualityFps"
+                        min="1"
+                        max="60"
+                        data-gif-tier="quality"
+                        data-gif-field="fps"
+                      />
+                    </label>
+                    <label>
+                      Max Dimension
+                      <input
+                        type="number"
+                        id="gifQualityMaxDimension"
+                        min="160"
+                        max="2160"
+                        data-gif-tier="quality"
+                        data-gif-field="maxDimension"
+                      />
+                    </label>
+                    <label>
+                      Max Colors
+                      <input
+                        type="number"
+                        id="gifQualityMaxColors"
+                        min="2"
+                        max="256"
+                        data-gif-tier="quality"
+                        data-gif-field="maxColors"
+                      />
+                    </label>
+                    <label>
+                      Dither
+                      <select id="gifQualityDither" data-gif-tier="quality" data-gif-field="dither">
+                        <option value="sierra2_4a">Sierra 2-4A</option>
+                        <option value="floyd_steinberg">Floyd-Steinberg</option>
+                        <option value="bayer">Bayer</option>
+                        <option value="none">None</option>
+                      </select>
+                    </label>
+                  </div>
+                </div>
+
+                <div class="gif-tier-card">
+                  <h4>Balanced</h4>
+                  <div class="gif-tier-fields">
+                    <label>
+                      FPS
+                      <input
+                        type="number"
+                        id="gifBalancedFps"
+                        min="1"
+                        max="60"
+                        data-gif-tier="balanced"
+                        data-gif-field="fps"
+                      />
+                    </label>
+                    <label>
+                      Max Dimension
+                      <input
+                        type="number"
+                        id="gifBalancedMaxDimension"
+                        min="160"
+                        max="2160"
+                        data-gif-tier="balanced"
+                        data-gif-field="maxDimension"
+                      />
+                    </label>
+                    <label>
+                      Max Colors
+                      <input
+                        type="number"
+                        id="gifBalancedMaxColors"
+                        min="2"
+                        max="256"
+                        data-gif-tier="balanced"
+                        data-gif-field="maxColors"
+                      />
+                    </label>
+                    <label>
+                      Dither
+                      <select
+                        id="gifBalancedDither"
+                        data-gif-tier="balanced"
+                        data-gif-field="dither"
+                      >
+                        <option value="sierra2_4a">Sierra 2-4A</option>
+                        <option value="floyd_steinberg">Floyd-Steinberg</option>
+                        <option value="bayer">Bayer</option>
+                        <option value="none">None</option>
+                      </select>
+                    </label>
+                  </div>
+                </div>
+
+                <div class="gif-tier-card">
+                  <h4>Best Compression</h4>
+                  <div class="gif-tier-fields">
+                    <label>
+                      FPS
+                      <input
+                        type="number"
+                        id="gifBestCompressionFps"
+                        min="1"
+                        max="60"
+                        data-gif-tier="bestCompression"
+                        data-gif-field="fps"
+                      />
+                    </label>
+                    <label>
+                      Max Dimension
+                      <input
+                        type="number"
+                        id="gifBestCompressionMaxDimension"
+                        min="160"
+                        max="2160"
+                        data-gif-tier="bestCompression"
+                        data-gif-field="maxDimension"
+                      />
+                    </label>
+                    <label>
+                      Max Colors
+                      <input
+                        type="number"
+                        id="gifBestCompressionMaxColors"
+                        min="2"
+                        max="256"
+                        data-gif-tier="bestCompression"
+                        data-gif-field="maxColors"
+                      />
+                    </label>
+                    <label>
+                      Dither
+                      <select
+                        id="gifBestCompressionDither"
+                        data-gif-tier="bestCompression"
+                        data-gif-field="dither"
+                      >
+                        <option value="sierra2_4a">Sierra 2-4A</option>
+                        <option value="floyd_steinberg">Floyd-Steinberg</option>
+                        <option value="bayer">Bayer</option>
+                        <option value="none">None</option>
+                      </select>
+                    </label>
+                  </div>
+                </div>
+              </div>
+            </div>
           </div>
         </div>
       </div>

@@ -3,6 +3,7 @@ import * as path from 'path';
 import * as fs from 'fs';
 import { GPUVendor, Preset } from './presets';
 import { getFFmpegPath, getFFprobePath } from './ffmpegPath';
+import { AdvancedFormatSettings } from './advancedFormats';
 
 export const GPU_ENCODERS: Record<string, Record<GPUVendor, string>> = {
   h264: {
@@ -102,6 +103,7 @@ export interface ConversionResult {
 
 export interface ConvertVideoOptions {
   removeSpacesFromOutputName?: boolean;
+  advancedFormatSettings?: AdvancedFormatSettings;
 }
 
 export interface VideoInfo {
@@ -683,9 +685,12 @@ export const convertVideo = async (
 
   const isVideoPreset = ['av1', 'h264', 'h265'].includes(preset.category);
   const decodeArgs = isVideoPreset ? await getHardwareDecodeArgs(gpu, inputCodec) : [];
+  const presetContext = options.advancedFormatSettings
+    ? { advancedFormatSettings: options.advancedFormatSettings }
+    : undefined;
   const presetArgs = ensureMp4PlaybackCompatibilityArgs(
     preset,
-    preset.getArgs(inputPath, outputPath, gpu)
+    preset.getArgs(inputPath, outputPath, gpu, presetContext)
   );
   const args = ['-y', '-progress', 'pipe:1', ...decodeArgs, ...presetArgs];
 

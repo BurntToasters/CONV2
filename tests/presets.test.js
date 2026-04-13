@@ -1,7 +1,12 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
-const { presets, getPresetById } = require('../dist/main/presets.js');
+const {
+  presets,
+  getPresetById,
+  ADVANCED_PRESET_CATEGORIES,
+  getVisiblePresetCategories,
+} = require('../dist/main/presets.js');
 const { GPU_ENCODERS } = require('../dist/main/ffmpeg.js');
 
 const videoCategories = new Set(['av1', 'h264', 'h265']);
@@ -53,4 +58,19 @@ test('preset args end with the output path', () => {
     const args = preset.getArgs('input.mp4', output, 'cpu');
     assert.equal(args[args.length - 1], output);
   }
+});
+
+test('gif presets exist with expected order and extension', () => {
+  const gifPresets = presets.filter((preset) => preset.category === 'gif');
+  assert.deepEqual(
+    gifPresets.map((preset) => preset.id),
+    ['gif-best-quality', 'gif-quality', 'gif-balanced', 'gif-best-compression']
+  );
+  assert.ok(gifPresets.every((preset) => preset.extension === 'gif'));
+});
+
+test('gif category only appears when advanced presets are enabled', () => {
+  assert.ok(ADVANCED_PRESET_CATEGORIES.includes('gif'));
+  assert.equal(getVisiblePresetCategories(false).includes('gif'), false);
+  assert.equal(getVisiblePresetCategories(true).includes('gif'), true);
 });

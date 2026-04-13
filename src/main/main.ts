@@ -12,6 +12,12 @@ import * as path from 'path';
 import * as fs from 'fs';
 import { presets, getPresetById, GPUVendor } from './presets';
 import {
+  AdvancedFormatSettings,
+  createDefaultAdvancedFormatSettings,
+  mergeAdvancedFormatSettings,
+  normalizeAdvancedFormatSettings,
+} from './advancedFormats';
+import {
   convertVideo,
   cancelConversion,
   checkFFmpegInstalled,
@@ -65,9 +71,10 @@ interface AppSettings {
   updateChannel: 'auto' | 'stable' | 'beta';
   showAdvancedPresets: boolean;
   removeSpacesFromFilenames: boolean;
+  advancedFormatSettings: AdvancedFormatSettings;
 }
 
-const defaultSettings: AppSettings = {
+const createDefaultSettings = (): AppSettings => ({
   outputDirectory: '',
   gpu: 'cpu',
   theme: 'system',
@@ -77,7 +84,8 @@ const defaultSettings: AppSettings = {
   updateChannel: 'auto',
   showAdvancedPresets: false,
   removeSpacesFromFilenames: false,
-};
+  advancedFormatSettings: createDefaultAdvancedFormatSettings(),
+});
 
 const normalizeUpdateChannel = (value: unknown): AppSettings['updateChannel'] => {
   return value === 'stable' || value === 'beta' || value === 'auto' ? value : 'auto';
@@ -98,21 +106,26 @@ const normalizeTheme = (value: unknown): AppSettings['theme'] => {
 };
 
 const normalizeSettings = (value: unknown): AppSettings => {
+  const defaults = createDefaultSettings();
   const incoming =
     value && typeof value === 'object'
       ? (value as Partial<Record<keyof AppSettings, unknown>>)
       : {};
 
   return {
-    outputDirectory: typeof incoming.outputDirectory === 'string' ? incoming.outputDirectory : '',
-    gpu: normalizeGpuVendor(incoming.gpu),
-    theme: normalizeTheme(incoming.theme),
+    outputDirectory:
+      typeof incoming.outputDirectory === 'string'
+        ? incoming.outputDirectory
+        : defaults.outputDirectory,
+    gpu: normalizeGpuVendor(incoming.gpu ?? defaults.gpu),
+    theme: normalizeTheme(incoming.theme ?? defaults.theme),
     showDebugOutput: incoming.showDebugOutput === true,
     autoCheckUpdates: incoming.autoCheckUpdates !== false,
     useSystemFFmpeg: incoming.useSystemFFmpeg === true,
-    updateChannel: normalizeUpdateChannel(incoming.updateChannel),
+    updateChannel: normalizeUpdateChannel(incoming.updateChannel ?? defaults.updateChannel),
     showAdvancedPresets: incoming.showAdvancedPresets === true,
     removeSpacesFromFilenames: incoming.removeSpacesFromFilenames === true,
+    advancedFormatSettings: normalizeAdvancedFormatSettings(incoming.advancedFormatSettings),
   };
 };
 
@@ -128,7 +141,7 @@ const assertTrustedIpcSender = (event: IpcMainInvokeEvent): void => {
 };
 
 let mainWindow: BrowserWindow | null = null;
-let settings: AppSettings = { ...defaultSettings };
+let settings: AppSettings = createDefaultSettings();
 
 const getSettingsPath = (): string => {
   const userDataPath = app.getPath('userData');
@@ -140,10 +153,10 @@ const loadSettings = (): void => {
     const settingsPath = getSettingsPath();
     if (fs.existsSync(settingsPath)) {
       const data = fs.readFileSync(settingsPath, 'utf-8');
-      settings = normalizeSettings({ ...defaultSettings, ...JSON.parse(data) });
+      settings = normalizeSettings(JSON.parse(data));
     }
   } catch {
-    settings = { ...defaultSettings };
+    settings = createDefaultSettings();
   }
   setUpdateChannel(settings.updateChannel);
   setUseSystemFFmpeg(settings.useSystemFFmpeg);
@@ -371,6 +384,7 @@ ipcMain.handle(
         {
           removeSpacesFromOutputName:
             options?.removeSpacesFromFilenames ?? settings.removeSpacesFromFilenames,
+          advancedFormatSettings: settings.advancedFormatSettings,
         }
       );
     } catch (err) {
@@ -431,11 +445,25 @@ ipcMain.handle('get-settings', () => {
 });
 
 ipcMain.handle('save-settings', (_, newSettings: Partial<AppSettings>) => {
+  const incomingSettings = newSettings as Partial<Record<keyof AppSettings, unknown>>;
   const nextUpdateChannel =
     newSettings.updateChannel !== undefined
       ? normalizeUpdateChannel(newSettings.updateChannel)
       : settings.updateChannel;
-  settings = normalizeSettings({ ...settings, ...newSettings, updateChannel: nextUpdateChannel });
+  const nextAdvancedFormatSettings =
+    incomingSettings.advancedFormatSettings === undefined
+      ? settings.advancedFormatSettings
+      : mergeAdvancedFormatSettings(
+          settings.advancedFormatSettings,
+          incomingSettings.advancedFormatSettings
+        );
+
+  settings = normalizeSettings({
+    ...settings,
+    ...newSettings,
+    updateChannel: nextUpdateChannel,
+    advancedFormatSettings: nextAdvancedFormatSettings,
+  });
   saveSettings();
   if (newSettings.updateChannel !== undefined) {
     setUpdateChannel(nextUpdateChannel);
@@ -499,7 +527,7 @@ ipcMain.handle('get-system-theme', () => {
 });
 
 ipcMain.handle('reset-settings', () => {
-  settings = { ...defaultSettings };
+  settings = createDefaultSettings();
   setUpdateChannel(settings.updateChannel);
   setUseSystemFFmpeg(settings.useSystemFFmpeg);
   clearFFmpegCaches();

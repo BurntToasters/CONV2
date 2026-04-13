@@ -1,4 +1,5 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron';
+import type { AdvancedFormatSettings } from './advancedFormats';
 
 export interface ConversionProgress {
   percent: number;
@@ -25,6 +26,7 @@ export interface AppSettings {
   updateChannel: 'auto' | 'stable' | 'beta';
   showAdvancedPresets: boolean;
   removeSpacesFromFilenames: boolean;
+  advancedFormatSettings: AdvancedFormatSettings;
 }
 
 export interface VideoInfo {

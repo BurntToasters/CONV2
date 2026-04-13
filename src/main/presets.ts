@@ -1,12 +1,28 @@
+import {
+  AdvancedFormatSettings,
+  GifTierCollection,
+  createDefaultAdvancedFormatSettings,
+} from './advancedFormats';
+
 export type GPUVendor = 'nvidia' | 'amd' | 'intel' | 'apple' | 'cpu';
+export type PresetCategory = 'av1' | 'h264' | 'h265' | 'avi' | 'gif' | 'remux' | 'audio' | 'custom';
+
+export interface PresetContext {
+  advancedFormatSettings?: AdvancedFormatSettings;
+}
 
 export interface Preset {
   id: string;
   name: string;
   description: string;
-  category: 'av1' | 'h264' | 'h265' | 'avi' | 'remux' | 'audio' | 'custom';
+  category: PresetCategory;
   extension: string;
-  getArgs: (inputFile: string, outputFile: string, gpu: GPUVendor) => string[];
+  getArgs: (
+    inputFile: string,
+    outputFile: string,
+    gpu: GPUVendor,
+    context?: PresetContext
+  ) => string[];
 }
 
 const getVideoEncoder = (codec: 'h264' | 'h265' | 'av1', gpu: GPUVendor): string => {
@@ -34,6 +50,70 @@ const getVideoEncoder = (codec: 'h264' | 'h265' | 'av1', gpu: GPUVendor): string
     },
   };
   return encoders[codec][gpu];
+};
+
+const defaultAdvancedFormatSettings = createDefaultAdvancedFormatSettings();
+
+const getGifTierSettings = (tier: keyof GifTierCollection, context?: PresetContext) => {
+  const defaults = defaultAdvancedFormatSettings.gif.tiers[tier];
+  const custom = context?.advancedFormatSettings?.gif?.tiers?.[tier];
+  if (!custom) {
+    return defaults;
+  }
+  return {
+    fps: custom.fps,
+    maxDimension: custom.maxDimension,
+    maxColors: custom.maxColors,
+    dither: custom.dither,
+  };
+};
+
+const getGifLoopArg = (context?: PresetContext): string => {
+  return context?.advancedFormatSettings?.gif?.loopMode === 'once' ? '-1' : '0';
+};
+
+const getGifPaletteArgs = (
+  input: string,
+  output: string,
+  tier: keyof GifTierCollection,
+  context?: PresetContext
+): string[] => {
+  const tierSettings = getGifTierSettings(tier, context);
+  const loop = getGifLoopArg(context);
+  const filter = `[0:v]fps=${tierSettings.fps},scale=${tierSettings.maxDimension}:${tierSettings.maxDimension}:flags=lanczos:force_original_aspect_ratio=decrease,split[v0][v1];[v0]palettegen=max_colors=${tierSettings.maxColors}[palette];[v1][palette]paletteuse=dither=${tierSettings.dither}[gifout]`;
+
+  return [
+    '-i',
+    input,
+    '-filter_complex',
+    filter,
+    '-map',
+    '[gifout]',
+    '-an',
+    '-sn',
+    '-dn',
+    '-loop',
+    loop,
+    output,
+  ];
+};
+
+export const PRESET_CATEGORY_ORDER: PresetCategory[] = [
+  'av1',
+  'h264',
+  'h265',
+  'avi',
+  'gif',
+  'remux',
+  'audio',
+];
+
+export const ADVANCED_PRESET_CATEGORIES: PresetCategory[] = ['avi', 'gif'];
+
+export const getVisiblePresetCategories = (showAdvancedPresets: boolean): PresetCategory[] => {
+  return PRESET_CATEGORY_ORDER.filter(
+    (category) => showAdvancedPresets || !ADVANCED_PRESET_CATEGORIES.includes(category)
+  );
 };
 
 export const presets: Preset[] = [
@@ -475,6 +555,43 @@ export const presets: Preset[] = [
       }
       return ['-i', input, '-c:v', encoder, '-cq', '20', '-c:a', 'aac', '-b:a', '192k', output];
     },
+  },
+
+  // GIF Presets
+  {
+    id: 'gif-best-quality',
+    name: 'GIF - Best Quality',
+    description: 'Maximum GIF quality with highest color detail',
+    category: 'gif',
+    extension: 'gif',
+    getArgs: (input, output, _gpu, context) =>
+      getGifPaletteArgs(input, output, 'bestQuality', context),
+  },
+  {
+    id: 'gif-quality',
+    name: 'GIF - Quality',
+    description: 'High quality GIF with smaller file size',
+    category: 'gif',
+    extension: 'gif',
+    getArgs: (input, output, _gpu, context) => getGifPaletteArgs(input, output, 'quality', context),
+  },
+  {
+    id: 'gif-balanced',
+    name: 'GIF - Balanced',
+    description: 'Balanced GIF output for quality and compression',
+    category: 'gif',
+    extension: 'gif',
+    getArgs: (input, output, _gpu, context) =>
+      getGifPaletteArgs(input, output, 'balanced', context),
+  },
+  {
+    id: 'gif-best-compression',
+    name: 'GIF - Best Compression',
+    description: 'Smallest GIF size with comparable quality',
+    category: 'gif',
+    extension: 'gif',
+    getArgs: (input, output, _gpu, context) =>
+      getGifPaletteArgs(input, output, 'bestCompression', context),
   },
 
   // Remux Presets
