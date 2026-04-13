@@ -13,6 +13,7 @@ interface AppSettings {
   autoCheckUpdates: boolean;
   useSystemFFmpeg: boolean;
   updateChannel: 'auto' | 'stable' | 'beta';
+  showAdvancedPresets: boolean;
 }
 
 interface VideoInfo {
@@ -114,6 +115,7 @@ const elements = {
   closeCredits: document.getElementById('closeCredits') as HTMLButtonElement,
   licensesList: document.getElementById('licensesList') as HTMLDivElement,
   debugOutputCheck: document.getElementById('debugOutputCheck') as HTMLInputElement,
+  advancedPresetsCheck: document.getElementById('advancedPresetsCheck') as HTMLInputElement,
   useSystemFFmpegCheck: document.getElementById('useSystemFFmpegCheck') as HTMLInputElement,
   showLogsBtn: document.getElementById('showLogsBtn') as HTMLButtonElement,
   logsModal: document.getElementById('logsModal') as HTMLDivElement,
@@ -399,6 +401,7 @@ const loadSettings = async () => {
   elements.gpuSelect.value = settings.gpu;
   elements.themeSelect.value = settings.theme;
   elements.debugOutputCheck.checked = settings.showDebugOutput;
+  elements.advancedPresetsCheck.checked = settings.showAdvancedPresets;
   elements.autoCheckUpdatesCheck.checked = settings.autoCheckUpdates;
   elements.useSystemFFmpegCheck.checked = settings.useSystemFFmpeg;
   elements.updateChannelSelect.value = settings.updateChannel;
@@ -420,11 +423,15 @@ const loadPresets = async () => {
   presets = await window.electronAPI.getPresets();
   elements.presetSelect.innerHTML = '';
 
-  const categories = ['av1', 'h264', 'h265', 'remux', 'audio'];
+  const advancedCategories = ['avi'];
+  const categories = ['av1', 'h264', 'h265', 'avi', 'remux', 'audio'].filter(
+    (cat) => settings.showAdvancedPresets || !advancedCategories.includes(cat)
+  );
   const categoryNames: Record<string, string> = {
     av1: 'AV1',
     h264: 'H.264',
     h265: 'H.265/HEVC',
+    avi: 'AVI',
     remux: 'Remux',
     audio: 'Audio',
   };
@@ -629,6 +636,12 @@ const setupEventListeners = () => {
     settings.showDebugOutput = elements.debugOutputCheck.checked;
     await window.electronAPI.saveSettings({ showDebugOutput: settings.showDebugOutput });
     elements.showLogsBtn.style.display = settings.showDebugOutput ? 'inline-block' : 'none';
+  });
+
+  elements.advancedPresetsCheck.addEventListener('change', async () => {
+    settings.showAdvancedPresets = elements.advancedPresetsCheck.checked;
+    await window.electronAPI.saveSettings({ showAdvancedPresets: settings.showAdvancedPresets });
+    await loadPresets();
   });
 
   elements.autoCheckUpdatesCheck.addEventListener('change', async () => {

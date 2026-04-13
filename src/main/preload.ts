@@ -17,6 +17,7 @@ export interface AppSettings {
   autoCheckUpdates: boolean;
   useSystemFFmpeg: boolean;
   updateChannel: 'auto' | 'stable' | 'beta';
+  showAdvancedPresets: boolean;
 }
 
 export interface VideoInfo {

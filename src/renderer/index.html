@@ -223,8 +223,8 @@
         </div>
 
         <div class="settings-content">
-          <div class="settings-section">
-            <div class="settings-section-title">Appearance</div>
+          <div class="settings-row settings-row-appearance">
+            <span class="settings-label">Appearance</span>
             <div class="theme-switcher" id="themeSwitcher">
               <button class="theme-option" data-theme="system">
                 <img
@@ -261,140 +261,81 @@
             </select>
           </div>
 
-          <div class="settings-section">
-            <div class="settings-section-title">Output</div>
-            <div class="setting-row">
+          <div class="settings-row">
+            <span class="settings-label">Output</span>
+            <div class="settings-inline">
               <span class="output-path" id="outputPath">Same as input file</span>
               <button class="btn btn-secondary btn-xs" id="outputDirBtn">Change</button>
             </div>
           </div>
 
-          <div class="settings-section">
-            <div class="settings-section-title">FFmpeg</div>
-            <div class="setting-toggle-row">
-              <div class="setting-toggle-info">
-                <span class="setting-toggle-label">Use System FFmpeg</span>
-                <span class="setting-toggle-description"
-                  >Use system-installed FFmpeg instead of bundled</span
-                >
-              </div>
-              <label class="toggle-switch">
-                <input type="checkbox" id="useSystemFFmpegCheck" />
-                <span class="toggle-slider"></span>
-              </label>
-            </div>
+          <div class="settings-row">
+            <span class="settings-label">System FFmpeg</span>
+            <label class="toggle-switch">
+              <input type="checkbox" id="useSystemFFmpegCheck" />
+              <span class="toggle-slider"></span>
+            </label>
           </div>
 
-          <div class="settings-section">
-            <div class="settings-section-title">Developer</div>
-            <div class="setting-toggle-row">
-              <div class="setting-toggle-info">
-                <span class="setting-toggle-label">Show Debug Output</span>
-                <span class="setting-toggle-description"
-                  >Display FFmpeg log output during conversion</span
-                >
-              </div>
-              <label class="toggle-switch">
-                <input type="checkbox" id="debugOutputCheck" />
-                <span class="toggle-slider"></span>
-              </label>
-            </div>
+          <div class="settings-row">
+            <span class="settings-label">Debug Logs</span>
+            <label class="toggle-switch">
+              <input type="checkbox" id="debugOutputCheck" />
+              <span class="toggle-slider"></span>
+            </label>
           </div>
 
-          <div class="settings-section">
-            <div class="settings-section-title">Updates</div>
-            <div class="setting-toggle-row">
-              <div class="setting-toggle-info">
-                <span class="setting-toggle-label">Auto-check for updates</span>
-                <span class="setting-toggle-description">Check for new versions on startup</span>
-              </div>
-              <label class="toggle-switch">
-                <input type="checkbox" id="autoCheckUpdatesCheck" />
-                <span class="toggle-slider"></span>
-              </label>
-            </div>
-            <div class="setting-field" id="updateChannelSetting">
-              <label class="setting-field-label" for="updateChannelSelect">Channel</label>
+          <div class="settings-row settings-row-last-in-group">
+            <span class="settings-label">Advanced Presets</span>
+            <label class="toggle-switch">
+              <input type="checkbox" id="advancedPresetsCheck" />
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
+
+          <div class="settings-row">
+            <span class="settings-label">Auto-check updates</span>
+            <label class="toggle-switch">
+              <input type="checkbox" id="autoCheckUpdatesCheck" />
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
+
+          <div class="settings-row settings-row-last-in-group" id="updateChannelSetting">
+            <span class="settings-label">Channel</span>
+            <div class="settings-inline">
               <select id="updateChannelSelect">
                 <option value="auto">Auto (follows version)</option>
                 <option value="stable">Stable</option>
                 <option value="beta">Beta</option>
               </select>
+              <button class="btn btn-secondary btn-xs" id="checkUpdateBtn">Check Now</button>
             </div>
-            <button class="btn btn-secondary btn-sm" id="checkUpdateBtn">
-              <svg
-                class="btn-icon"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="2"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-              >
-                <polyline points="23 4 23 10 17 10" />
-                <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" />
-              </svg>
-              Check Now
-            </button>
           </div>
 
-          <div class="settings-section">
-            <div class="settings-section-title">About</div>
-            <div class="about-content">
+          <div class="settings-footer">
+            <div class="settings-footer-left">
               <a href="#" id="versionLink"><span id="versionInfo">CONV2 v...</span></a>
-              <div class="about-links">
-                <a href="#" id="support-link">Support</a>
-                <span class="about-divider">&middot;</span>
-                <a href="#" id="help-link">Help</a>
-                <span class="about-divider">&middot;</span>
-                <a href="#" id="about-privacy">Privacy</a>
-              </div>
-              <button class="btn btn-secondary btn-xs" id="viewCreditsBtn">
-                <svg
-                  class="btn-icon"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  stroke-width="2"
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                >
-                  <circle cx="12" cy="12" r="10" />
-                  <line x1="12" y1="16" x2="12" y2="12" />
-                  <line x1="12" y1="8" x2="12.01" y2="8" />
-                </svg>
-                Licenses &amp; Credits
-              </button>
-              <div class="about-attribution">
-                Made with
+              <span class="about-divider">&middot;</span>
+              <a href="#" id="support-link">Support</a>
+              <span class="about-divider">&middot;</span>
+              <a href="#" id="help-link">Help</a>
+              <span class="about-divider">&middot;</span>
+              <a href="#" id="about-privacy">Privacy</a>
+              <span class="about-divider">&middot;</span>
+              <button class="btn-link" id="viewCreditsBtn">Credits</button>
+              <span class="about-divider">&middot;</span>
+              <span class="footer-attribution"
+                >Made with
                 <img
                   src="../../assets/twemoji/2764.svg"
-                  alt=""
                   aria-hidden="true"
                   class="twemoji-inline"
                 />
-                by BurntToasters/<a href="#" id="rosie-run">Rosie.run</a>
-              </div>
+                by <a href="#" id="rosie-run">Rosie.run</a>
+              </span>
             </div>
-          </div>
-
-          <div class="settings-section settings-danger-zone">
-            <div class="settings-section-title">Danger Zone</div>
-            <button class="btn btn-danger btn-sm full-width" id="resetSettingsBtn">
-              <svg
-                class="btn-icon"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="2"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-              >
-                <polyline points="1 4 1 10 7 10" />
-                <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10" />
-              </svg>
-              Reset All Settings
-            </button>
+            <button class="btn btn-danger btn-xs" id="resetSettingsBtn">Reset</button>
           </div>
         </div>
       </div>
@@ -480,6 +421,7 @@
       </div>
     </div>
 
+    <script src="exports-shim.js"></script>
     <script src="renderer.js"></script>
   </body>
 </html>

@@ -52,6 +52,7 @@ interface AppSettings {
   autoCheckUpdates: boolean;
   useSystemFFmpeg: boolean;
   updateChannel: 'auto' | 'stable' | 'beta';
+  showAdvancedPresets: boolean;
 }
 
 const defaultSettings: AppSettings = {
@@ -62,6 +63,7 @@ const defaultSettings: AppSettings = {
   autoCheckUpdates: true,
   useSystemFFmpeg: false,
   updateChannel: 'auto',
+  showAdvancedPresets: false,
 };
 
 const normalizeUpdateChannel = (value: unknown): AppSettings['updateChannel'] => {
@@ -142,7 +144,10 @@ const createWindow = (): void => {
   mainWindow.once('ready-to-show', () => {
     mainWindow?.show();
 
-    // Auto-check for updates if enabled and app is packaged
+    if (process.argv.includes('--dev')) {
+      mainWindow?.webContents.openDevTools({ mode: 'detach' });
+    }
+
     if (app.isPackaged && settings.autoCheckUpdates) {
       setTimeout(() => {
         checkForUpdatesSilent();
