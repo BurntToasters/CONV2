@@ -596,6 +596,39 @@ const parseProgress = (line: string, totalDuration: number): ConversionProgress 
   return null;
 };
 
+export const ensureMp4PlaybackCompatibilityArgs = (
+  preset: Preset,
+  presetArgs: string[]
+): string[] => {
+  if (preset.extension !== 'mp4' || presetArgs.length === 0) {
+    return presetArgs;
+  }
+
+  const outputArg = presetArgs[presetArgs.length - 1];
+  const argsWithoutOutput = [...presetArgs.slice(0, -1)];
+
+  const movflagsIndex = argsWithoutOutput.findIndex((arg) => arg === '-movflags');
+  if (movflagsIndex >= 0 && movflagsIndex + 1 < argsWithoutOutput.length) {
+    const currentFlags = argsWithoutOutput[movflagsIndex + 1];
+    if (!/\bfaststart\b/.test(currentFlags)) {
+      argsWithoutOutput[movflagsIndex + 1] = `${currentFlags}+faststart`;
+    }
+  } else {
+    argsWithoutOutput.push('-movflags', '+faststart');
+  }
+
+  if (preset.category === 'h265') {
+    const hasHvc1Tag = argsWithoutOutput.some(
+      (arg, index) => arg === '-tag:v' && argsWithoutOutput[index + 1] === 'hvc1'
+    );
+    if (!hasHvc1Tag) {
+      argsWithoutOutput.push('-tag:v', 'hvc1');
+    }
+  }
+
+  return [...argsWithoutOutput, outputArg];
+};
+
 export const convertVideo = async (
   inputPath: string,
   outputDir: string,
@@ -623,12 +656,16 @@ export const convertVideo = async (
 
   const isVideoPreset = ['av1', 'h264', 'h265'].includes(preset.category);
   const decodeArgs = isVideoPreset ? await getHardwareDecodeArgs(gpu, inputCodec) : [];
+  const presetArgs = ensureMp4PlaybackCompatibilityArgs(
+    preset,
+    preset.getArgs(inputPath, outputPath, gpu)
+  );
   const args = [
     '-y',
     '-progress',
     'pipe:1',
     ...decodeArgs,
-    ...preset.getArgs(inputPath, outputPath, gpu),
+    ...presetArgs,
   ];
 
   if (onLog) {
