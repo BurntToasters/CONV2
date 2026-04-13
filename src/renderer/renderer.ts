@@ -86,7 +86,6 @@ const elements = {
   cancelBtn: document.getElementById('cancelBtn') as HTMLButtonElement,
   progressContainer: document.getElementById('progressContainer') as HTMLDivElement,
   progressFill: document.getElementById('progressFill') as HTMLDivElement,
-  progressGlow: document.getElementById('progressGlow') as HTMLDivElement,
   progressPercent: document.getElementById('progressPercent') as HTMLSpanElement,
   progressTime: document.getElementById('progressTime') as HTMLSpanElement,
   progressEta: document.getElementById('progressEta') as HTMLSpanElement,
@@ -203,7 +202,6 @@ const showModal = (options: ModalOptions): void => {
   });
 
   modal.addEventListener('click', overlayListener);
-
   modal.classList.add('visible');
 };
 
@@ -501,7 +499,6 @@ const applyTheme = async () => {
 
 const setupKeyboardShortcuts = () => {
   document.addEventListener('keydown', (e) => {
-    // Escape - close modals
     if (e.key === 'Escape') {
       if (elements.settingsModal.classList.contains('visible')) {
         elements.settingsModal.classList.remove('visible');
@@ -514,13 +511,11 @@ const setupKeyboardShortcuts = () => {
       }
     }
 
-    // Ctrl/Cmd + O - open file
     if ((e.ctrlKey || e.metaKey) && e.key === 'o') {
       e.preventDefault();
       elements.fileInput.click();
     }
 
-    // Enter - start conversion (when file selected and not converting)
     if (e.key === 'Enter' && !e.ctrlKey && !e.metaKey) {
       const isModalOpen =
         elements.settingsModal.classList.contains('visible') ||
@@ -688,7 +683,6 @@ const setupEventListeners = () => {
     }
   });
 
-  // Logs listeners
   elements.showLogsBtn.addEventListener('click', () => {
     elements.logsModal.classList.add('visible');
   });
@@ -803,11 +797,9 @@ const setupEventListeners = () => {
 
   window.electronAPI.onConversionProgress((progress) => {
     elements.progressFill.style.width = `${progress.percent}%`;
-    elements.progressGlow.style.width = `${progress.percent}%`;
     elements.progressPercent.textContent = `${Math.floor(progress.percent)}%`;
     elements.progressTime.textContent = progress.time;
 
-    // Calculate ETA
     if (progress.percent > 0 && conversionStartTime > 0) {
       const elapsed = (Date.now() - conversionStartTime) / 1000;
       const estimatedTotal = elapsed / (progress.percent / 100);
@@ -817,7 +809,6 @@ const setupEventListeners = () => {
       }
     }
 
-    // Show speed
     if (progress.fps > 0) {
       elements.progressSpeed.textContent = `${progress.fps.toFixed(1)} fps`;
     } else if (progress.speed !== 'N/A') {
@@ -887,7 +878,7 @@ const showGPUErrorModal = (error: GPUEncoderError): void => {
   titleEl.textContent = 'GPU Encoding Error';
 
   bodyEl.innerHTML = `
-    <strong style="color: var(--danger-color);">${error.message}</strong>
+    <strong style="color: var(--error);">${error.message}</strong>
     <div style="margin-top: 12px; white-space: pre-line; opacity: 0.85; font-size: 0.9em;">${error.details}</div>
     <div style="margin-top: 12px; padding: 8px 12px; background: var(--bg-tertiary); border-radius: 6px; font-size: 0.9em;">
       <strong>Suggestion:</strong> ${error.suggestion}
@@ -942,7 +933,6 @@ const showGPUErrorModal = (error: GPUEncoderError): void => {
   });
 
   modal.addEventListener('click', overlayListener);
-
   modal.classList.add('visible');
 };
 
@@ -951,7 +941,6 @@ const handleFileSelect = async (filePath: string) => {
   const fileName = filePath.split(/[/\\]/).pop() || filePath;
   elements.fileName.textContent = fileName;
 
-  // Get file info
   const info = await window.electronAPI.getFileInfo(filePath);
   if (info) {
     selectedFileInfo = info;
@@ -966,7 +955,7 @@ const handleFileSelect = async (filePath: string) => {
     if (info.duration > 0) {
       details.push(formatDuration(info.duration));
     }
-    elements.fileDetails.textContent = details.join(' • ');
+    elements.fileDetails.textContent = details.join(' \u2022 ');
   } else {
     elements.fileDetails.textContent = '';
   }
@@ -986,14 +975,12 @@ const startConversion = async () => {
   elements.cancelBtn.style.display = 'none';
   elements.progressContainer.classList.add('visible');
   elements.progressFill.style.width = '0%';
-  elements.progressGlow.style.width = '0%';
   elements.progressPercent.textContent = '0%';
   elements.progressTime.textContent = '00:00:00';
   elements.progressEta.textContent = '';
   elements.progressSpeed.textContent = '';
   elements.showInFolderBtn.style.display = 'none';
 
-  // Clear logs
   elements.logsContent.textContent = '';
 
   hideStatus();

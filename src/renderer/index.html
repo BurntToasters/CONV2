@@ -9,10 +9,10 @@
     />
     <title>CONV2</title>
     <link rel="stylesheet" href="main.css" />
-    <link rel="stylesheet" href="extra.css" />
+    <link rel="stylesheet" href="settings.css" />
   </head>
   <body>
-    <div class="container">
+    <div class="app">
       <header>
         <div class="logo">
           <img src="../../assets/icon.png" alt="CONV2" />
@@ -30,17 +30,95 @@
         </div>
       </header>
 
-      <div class="ffmpeg-warning" id="ffmpegWarning" style="display: none">
-        <h3>FFmpeg Not Found</h3>
-        <p>Please install FFmpeg and add it to your system PATH to use CONV2.</p>
-      </div>
+      <div class="workspace">
+        <div class="ffmpeg-warning" id="ffmpegWarning" style="display: none">
+          <h3>FFmpeg Not Found</h3>
+          <p>Please install FFmpeg and add it to your system PATH to use CONV2.</p>
+        </div>
 
-      <div class="drop-zone" id="dropZone">
-        <div class="drop-zone-content">
-          <img src="../../assets/twemoji/1f3ac.svg" alt="Video" class="drop-zone-icon" />
-          <p class="drop-zone-title">Drop your video here</p>
-          <p class="drop-zone-subtitle">or click to browse files</p>
-          <button class="btn btn-secondary">
+        <div class="drop-zone" id="dropZone">
+          <div class="drop-zone-content">
+            <img src="../../assets/twemoji/1f3ac.svg" alt="Video" class="drop-zone-icon" />
+            <p class="drop-zone-title">Drop your video here</p>
+            <p class="drop-zone-subtitle">or click to browse files</p>
+            <button class="btn btn-secondary">
+              <svg
+                class="btn-icon"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              >
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                <polyline points="17 8 12 3 7 8" />
+                <line x1="12" y1="3" x2="12" y2="15" />
+              </svg>
+              Browse Files
+            </button>
+          </div>
+          <input type="file" id="fileInput" accept="video/*" hidden />
+        </div>
+
+        <div class="card file-info" id="fileInfo">
+          <div class="file-info-content">
+            <span class="filename" id="fileName"></span>
+            <span class="file-details" id="fileDetails"></span>
+          </div>
+        </div>
+
+        <div class="options-panel">
+          <div class="option-group">
+            <label for="presetSelect">Conversion Preset</label>
+            <select id="presetSelect"></select>
+          </div>
+          <div class="option-group">
+            <label for="gpuSelect">Hardware Acceleration</label>
+            <select id="gpuSelect">
+              <option value="cpu" title="Uses CPU for encoding. Slower but always available.">
+                CPU (Software)
+              </option>
+              <option
+                value="apple"
+                hidden
+                title="Apple VideoToolbox. Requires Apple Silicon (M1/M2/M3) or Intel Mac with T2."
+              >
+                Apple Silicon (VideoToolbox)
+              </option>
+              <option value="nvidia" title="NVIDIA NVENC. Requires NVIDIA GPU with NVENC support.">
+                NVIDIA (NVENC)
+              </option>
+              <option value="amd" title="AMD AMF. Requires AMD GPU with AMF support.">
+                AMD (AMF)
+              </option>
+              <option
+                value="intel"
+                title="Intel Quick Sync. Requires Intel CPU/GPU with QSV support."
+              >
+                Intel (Quick Sync)
+              </option>
+            </select>
+            <span class="option-hint">Select GPU for faster encoding if available</span>
+          </div>
+        </div>
+
+        <div class="convert-section">
+          <button class="btn btn-primary" id="convertBtn" disabled>
+            <svg
+              class="btn-icon"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2.5"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <polygon points="5 3 19 12 5 21 5 3" />
+            </svg>
+            Convert
+          </button>
+          <button class="btn btn-secondary" id="cancelBtn" style="display: none">
             <svg
               class="btn-icon"
               viewBox="0 0 24 24"
@@ -50,150 +128,73 @@
               stroke-linecap="round"
               stroke-linejoin="round"
             >
-              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-              <polyline points="17 8 12 3 7 8" />
-              <line x1="12" y1="3" x2="12" y2="15" />
+              <circle cx="12" cy="12" r="10" />
+              <line x1="15" y1="9" x2="9" y2="15" />
+              <line x1="9" y1="9" x2="15" y2="15" />
             </svg>
-            Browse Files
+            Cancel
           </button>
         </div>
-        <input type="file" id="fileInput" accept="video/*" hidden />
-      </div>
 
-      <div class="card file-info" id="fileInfo">
-        <div class="file-info-content">
-          <span class="filename" id="fileName"></span>
-          <span class="file-details" id="fileDetails"></span>
-        </div>
-      </div>
-
-      <div class="options-panel">
-        <div class="option-group">
-          <label for="presetSelect">Conversion Preset</label>
-          <select id="presetSelect"></select>
-        </div>
-        <div class="option-group">
-          <label for="gpuSelect">Hardware Acceleration</label>
-          <select id="gpuSelect">
-            <option value="cpu" title="Uses CPU for encoding. Slower but always available.">
-              CPU (Software)
-            </option>
-            <option
-              value="apple"
-              hidden
-              title="Apple VideoToolbox. Requires Apple Silicon (M1/M2/M3) or Intel Mac with T2."
-            >
-              Apple Silicon (VideoToolbox)
-            </option>
-            <option value="nvidia" title="NVIDIA NVENC. Requires NVIDIA GPU with NVENC support.">
-              NVIDIA (NVENC)
-            </option>
-            <option value="amd" title="AMD AMF. Requires AMD GPU with AMF support.">
-              AMD (AMF)
-            </option>
-            <option
-              value="intel"
-              title="Intel Quick Sync. Requires Intel CPU/GPU with QSV support."
-            >
-              Intel (Quick Sync)
-            </option>
-          </select>
-          <span class="option-hint">Select GPU for faster encoding if available</span>
-        </div>
-      </div>
-
-      <div class="convert-section">
-        <button class="btn btn-primary" id="convertBtn" disabled>
-          <svg
-            class="btn-icon"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="2.5"
-            stroke-linecap="round"
-            stroke-linejoin="round"
-          >
-            <polygon points="5 3 19 12 5 21 5 3" />
-          </svg>
-          Convert
-        </button>
-        <button class="btn btn-secondary" id="cancelBtn" style="display: none">
-          <svg
-            class="btn-icon"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="2"
-            stroke-linecap="round"
-            stroke-linejoin="round"
-          >
-            <circle cx="12" cy="12" r="10" />
-            <line x1="15" y1="9" x2="9" y2="15" />
-            <line x1="9" y1="9" x2="15" y2="15" />
-          </svg>
-          Cancel
-        </button>
-      </div>
-
-      <div class="progress-container" id="progressContainer">
-        <div class="progress-wrapper">
-          <div class="progress-bar">
-            <div class="progress-fill" id="progressFill"></div>
+        <div class="progress-container" id="progressContainer">
+          <div class="progress-wrapper">
+            <div class="progress-bar">
+              <div class="progress-fill" id="progressFill"></div>
+            </div>
           </div>
-          <div class="progress-glow" id="progressGlow"></div>
-        </div>
-        <div class="progress-info">
-          <div class="progress-left">
-            <span class="progress-percent" id="progressPercent">0%</span>
-            <span class="progress-separator">•</span>
-            <span id="progressTime">00:00:00</span>
-          </div>
-          <div class="progress-right">
-            <span id="progressSpeed"></span>
-            <span id="progressEta"></span>
+          <div class="progress-info">
+            <div class="progress-left">
+              <span class="progress-percent" id="progressPercent">0%</span>
+              <span class="progress-separator">&middot;</span>
+              <span id="progressTime">00:00:00</span>
+            </div>
+            <div class="progress-right">
+              <span id="progressSpeed"></span>
+              <span id="progressEta"></span>
+            </div>
           </div>
         </div>
-      </div>
 
-      <div class="status-row">
-        <div class="status-message" id="statusMessage">
-          <span class="status-icon"></span>
-          <span class="status-text"></span>
-        </div>
-        <div class="status-actions">
-          <button class="btn btn-secondary btn-xs" id="showLogsBtn" style="display: none">
-            <svg
-              class="btn-icon"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="2"
-              stroke-linecap="round"
-              stroke-linejoin="round"
-            >
-              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-              <polyline points="14 2 14 8 20 8" />
-              <line x1="16" y1="13" x2="8" y2="13" />
-              <line x1="16" y1="17" x2="8" y2="17" />
-            </svg>
-            Logs
-          </button>
-          <button class="btn btn-secondary btn-xs" id="showInFolderBtn" style="display: none">
-            <svg
-              class="btn-icon"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="2"
-              stroke-linecap="round"
-              stroke-linejoin="round"
-            >
-              <path
-                d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"
-              />
-            </svg>
-            Show
-          </button>
+        <div class="status-row">
+          <div class="status-message" id="statusMessage">
+            <span class="status-icon"></span>
+            <span class="status-text"></span>
+          </div>
+          <div class="status-actions">
+            <button class="btn btn-secondary btn-xs" id="showLogsBtn" style="display: none">
+              <svg
+                class="btn-icon"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              >
+                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                <polyline points="14 2 14 8 20 8" />
+                <line x1="16" y1="13" x2="8" y2="13" />
+                <line x1="16" y1="17" x2="8" y2="17" />
+              </svg>
+              Logs
+            </button>
+            <button class="btn btn-secondary btn-xs" id="showInFolderBtn" style="display: none">
+              <svg
+                class="btn-icon"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              >
+                <path
+                  d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"
+                />
+              </svg>
+              Show
+            </button>
+          </div>
         </div>
       </div>
 
@@ -221,9 +222,9 @@
           <button class="modal-close" id="closeSettings">&times;</button>
         </div>
 
-        <div class="settings-grid">
-          <div class="setting-item full-width">
-            <label>Theme</label>
+        <div class="settings-content">
+          <div class="settings-section">
+            <div class="settings-section-title">Appearance</div>
             <div class="theme-switcher" id="themeSwitcher">
               <button class="theme-option" data-theme="system">
                 <img
@@ -260,75 +261,63 @@
             </select>
           </div>
 
-          <div class="setting-item full-width">
-            <label>Output Directory</label>
-            <div class="setting-control">
+          <div class="settings-section">
+            <div class="settings-section-title">Output</div>
+            <div class="setting-row">
               <span class="output-path" id="outputPath">Same as input file</span>
               <button class="btn btn-secondary btn-xs" id="outputDirBtn">Change</button>
             </div>
           </div>
 
-          <div class="setting-item">
-            <label>FFmpeg</label>
-            <div class="setting-control">
+          <div class="settings-section">
+            <div class="settings-section-title">FFmpeg</div>
+            <div class="setting-toggle-row">
+              <div class="setting-toggle-info">
+                <span class="setting-toggle-label">Use System FFmpeg</span>
+                <span class="setting-toggle-description">Use system-installed FFmpeg instead of bundled</span>
+              </div>
               <label class="toggle-switch">
                 <input type="checkbox" id="useSystemFFmpegCheck" />
                 <span class="toggle-slider"></span>
               </label>
-              <span class="toggle-label">Use System</span>
             </div>
           </div>
 
-          <div class="setting-item">
-            <label>Debug</label>
-            <div class="setting-control">
+          <div class="settings-section">
+            <div class="settings-section-title">Developer</div>
+            <div class="setting-toggle-row">
+              <div class="setting-toggle-info">
+                <span class="setting-toggle-label">Show Debug Output</span>
+                <span class="setting-toggle-description">Display FFmpeg log output during conversion</span>
+              </div>
               <label class="toggle-switch">
                 <input type="checkbox" id="debugOutputCheck" />
                 <span class="toggle-slider"></span>
               </label>
-              <span class="toggle-label">Show Output</span>
             </div>
           </div>
 
-          <div class="setting-item full-width">
-            <label>Updates</label>
-            <div class="setting-row">
-              <button class="btn btn-secondary btn-xs" id="checkUpdateBtn">
-                <svg
-                  class="btn-icon"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  stroke-width="2"
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                >
-                  <polyline points="23 4 23 10 17 10" />
-                  <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" />
-                </svg>
-                Check Now
-              </button>
-              <div class="setting-control">
-                <label class="toggle-switch">
-                  <input type="checkbox" id="autoCheckUpdatesCheck" />
-                  <span class="toggle-slider"></span>
-                </label>
-                <span class="toggle-label">Auto-check</span>
+          <div class="settings-section">
+            <div class="settings-section-title">Updates</div>
+            <div class="setting-toggle-row">
+              <div class="setting-toggle-info">
+                <span class="setting-toggle-label">Auto-check for updates</span>
+                <span class="setting-toggle-description">Check for new versions on startup</span>
               </div>
+              <label class="toggle-switch">
+                <input type="checkbox" id="autoCheckUpdatesCheck" />
+                <span class="toggle-slider"></span>
+              </label>
             </div>
-            <div class="setting-row" id="updateChannelSetting">
-              <label class="setting-inline-label" for="updateChannelSelect">Channel</label>
+            <div class="setting-field" id="updateChannelSetting">
+              <label class="setting-field-label" for="updateChannelSelect">Channel</label>
               <select id="updateChannelSelect">
                 <option value="auto">Auto (follows version)</option>
                 <option value="stable">Stable</option>
                 <option value="beta">Beta</option>
               </select>
             </div>
-          </div>
-
-          <div class="setting-item">
-            <label>Credits</label>
-            <button class="btn btn-secondary btn-xs full-width" id="viewCreditsBtn">
+            <button class="btn btn-secondary btn-sm" id="checkUpdateBtn">
               <svg
                 class="btn-icon"
                 viewBox="0 0 24 24"
@@ -338,17 +327,56 @@
                 stroke-linecap="round"
                 stroke-linejoin="round"
               >
-                <circle cx="12" cy="12" r="10" />
-                <line x1="12" y1="16" x2="12" y2="12" />
-                <line x1="12" y1="8" x2="12.01" y2="8" />
+                <polyline points="23 4 23 10 17 10" />
+                <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" />
               </svg>
-              View
+              Check Now
             </button>
           </div>
 
-          <div class="setting-item setting-danger">
-            <label>Reset</label>
-            <button class="btn btn-danger btn-xs full-width" id="resetSettingsBtn">
+          <div class="settings-section">
+            <div class="settings-section-title">About</div>
+            <div class="about-content">
+              <a href="#" id="versionLink"><span id="versionInfo">CONV2 v...</span></a>
+              <div class="about-links">
+                <a href="#" id="support-link">Support</a>
+                <span class="about-divider">&middot;</span>
+                <a href="#" id="help-link">Help</a>
+                <span class="about-divider">&middot;</span>
+                <a href="#" id="about-privacy">Privacy</a>
+              </div>
+              <button class="btn btn-secondary btn-xs" id="viewCreditsBtn">
+                <svg
+                  class="btn-icon"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                >
+                  <circle cx="12" cy="12" r="10" />
+                  <line x1="12" y1="16" x2="12" y2="12" />
+                  <line x1="12" y1="8" x2="12.01" y2="8" />
+                </svg>
+                Licenses &amp; Credits
+              </button>
+              <div class="about-attribution">
+                Made with
+                <img
+                  src="../../assets/twemoji/2764.svg"
+                  alt=""
+                  aria-hidden="true"
+                  class="twemoji-inline"
+                />
+                by BurntToasters/<a href="#" id="rosie-run">Rosie.run</a>
+              </div>
+            </div>
+          </div>
+
+          <div class="settings-section settings-danger-zone">
+            <div class="settings-section-title">Danger Zone</div>
+            <button class="btn btn-danger btn-sm full-width" id="resetSettingsBtn">
               <svg
                 class="btn-icon"
                 viewBox="0 0 24 24"
@@ -361,25 +389,8 @@
                 <polyline points="1 4 1 10 7 10" />
                 <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10" />
               </svg>
-              Reset
+              Reset All Settings
             </button>
-          </div>
-        </div>
-        <div class="version-info">
-          <a href="#" id="versionLink"><span id="versionInfo">CONV2 v...</span></a>
-          <span class="about-divider">|</span> <a href="#" id="support-link">Support</a>
-          <span class="about-divider">|</span> <a href="#" id="help-link">Help</a>
-          <span class="about-divider">|</span>
-          <a href="#" id="about-privacy">Privacy</a>
-          <div style="margin-top: 8px">
-            Made with
-            <img
-              src="../../assets/twemoji/2764.svg"
-              alt=""
-              aria-hidden="true"
-              class="twemoji-inline"
-            />
-            by BurntToasters/<a href="#" id="rosie-run">Rosie.run</a>
           </div>
         </div>
       </div>
@@ -388,7 +399,7 @@
     <div class="modal-overlay" id="creditsModal">
       <div class="modal credits-modal">
         <div class="modal-header">
-          <h2>Licenses & Credits</h2>
+          <h2>Licenses &amp; Credits</h2>
           <button class="modal-close" id="closeCredits">&times;</button>
         </div>
         <div class="credits-body">
