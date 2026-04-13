@@ -14,6 +14,7 @@ interface AppSettings {
   useSystemFFmpeg: boolean;
   updateChannel: 'auto' | 'stable' | 'beta';
   showAdvancedPresets: boolean;
+  removeSpacesFromFilenames: boolean;
 }
 
 interface VideoInfo {
@@ -23,6 +24,19 @@ interface VideoInfo {
   height: number;
   codec: string;
   format: string;
+}
+
+interface ConversionResult {
+  success: boolean;
+  outputPath: string;
+  error?: string;
+}
+
+interface BatchConversionOptions {
+  gpu: AppSettings['gpu'];
+  removeSpacesFromFilenames: boolean;
+  outputDirectory: string;
+  showDebugOutput: boolean;
 }
 
 interface ModalOptions {
@@ -61,8 +75,7 @@ interface LicenseDisplayEntry {
   isSpecial?: boolean;
 }
 
-let selectedFile: string | null = null;
-let selectedFileInfo: VideoInfo | null = null;
+let selectedFiles: string[] = [];
 let isConverting = false;
 let settings: AppSettings;
 let presets: Preset[] = [];
@@ -74,6 +87,9 @@ let checkUpdateDefaultHTML = '';
 let manualUpdateCheckInProgress = false;
 let updateDownloadInProgress = false;
 let ffmpegInstalled = true;
+let cancelRequested = false;
+let closeDynamicModal: (() => void) | null = null;
+let fileSelectionToken = 0;
 
 const elements = {
   dropZone: document.getElementById('dropZone') as HTMLDivElement,
@@ -116,6 +132,7 @@ const elements = {
   licensesList: document.getElementById('licensesList') as HTMLDivElement,
   debugOutputCheck: document.getElementById('debugOutputCheck') as HTMLInputElement,
   advancedPresetsCheck: document.getElementById('advancedPresetsCheck') as HTMLInputElement,
+  removeSpacesCheck: document.getElementById('removeSpacesCheck') as HTMLInputElement,
   useSystemFFmpegCheck: document.getElementById('useSystemFFmpegCheck') as HTMLInputElement,
   showLogsBtn: document.getElementById('showLogsBtn') as HTMLButtonElement,
   logsModal: document.getElementById('logsModal') as HTMLDivElement,
@@ -188,6 +205,14 @@ const showModal = (options: ModalOptions): void => {
     modal.removeEventListener('click', overlayListener);
     confirmBtn.replaceWith(confirmBtn.cloneNode(true));
     cancelBtn.replaceWith(cancelBtn.cloneNode(true));
+    if (closeDynamicModal === closeByEscape) {
+      closeDynamicModal = null;
+    }
+  };
+
+  const closeByEscape = () => {
+    cleanup();
+    options.onCancel?.();
   };
 
   const newConfirmBtn = modal.querySelector('#modalConfirm') as HTMLButtonElement;
@@ -205,6 +230,7 @@ const showModal = (options: ModalOptions): void => {
 
   modal.addEventListener('click', overlayListener);
   modal.classList.add('visible');
+  closeDynamicModal = closeByEscape;
 };
 
 const buildLicenseEntries = (
@@ -391,7 +417,7 @@ const checkFFmpeg = async () => {
   }
 
   elements.ffmpegWarning.style.display = 'none';
-  if (!isConverting && selectedFile) {
+  if (!isConverting && selectedFiles.length > 0) {
     elements.convertBtn.disabled = false;
   }
 };
@@ -402,6 +428,7 @@ const loadSettings = async () => {
   elements.themeSelect.value = settings.theme;
   elements.debugOutputCheck.checked = settings.showDebugOutput;
   elements.advancedPresetsCheck.checked = settings.showAdvancedPresets;
+  elements.removeSpacesCheck.checked = settings.removeSpacesFromFilenames;
   elements.autoCheckUpdatesCheck.checked = settings.autoCheckUpdates;
   elements.useSystemFFmpegCheck.checked = settings.useSystemFFmpeg;
   elements.updateChannelSelect.value = settings.updateChannel;
@@ -511,7 +538,11 @@ const setupKeyboardShortcuts = () => {
         elements.settingsModal.classList.remove('visible');
       }
       if (elements.dynamicModal.classList.contains('visible')) {
-        elements.dynamicModal.classList.remove('visible');
+        if (closeDynamicModal) {
+          closeDynamicModal();
+        } else {
+          elements.dynamicModal.classList.remove('visible');
+        }
       }
       if (elements.creditsModal.classList.contains('visible')) {
         closeCreditsModal();
@@ -524,11 +555,25 @@ const setupKeyboardShortcuts = () => {
     }
 
     if (e.key === 'Enter' && !e.ctrlKey && !e.metaKey) {
+      const target = e.target as HTMLElement | null;
+      if (
+        target &&
+        (target.closest('button, input, select, textarea, a, [role="button"]') ||
+          target.isContentEditable)
+      ) {
+        return;
+      }
       const isModalOpen =
         elements.settingsModal.classList.contains('visible') ||
         elements.dynamicModal.classList.contains('visible') ||
         elements.creditsModal.classList.contains('visible');
-      if (!isModalOpen && selectedFile && !isConverting && !elements.convertBtn.disabled) {
+      if (
+        !isModalOpen &&
+        selectedFiles.length > 0 &&
+        !isConverting &&
+        !elements.convertBtn.disabled
+      ) {
+        e.preventDefault();
         startConversion();
       }
     }
@@ -574,6 +619,13 @@ const setupEventListeners = () => {
     }
   });
 
+  elements.dropZone.addEventListener('keydown', (e: KeyboardEvent) => {
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      elements.fileInput.click();
+    }
+  });
+
   const browseBtn = elements.dropZone.querySelector('button');
   browseBtn?.addEventListener('click', (e: MouseEvent) => {
     e.stopPropagation();
@@ -594,16 +646,20 @@ const setupEventListeners = () => {
     elements.dropZone.classList.remove('dragover');
     const files = e.dataTransfer?.files;
     if (files && files.length > 0) {
-      const filePath = window.electronAPI.getPathForFile(files[0]);
-      handleFileSelect(filePath);
+      const filePaths = Array.from(files)
+        .map((file) => window.electronAPI.getPathForFile(file))
+        .filter((filePath) => filePath && filePath.length > 0);
+      handleFileSelect(filePaths);
     }
   });
 
   elements.fileInput.addEventListener('change', () => {
     const files = elements.fileInput.files;
     if (files && files.length > 0) {
-      const filePath = window.electronAPI.getPathForFile(files[0]);
-      handleFileSelect(filePath);
+      const filePaths = Array.from(files)
+        .map((file) => window.electronAPI.getPathForFile(file))
+        .filter((filePath) => filePath && filePath.length > 0);
+      handleFileSelect(filePaths);
     }
   });
 
@@ -644,6 +700,13 @@ const setupEventListeners = () => {
     await loadPresets();
   });
 
+  elements.removeSpacesCheck.addEventListener('change', async () => {
+    settings.removeSpacesFromFilenames = elements.removeSpacesCheck.checked;
+    await window.electronAPI.saveSettings({
+      removeSpacesFromFilenames: settings.removeSpacesFromFilenames,
+    });
+  });
+
   elements.autoCheckUpdatesCheck.addEventListener('change', async () => {
     settings.autoCheckUpdates = elements.autoCheckUpdatesCheck.checked;
     await window.electronAPI.saveSettings({ autoCheckUpdates: settings.autoCheckUpdates });
@@ -673,6 +736,12 @@ const setupEventListeners = () => {
       });
     } else {
       startConversion();
+    }
+  });
+
+  elements.cancelBtn.addEventListener('click', () => {
+    if (isConverting) {
+      cancelConversion();
     }
   });
 
@@ -834,36 +903,7 @@ const setupEventListeners = () => {
     elements.logsContent.scrollTop = elements.logsContent.scrollHeight;
   });
 
-  window.electronAPI.onConversionComplete((result) => {
-    isConverting = false;
-    elements.progressContainer.classList.remove('visible');
-    elements.convertBtn.disabled = false;
-    elements.convertBtn.innerHTML = convertBtnOriginalHTML;
-    elements.convertBtn.classList.remove('converting');
-    elements.cancelBtn.style.display = 'none';
-
-    if (result.success) {
-      lastOutputPath = result.outputPath;
-      showStatus('success', 'Conversion complete!');
-      elements.showInFolderBtn.style.display = 'inline-flex';
-    } else {
-      if (result.error === 'Conversion cancelled') {
-        showStatus('warning', 'Conversion cancelled');
-      } else {
-        showStatus('error', `Conversion failed: ${result.error}`);
-      }
-      elements.showInFolderBtn.style.display = 'none';
-    }
-  });
-
   window.electronAPI.onGPUEncoderError((error: GPUEncoderError) => {
-    isConverting = false;
-    elements.progressContainer.classList.remove('visible');
-    elements.convertBtn.disabled = false;
-    elements.convertBtn.innerHTML = convertBtnOriginalHTML;
-    elements.convertBtn.classList.remove('converting');
-    elements.cancelBtn.style.display = 'none';
-
     showGPUErrorModal(error);
   });
 
@@ -889,14 +929,30 @@ const showGPUErrorModal = (error: GPUEncoderError): void => {
   const cancelBtn = modal.querySelector('#modalCancel') as HTMLButtonElement;
 
   titleEl.textContent = 'GPU Encoding Error';
+  bodyEl.textContent = '';
+  const messageEl = document.createElement('strong');
+  messageEl.style.color = 'var(--error)';
+  messageEl.textContent = error.message;
 
-  bodyEl.innerHTML = `
-    <strong style="color: var(--error);">${error.message}</strong>
-    <div style="margin-top: 12px; white-space: pre-line; opacity: 0.85; font-size: 0.9em;">${error.details}</div>
-    <div style="margin-top: 12px; padding: 8px 12px; background: var(--bg-tertiary); border-radius: 6px; font-size: 0.9em;">
-      <strong>Suggestion:</strong> ${error.suggestion}
-    </div>
-  `;
+  const detailsEl = document.createElement('div');
+  detailsEl.style.marginTop = '12px';
+  detailsEl.style.whiteSpace = 'pre-line';
+  detailsEl.style.opacity = '0.85';
+  detailsEl.style.fontSize = '0.9em';
+  detailsEl.textContent = error.details;
+
+  const suggestionEl = document.createElement('div');
+  suggestionEl.style.marginTop = '12px';
+  suggestionEl.style.padding = '8px 12px';
+  suggestionEl.style.background = 'var(--bg-tertiary)';
+  suggestionEl.style.borderRadius = '6px';
+  suggestionEl.style.fontSize = '0.9em';
+
+  const suggestionLabel = document.createElement('strong');
+  suggestionLabel.textContent = 'Suggestion: ';
+  suggestionEl.append(suggestionLabel, document.createTextNode(error.suggestion));
+
+  bodyEl.append(messageEl, detailsEl, suggestionEl);
 
   if (error.canRetryWithCPU) {
     confirmBtn.textContent = 'Retry with CPU';
@@ -910,8 +966,7 @@ const showGPUErrorModal = (error: GPUEncoderError): void => {
 
   const overlayListener = (e: Event) => {
     if (e.target === modal) {
-      cleanup();
-      showStatus('error', error.message);
+      closeByEscape();
     }
   };
 
@@ -919,9 +974,17 @@ const showGPUErrorModal = (error: GPUEncoderError): void => {
     modal.classList.remove('visible');
     modal.removeEventListener('click', overlayListener);
     cancelBtn.style.display = '';
-    bodyEl.innerHTML = '';
+    bodyEl.textContent = '';
     confirmBtn.replaceWith(confirmBtn.cloneNode(true));
     cancelBtn.replaceWith(cancelBtn.cloneNode(true));
+    if (closeDynamicModal === closeByEscape) {
+      closeDynamicModal = null;
+    }
+  };
+
+  const closeByEscape = () => {
+    cleanup();
+    showStatus('error', error.message);
   };
 
   const newConfirmBtn = modal.querySelector('#modalConfirm') as HTMLButtonElement;
@@ -933,10 +996,7 @@ const showGPUErrorModal = (error: GPUEncoderError): void => {
       settings.gpu = 'cpu';
       elements.gpuSelect.value = 'cpu';
       await window.electronAPI.saveSettings({ gpu: 'cpu' });
-      showStatus('warning', 'Switched to CPU encoding');
-      if (selectedFile) {
-        startConversion();
-      }
+      showStatus('warning', 'Switched to CPU encoding. Start conversion again to retry.');
     }
   });
 
@@ -947,30 +1007,60 @@ const showGPUErrorModal = (error: GPUEncoderError): void => {
 
   modal.addEventListener('click', overlayListener);
   modal.classList.add('visible');
+  closeDynamicModal = closeByEscape;
 };
 
-const handleFileSelect = async (filePath: string) => {
-  selectedFile = filePath;
-  const fileName = filePath.split(/[/\\]/).pop() || filePath;
-  elements.fileName.textContent = fileName;
+const getFileName = (filePath: string): string => filePath.split(/[/\\]/).pop() || filePath;
 
-  const info = await window.electronAPI.getFileInfo(filePath);
-  if (info) {
-    selectedFileInfo = info;
-    const details: string[] = [];
-    details.push(formatFileSize(info.size));
-    if (info.width && info.height) {
-      details.push(`${info.width}x${info.height}`);
+const handleFileSelect = async (filePaths: string[]) => {
+  const selectionToken = ++fileSelectionToken;
+  const normalizedPaths = Array.from(new Set(filePaths.filter((path) => path && path.length > 0)));
+  selectedFiles = normalizedPaths;
+
+  if (selectedFiles.length === 0) {
+    elements.fileInfo.classList.remove('visible');
+    elements.convertBtn.disabled = true;
+    return;
+  }
+
+  if (selectedFiles.length === 1) {
+    const [filePath] = selectedFiles;
+    elements.fileName.textContent = getFileName(filePath);
+
+    const info = await window.electronAPI.getFileInfo(filePath);
+    if (
+      selectionToken !== fileSelectionToken ||
+      selectedFiles.length !== 1 ||
+      selectedFiles[0] !== filePath
+    ) {
+      return;
     }
-    if (info.codec && info.codec !== 'unknown') {
-      details.push(info.codec.toUpperCase());
+
+    if (info) {
+      const details: string[] = [];
+      details.push(formatFileSize(info.size));
+      if (info.width && info.height) {
+        details.push(`${info.width}x${info.height}`);
+      }
+      if (info.codec && info.codec !== 'unknown') {
+        details.push(info.codec.toUpperCase());
+      }
+      if (info.duration > 0) {
+        details.push(formatDuration(info.duration));
+      }
+      elements.fileDetails.textContent = details.join(' \u2022 ');
+    } else {
+      elements.fileDetails.textContent = '';
     }
-    if (info.duration > 0) {
-      details.push(formatDuration(info.duration));
-    }
-    elements.fileDetails.textContent = details.join(' \u2022 ');
   } else {
-    elements.fileDetails.textContent = '';
+    const previewCount = Math.min(3, selectedFiles.length);
+    const previewNames = selectedFiles.slice(0, previewCount).map(getFileName);
+    const remaining = selectedFiles.length - previewCount;
+    elements.fileName.textContent = `${selectedFiles.length} files selected`;
+    elements.fileDetails.textContent =
+      remaining > 0
+        ? `${previewNames.join(' \u2022 ')} \u2022 +${remaining} more`
+        : previewNames.join(' \u2022 ');
   }
 
   elements.fileInfo.classList.add('visible');
@@ -979,38 +1069,156 @@ const handleFileSelect = async (filePath: string) => {
   hideStatus();
 };
 
-const startConversion = async () => {
-  if (!selectedFile) return;
-
-  isConverting = true;
+const runSingleConversion = async (
+  inputPath: string,
+  presetId: string,
+  fileIndex: number,
+  totalFiles: number,
+  batchOptions: BatchConversionOptions
+): Promise<ConversionResult> => {
   conversionStartTime = Date.now();
-  elements.convertBtn.classList.add('converting');
-  elements.cancelBtn.style.display = 'none';
-  elements.progressContainer.classList.add('visible');
   elements.progressFill.style.width = '0%';
   elements.progressPercent.textContent = '0%';
   elements.progressTime.textContent = '00:00:00';
   elements.progressEta.textContent = '';
   elements.progressSpeed.textContent = '';
-  elements.showInFolderBtn.style.display = 'none';
 
-  elements.logsContent.textContent = '';
+  const fileName = getFileName(inputPath);
+  if (totalFiles > 1) {
+    showStatus('warning', `Converting ${fileIndex + 1}/${totalFiles}: ${fileName}`);
+  }
 
-  hideStatus();
+  if (batchOptions.showDebugOutput && totalFiles > 1) {
+    elements.logsContent.textContent += `\n=== [${fileIndex + 1}/${totalFiles}] ${fileName} ===\n`;
+  }
+
+  return window.electronAPI.startConversion(inputPath, presetId, batchOptions.gpu, {
+    suppressGpuErrorEvent: totalFiles > 1,
+    removeSpacesFromFilenames: batchOptions.removeSpacesFromFilenames,
+    outputDirectory: batchOptions.outputDirectory,
+    showDebugOutput: batchOptions.showDebugOutput,
+  });
+};
+
+const finishConversionUi = () => {
+  isConverting = false;
+  cancelRequested = false;
+  elements.progressContainer.classList.remove('visible');
+  elements.convertBtn.innerHTML = convertBtnOriginalHTML;
+  elements.convertBtn.classList.remove('converting');
+  elements.convertBtn.disabled = !ffmpegInstalled || selectedFiles.length === 0;
+  elements.cancelBtn.style.display = 'none';
+};
+
+const startConversion = async () => {
+  if (selectedFiles.length === 0) return;
 
   const presetId = elements.presetSelect.value;
-  await window.electronAPI.startConversion(selectedFile, presetId, settings.gpu);
+  if (!presetId) {
+    showStatus('error', 'Select a conversion preset first');
+    return;
+  }
+
+  isConverting = true;
+  cancelRequested = false;
+  elements.convertBtn.classList.add('converting');
+  elements.cancelBtn.style.display = 'inline-flex';
+  elements.progressContainer.classList.add('visible');
+  elements.showInFolderBtn.style.display = 'none';
+  elements.logsContent.textContent = '';
+  hideStatus();
+
+  const batchOptions: BatchConversionOptions = {
+    gpu: settings.gpu,
+    removeSpacesFromFilenames: settings.removeSpacesFromFilenames,
+    outputDirectory: settings.outputDirectory,
+    showDebugOutput: settings.showDebugOutput,
+  };
+
+  const filesToConvert = [...selectedFiles];
+  const totalFiles = filesToConvert.length;
+  const results: Array<ConversionResult & { inputPath: string }> = [];
+  let unexpectedError: string | null = null;
+
+  try {
+    for (let fileIndex = 0; fileIndex < totalFiles; fileIndex += 1) {
+      if (cancelRequested) {
+        break;
+      }
+
+      const inputPath = filesToConvert[fileIndex];
+      const result = await runSingleConversion(
+        inputPath,
+        presetId,
+        fileIndex,
+        totalFiles,
+        batchOptions
+      );
+      results.push({ inputPath, ...result });
+
+      if (result.success) {
+        lastOutputPath = result.outputPath;
+      }
+
+      if (!result.success && result.error === 'Conversion cancelled') {
+        cancelRequested = true;
+        break;
+      }
+    }
+  } catch (err) {
+    unexpectedError = err instanceof Error ? err.message : String(err);
+  }
+
+  const wasCancelled = cancelRequested;
+  finishConversionUi();
+  if (unexpectedError) {
+    showStatus('error', `Conversion failed: ${unexpectedError}`);
+    elements.showInFolderBtn.style.display = 'none';
+    return;
+  }
+
+  if (totalFiles === 1) {
+    const [result] = results;
+    if (result?.success) {
+      showStatus('success', 'Conversion complete!');
+      elements.showInFolderBtn.style.display = 'inline-flex';
+    } else if (result?.error === 'Conversion cancelled' || wasCancelled) {
+      showStatus('warning', 'Conversion cancelled');
+    } else {
+      showStatus('error', `Conversion failed: ${result?.error || 'Unknown error'}`);
+    }
+    return;
+  }
+
+  const successCount = results.filter((result) => result.success).length;
+  const failedCount = results.length - successCount;
+
+  if (wasCancelled) {
+    showStatus('warning', `Batch cancelled. ${successCount}/${totalFiles} converted.`);
+  } else if (failedCount === 0) {
+    showStatus('success', `Batch complete. ${successCount}/${totalFiles} converted.`);
+  } else if (successCount === 0) {
+    showStatus('error', `Batch failed. 0/${totalFiles} converted.`);
+  } else {
+    showStatus('warning', `Batch complete with errors. ${successCount}/${totalFiles} converted.`);
+  }
+
+  if (successCount > 0) {
+    elements.showInFolderBtn.style.display = 'inline-flex';
+  } else {
+    elements.showInFolderBtn.style.display = 'none';
+  }
 };
 
 const cancelConversion = async () => {
-  await window.electronAPI.cancelConversion(true);
-  isConverting = false;
-  elements.progressContainer.classList.remove('visible');
-  elements.convertBtn.disabled = false;
-  elements.convertBtn.innerHTML = convertBtnOriginalHTML;
-  elements.convertBtn.classList.remove('converting');
-
-  showStatus('warning', 'Conversion cancelled');
+  if (!isConverting) return;
+  cancelRequested = true;
+  try {
+    await window.electronAPI.cancelConversion(true);
+    showStatus('warning', 'Cancelling conversion...');
+  } catch (err) {
+    showStatus('error', `Failed to cancel conversion: ${err instanceof Error ? err.message : String(err)}`);
+  }
 };
 
 const showStatus = (type: 'success' | 'error' | 'warning', message: string) => {

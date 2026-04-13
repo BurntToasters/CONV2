@@ -7,16 +7,34 @@ const checksumsPath = path.join(projectRoot, 'resources', 'ffmpeg', 'checksums.j
 
 const REQUIRED_BINARIES = {
   win: {
-    x64: 'resources/ffmpeg/win/x64/ffmpeg.exe',
-    arm64: 'resources/ffmpeg/win/arm64/ffmpeg.exe',
+    x64: {
+      ffmpeg: 'resources/ffmpeg/win/x64/ffmpeg.exe',
+      ffprobe: 'resources/ffmpeg/win/x64/ffprobe.exe',
+    },
+    arm64: {
+      ffmpeg: 'resources/ffmpeg/win/arm64/ffmpeg.exe',
+      ffprobe: 'resources/ffmpeg/win/arm64/ffprobe.exe',
+    },
   },
   mac: {
-    x64: 'resources/ffmpeg/mac/x64/ffmpeg',
-    arm64: 'resources/ffmpeg/mac/arm64/ffmpeg',
+    x64: {
+      ffmpeg: 'resources/ffmpeg/mac/x64/ffmpeg',
+      ffprobe: 'resources/ffmpeg/mac/x64/ffprobe',
+    },
+    arm64: {
+      ffmpeg: 'resources/ffmpeg/mac/arm64/ffmpeg',
+      ffprobe: 'resources/ffmpeg/mac/arm64/ffprobe',
+    },
   },
   linux: {
-    x64: 'resources/ffmpeg/linux/x64/ffmpeg',
-    arm64: 'resources/ffmpeg/linux/arm64/ffmpeg',
+    x64: {
+      ffmpeg: 'resources/ffmpeg/linux/x64/ffmpeg',
+      ffprobe: 'resources/ffmpeg/linux/x64/ffprobe',
+    },
+    arm64: {
+      ffmpeg: 'resources/ffmpeg/linux/arm64/ffmpeg',
+      ffprobe: 'resources/ffmpeg/linux/arm64/ffprobe',
+    },
   },
 };
 
@@ -159,16 +177,24 @@ function loadChecksums() {
 function generateChecksumManifest(targets) {
   const manifest = loadChecksums() || {};
   for (const target of targets) {
-    const relativePath = REQUIRED_BINARIES[target.platform][target.arch];
-    const absolutePath = path.join(projectRoot, relativePath);
-    if (!fs.existsSync(absolutePath)) {
-      console.error(`Cannot generate checksum — binary missing: ${relativePath}`);
-      process.exit(1);
-    }
+    const required = REQUIRED_BINARIES[target.platform][target.arch];
     const key = `${target.platform}:${target.arch}`;
+    const binaries = {};
+
+    for (const [binaryName, relativePath] of Object.entries(required)) {
+      const absolutePath = path.join(projectRoot, relativePath);
+      if (!fs.existsSync(absolutePath)) {
+        console.error(`Cannot generate checksum — binary missing: ${relativePath}`);
+        process.exit(1);
+      }
+      binaries[binaryName] = {
+        path: relativePath,
+        sha256: computeSha256(absolutePath),
+      };
+    }
+
     manifest[key] = {
-      path: relativePath,
-      sha256: computeSha256(absolutePath),
+      binaries,
     };
   }
   fs.writeFileSync(checksumsPath, JSON.stringify(manifest, null, 2) + '\n', 'utf8');
@@ -181,29 +207,63 @@ function validateTargets(targets) {
   const manifest = loadChecksums();
 
   for (const target of targets) {
-    const relativePath = REQUIRED_BINARIES[target.platform][target.arch];
-    const absolutePath = path.join(projectRoot, relativePath);
-    if (!fs.existsSync(absolutePath)) {
-      missing.push(`${target.platform}:${target.arch} -> ${relativePath}`);
-      continue;
-    }
+    const key = `${target.platform}:${target.arch}`;
+    const required = REQUIRED_BINARIES[target.platform][target.arch];
+    const entry = manifest?.[key];
 
-    const stats = fs.statSync(absolutePath);
-    if (!stats.isFile()) {
-      missing.push(`${target.platform}:${target.arch} -> ${relativePath} (not a file)`);
-      continue;
-    }
+    for (const [binaryName, relativePath] of Object.entries(required)) {
+      const absolutePath = path.join(projectRoot, relativePath);
+      if (!fs.existsSync(absolutePath)) {
+        missing.push(`${target.platform}:${target.arch} -> ${relativePath}`);
+        continue;
+      }
 
-    if (manifest) {
-      const key = `${target.platform}:${target.arch}`;
-      const entry = manifest[key];
+      const stats = fs.statSync(absolutePath);
+      if (!stats.isFile()) {
+        missing.push(`${target.platform}:${target.arch} -> ${relativePath} (not a file)`);
+        continue;
+      }
+
+      if (!manifest) {
+        continue;
+      }
+
       if (!entry) {
         checksumErrors.push(`${key} -> no checksum entry in manifest`);
-      } else {
-        const actual = computeSha256(absolutePath);
-        if (actual !== entry.sha256) {
+        continue;
+      }
+
+      const binaryEntry =
+        entry.binaries?.[binaryName] ??
+        (binaryName === 'ffmpeg' && entry.path && entry.sha256
+          ? { path: entry.path, sha256: entry.sha256 }
+          : null);
+
+      if (!binaryEntry) {
+        checksumErrors.push(`${key} -> no checksum entry for ${binaryName}`);
+        continue;
+      }
+
+      if (binaryEntry.path !== relativePath) {
+        checksumErrors.push(
+          `${key} -> checksum path mismatch for ${binaryName}\n  expected path: ${relativePath}\n  manifest path: ${binaryEntry.path}`
+        );
+        continue;
+      }
+
+      const actual = computeSha256(absolutePath);
+      if (actual !== binaryEntry.sha256) {
+        checksumErrors.push(
+          `${key} -> SHA-256 mismatch for ${binaryName}\n  expected: ${binaryEntry.sha256}\n  actual:   ${actual}`
+        );
+      }
+    }
+
+    if (manifest && entry && entry.binaries) {
+      for (const binaryName of Object.keys(entry.binaries)) {
+        if (!Object.prototype.hasOwnProperty.call(required, binaryName)) {
           checksumErrors.push(
-            `${key} -> SHA-256 mismatch\n  expected: ${entry.sha256}\n  actual:   ${actual}`
+            `${key} -> unexpected checksum entry for ${binaryName} (remove stale manifest entry)`
           );
         }
       }
@@ -211,7 +271,7 @@ function validateTargets(targets) {
   }
 
   if (missing.length > 0) {
-    console.error('\nFFmpeg prebuild check failed.');
+    console.error('\nFFmpeg/ffprobe prebuild check failed.');
     console.error('Missing required binaries for target architectures:');
     for (const item of missing) {
       console.error(`- ${item}`);
@@ -221,7 +281,7 @@ function validateTargets(targets) {
   }
 
   if (checksumErrors.length > 0) {
-    console.error('\nFFmpeg checksum verification failed.');
+    console.error('\nFFmpeg/ffprobe checksum verification failed.');
     for (const item of checksumErrors) {
       console.error(`- ${item}`);
     }
@@ -239,5 +299,5 @@ if (shouldGenerate) {
 }
 const checksumNote = loadChecksums() ? ' (checksums verified)' : ' (no checksum manifest found)';
 console.log(
-  `FFmpeg prebuild check passed for: ${targets.map((t) => `${t.platform}:${t.arch}`).join(', ')}${checksumNote}`
+  `FFmpeg/ffprobe prebuild check passed for: ${targets.map((t) => `${t.platform}:${t.arch}`).join(', ')}${checksumNote}`
 );

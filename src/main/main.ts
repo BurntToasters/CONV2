@@ -1,4 +1,13 @@
-import { app, BrowserWindow, ipcMain, dialog, nativeTheme, shell, Menu } from 'electron';
+import {
+  app,
+  BrowserWindow,
+  ipcMain,
+  dialog,
+  nativeTheme,
+  shell,
+  Menu,
+  IpcMainInvokeEvent,
+} from 'electron';
 import * as path from 'path';
 import * as fs from 'fs';
 import { presets, getPresetById, GPUVendor } from './presets';
@@ -9,6 +18,7 @@ import {
   getVideoInfo,
   checkGPUEncoderSupport,
   parseGPUError,
+  ConversionResult,
 } from './ffmpeg';
 import {
   initUpdater,
@@ -16,6 +26,7 @@ import {
   checkForUpdatesSilent,
   isUpdateDisabled,
   setUpdateChannel,
+  setUpdaterWindow,
 } from './updater';
 import { setUseSystemFFmpeg } from './ffmpegPath';
 import { clearFFmpegCaches } from './ffmpeg';
@@ -53,6 +64,7 @@ interface AppSettings {
   useSystemFFmpeg: boolean;
   updateChannel: 'auto' | 'stable' | 'beta';
   showAdvancedPresets: boolean;
+  removeSpacesFromFilenames: boolean;
 }
 
 const defaultSettings: AppSettings = {
@@ -64,10 +76,53 @@ const defaultSettings: AppSettings = {
   useSystemFFmpeg: false,
   updateChannel: 'auto',
   showAdvancedPresets: false,
+  removeSpacesFromFilenames: false,
 };
 
 const normalizeUpdateChannel = (value: unknown): AppSettings['updateChannel'] => {
   return value === 'stable' || value === 'beta' || value === 'auto' ? value : 'auto';
+};
+
+const normalizeGpuVendor = (value: unknown): GPUVendor => {
+  return value === 'nvidia' ||
+    value === 'amd' ||
+    value === 'intel' ||
+    value === 'apple' ||
+    value === 'cpu'
+    ? value
+    : 'cpu';
+};
+
+const normalizeTheme = (value: unknown): AppSettings['theme'] => {
+  return value === 'dark' || value === 'light' || value === 'system' ? value : 'system';
+};
+
+const normalizeSettings = (value: unknown): AppSettings => {
+  const incoming =
+    value && typeof value === 'object' ? (value as Partial<Record<keyof AppSettings, unknown>>) : {};
+
+  return {
+    outputDirectory: typeof incoming.outputDirectory === 'string' ? incoming.outputDirectory : '',
+    gpu: normalizeGpuVendor(incoming.gpu),
+    theme: normalizeTheme(incoming.theme),
+    showDebugOutput: incoming.showDebugOutput === true,
+    autoCheckUpdates: incoming.autoCheckUpdates !== false,
+    useSystemFFmpeg: incoming.useSystemFFmpeg === true,
+    updateChannel: normalizeUpdateChannel(incoming.updateChannel),
+    showAdvancedPresets: incoming.showAdvancedPresets === true,
+    removeSpacesFromFilenames: incoming.removeSpacesFromFilenames === true,
+  };
+};
+
+const isTrustedIpcSender = (event: IpcMainInvokeEvent): boolean => {
+  const senderUrl = event.senderFrame?.url || '';
+  return senderUrl.startsWith('file://');
+};
+
+const assertTrustedIpcSender = (event: IpcMainInvokeEvent): void => {
+  if (!isTrustedIpcSender(event)) {
+    throw new Error('Untrusted IPC sender');
+  }
 };
 
 let mainWindow: BrowserWindow | null = null;
@@ -83,11 +138,7 @@ const loadSettings = (): void => {
     const settingsPath = getSettingsPath();
     if (fs.existsSync(settingsPath)) {
       const data = fs.readFileSync(settingsPath, 'utf-8');
-      const loaded = { ...defaultSettings, ...JSON.parse(data) };
-      settings = {
-        ...loaded,
-        updateChannel: normalizeUpdateChannel(loaded.updateChannel),
-      };
+      settings = normalizeSettings({ ...defaultSettings, ...JSON.parse(data) });
     }
   } catch {
     settings = { ...defaultSettings };
@@ -156,6 +207,7 @@ const createWindow = (): void => {
   });
 
   mainWindow.on('closed', () => {
+    setUpdaterWindow(null);
     mainWindow = null;
   });
 
@@ -210,7 +262,7 @@ app.on('window-all-closed', () => {
 
 ipcMain.handle('select-file', async () => {
   const result = await dialog.showOpenDialog(mainWindow!, {
-    properties: ['openFile'],
+    properties: ['openFile', 'multiSelections'],
     filters: [
       {
         name: 'Video Files',
@@ -219,7 +271,7 @@ ipcMain.handle('select-file', async () => {
       { name: 'All Files', extensions: ['*'] },
     ],
   });
-  return result.canceled ? null : result.filePaths[0];
+  return result.canceled ? [] : result.filePaths;
 });
 
 ipcMain.handle('select-output-directory', async () => {
@@ -231,15 +283,41 @@ ipcMain.handle('select-output-directory', async () => {
 
 ipcMain.handle(
   'start-conversion',
-  async (_, inputPath: string, presetId: string, gpuOverride?: GPUVendor) => {
+  async (
+    event: IpcMainInvokeEvent,
+    inputPath: string,
+    presetId: string,
+    gpuOverride?: GPUVendor,
+    options?: {
+      suppressGpuErrorEvent?: boolean;
+      removeSpacesFromFilenames?: boolean;
+      outputDirectory?: string;
+      showDebugOutput?: boolean;
+    }
+  ): Promise<ConversionResult> => {
+    assertTrustedIpcSender(event);
+
+    const suppressGpuErrorEvent = options?.suppressGpuErrorEvent === true;
+    const showDebugOutput = options?.showDebugOutput ?? settings.showDebugOutput;
+    if (isConversionActive) {
+      const busyResult: ConversionResult = {
+        success: false,
+        outputPath: '',
+        error: 'Another conversion is already in progress',
+      };
+      mainWindow?.webContents.send('conversion-complete', busyResult);
+      return busyResult;
+    }
+
     const preset = getPresetById(presetId);
     if (!preset) {
-      mainWindow?.webContents.send('conversion-complete', {
+      const invalidPresetResult: ConversionResult = {
         success: false,
         outputPath: '',
         error: 'Invalid preset selected',
-      });
-      return;
+      };
+      mainWindow?.webContents.send('conversion-complete', invalidPresetResult);
+      return invalidPresetResult;
     }
 
     const gpu = gpuOverride ?? settings.gpu;
@@ -250,48 +328,77 @@ ipcMain.handle(
       const codec = codecCategory as 'av1' | 'h264' | 'h265';
       const encoderCheck = await checkGPUEncoderSupport(gpu, codec);
       if (!encoderCheck.available && encoderCheck.error) {
-        mainWindow?.webContents.send('gpu-encoder-error', encoderCheck.error);
-        return;
+        if (!suppressGpuErrorEvent) {
+          mainWindow?.webContents.send('gpu-encoder-error', encoderCheck.error);
+        }
+        const unsupportedEncoderResult: ConversionResult = {
+          success: false,
+          outputPath: '',
+          error: encoderCheck.error.message,
+        };
+        mainWindow?.webContents.send('conversion-complete', unsupportedEncoderResult);
+        return unsupportedEncoderResult;
       }
     }
 
-    const outputDir = settings.outputDirectory || path.dirname(inputPath);
+    const requestedOutputDir =
+      typeof options?.outputDirectory === 'string' ? options.outputDirectory.trim() : '';
+    const configuredOutputDir =
+      requestedOutputDir || (typeof settings.outputDirectory === 'string' ? settings.outputDirectory : '');
+    const outputDir = path.isAbsolute(configuredOutputDir)
+      ? configuredOutputDir
+      : path.dirname(inputPath);
     isConversionActive = true;
 
-    const result = await convertVideo(
-      inputPath,
-      outputDir,
-      preset,
-      gpu,
-      (progress) => {
-        mainWindow?.webContents.send('conversion-progress', progress);
-      },
-      settings.showDebugOutput
-        ? (message) => {
-            mainWindow?.webContents.send('conversion-log', message);
-          }
-        : undefined
-    );
+    let result: ConversionResult;
+    try {
+      result = await convertVideo(
+        inputPath,
+        outputDir,
+        preset,
+        gpu,
+        (progress) => {
+          mainWindow?.webContents.send('conversion-progress', progress);
+        },
+        showDebugOutput
+          ? (message) => {
+              mainWindow?.webContents.send('conversion-log', message);
+            }
+          : undefined,
+        {
+          removeSpacesFromOutputName:
+            options?.removeSpacesFromFilenames ?? settings.removeSpacesFromFilenames,
+        }
+      );
+    } catch (err) {
+      result = {
+        success: false,
+        outputPath: '',
+        error: err instanceof Error ? err.message : String(err),
+      };
+    } finally {
+      isConversionActive = false;
+    }
 
-    isConversionActive = false;
     lastOutputPath = result.outputPath;
 
     if (!result.success && result.error && gpu !== 'cpu' && isVideoPreset) {
       const codec = codecCategory as 'av1' | 'h264' | 'h265';
       const gpuError = parseGPUError(result.error, gpu, codec);
       if (gpuError) {
-        mainWindow?.webContents.send('gpu-encoder-error', gpuError);
-        return;
+        if (!suppressGpuErrorEvent) {
+          mainWindow?.webContents.send('gpu-encoder-error', gpuError);
+        }
       }
     }
 
     mainWindow?.webContents.send('conversion-complete', result);
+    return result;
   }
 );
 
 ipcMain.handle('cancel-conversion', (_, force?: boolean) => {
   cancelConversion(!!force);
-  isConversionActive = false;
 });
 
 ipcMain.handle('get-file-info', async (_, filePath: string) => {
@@ -325,7 +432,7 @@ ipcMain.handle('save-settings', (_, newSettings: Partial<AppSettings>) => {
     newSettings.updateChannel !== undefined
       ? normalizeUpdateChannel(newSettings.updateChannel)
       : settings.updateChannel;
-  settings = { ...settings, ...newSettings, updateChannel: nextUpdateChannel };
+  settings = normalizeSettings({ ...settings, ...newSettings, updateChannel: nextUpdateChannel });
   saveSettings();
   if (newSettings.updateChannel !== undefined) {
     setUpdateChannel(nextUpdateChannel);
@@ -356,13 +463,31 @@ ipcMain.handle('get-platform', () => {
   return process.platform;
 });
 
-ipcMain.handle('open-path', async (_, filePath: string) => {
-  shell.showItemInFolder(filePath);
+ipcMain.handle('open-path', async (event: IpcMainInvokeEvent, filePath: string) => {
+  assertTrustedIpcSender(event);
+  if (typeof filePath !== 'string' || filePath.trim().length === 0) {
+    return;
+  }
+  if (!path.isAbsolute(filePath)) {
+    return;
+  }
+  const resolvedPath = path.resolve(filePath);
+  shell.showItemInFolder(resolvedPath);
 });
 
-ipcMain.handle('open-external', async (_, url: string) => {
-  if (url) {
-    await shell.openExternal(url);
+ipcMain.handle('open-external', async (event: IpcMainInvokeEvent, url: string) => {
+  assertTrustedIpcSender(event);
+  if (!url) {
+    return;
+  }
+  try {
+    const parsed = new URL(url);
+    if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') {
+      return;
+    }
+    await shell.openExternal(parsed.toString());
+  } catch {
+    return;
   }
 });
 
@@ -373,6 +498,8 @@ ipcMain.handle('get-system-theme', () => {
 ipcMain.handle('reset-settings', () => {
   settings = { ...defaultSettings };
   setUpdateChannel(settings.updateChannel);
+  setUseSystemFFmpeg(settings.useSystemFFmpeg);
+  clearFFmpegCaches();
   saveSettings();
   return settings;
 });

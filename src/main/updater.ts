@@ -9,6 +9,7 @@ let updatesDisabled = false;
 let updateAvailable = false;
 let silentCheck = false;
 let updateChannel: UpdateChannel = 'auto';
+let listenersRegistered = false;
 
 const isPrereleaseVersion = (version: string): boolean => {
   return /-(beta|alpha|rc)/i.test(version);
@@ -75,6 +76,17 @@ const hasRegistryDwordValue = (output: string, names: string[]): boolean => {
   return false;
 };
 
+const getMainWindow = (): BrowserWindow | null => {
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    return null;
+  }
+  return mainWindow;
+};
+
+export const setUpdaterWindow = (window: BrowserWindow | null): void => {
+  mainWindow = window;
+};
+
 export const initUpdater = (window: BrowserWindow): void => {
   mainWindow = window;
   updatesDisabled = checkMsiInstallation();
@@ -88,19 +100,24 @@ export const initUpdater = (window: BrowserWindow): void => {
   autoUpdater.autoInstallOnAppQuit = true;
   applyUpdaterChannel();
 
+  if (listenersRegistered) {
+    return;
+  }
+
   autoUpdater.on('checking-for-update', () => {
     sendStatusToWindow('Checking for updates...');
   });
 
   autoUpdater.on('update-available', (info: UpdateInfo) => {
     updateAvailable = true;
-    if (mainWindow) {
-      mainWindow.webContents.send('update-available', true);
+    const windowRef = getMainWindow();
+    if (windowRef) {
+      windowRef.webContents.send('update-available', true);
     }
 
-    if (!silentCheck) {
+    if (!silentCheck && windowRef) {
       dialog
-        .showMessageBox(mainWindow!, {
+        .showMessageBox(windowRef, {
           type: 'info',
           title: 'Update Available',
           message: `A new version (${info.version}) is available. Would you like to download it now?`,
@@ -118,13 +135,14 @@ export const initUpdater = (window: BrowserWindow): void => {
   });
 
   autoUpdater.on('update-not-available', () => {
-    if (mainWindow) {
-      mainWindow.webContents.send('update-available', false);
+    const windowRef = getMainWindow();
+    if (windowRef) {
+      windowRef.webContents.send('update-available', false);
     }
 
-    if (!silentCheck) {
+    if (!silentCheck && windowRef) {
       sendStatusToWindow('You have the latest version.');
-      dialog.showMessageBox(mainWindow!, {
+      dialog.showMessageBox(windowRef, {
         type: 'info',
         title: 'No Updates',
         message: 'You are already running the latest version of CONV2.',
@@ -138,8 +156,9 @@ export const initUpdater = (window: BrowserWindow): void => {
     const wasSilent = silentCheck;
     silentCheck = false;
     sendStatusToWindow(`Update error: ${err.message}`);
-    if (!wasSilent) {
-      dialog.showMessageBox(mainWindow!, {
+    const windowRef = getMainWindow();
+    if (!wasSilent && windowRef) {
+      dialog.showMessageBox(windowRef, {
         type: 'error',
         title: 'Update Error',
         message: `An error occurred while checking for updates: ${err.message}`,
@@ -152,14 +171,19 @@ export const initUpdater = (window: BrowserWindow): void => {
     const message = `Download speed: ${formatBytes(progressObj.bytesPerSecond)}/s - ${Math.round(progressObj.percent)}% (${formatBytes(progressObj.transferred)}/${formatBytes(progressObj.total)})`;
     sendStatusToWindow(message);
 
-    if (mainWindow) {
-      mainWindow.webContents.send('update-download-progress', progressObj.percent);
+    const windowRef = getMainWindow();
+    if (windowRef) {
+      windowRef.webContents.send('update-download-progress', progressObj.percent);
     }
   });
 
   autoUpdater.on('update-downloaded', (info: UpdateInfo) => {
+    const windowRef = getMainWindow();
+    if (!windowRef) {
+      return;
+    }
     dialog
-      .showMessageBox(mainWindow!, {
+      .showMessageBox(windowRef, {
         type: 'info',
         title: 'Update Ready',
         message: `Version ${info.version} has been downloaded. The application will restart to install the update.`,
@@ -172,12 +196,15 @@ export const initUpdater = (window: BrowserWindow): void => {
         }
       });
   });
+
+  listenersRegistered = true;
 };
 
 export const checkForUpdates = (): void => {
   if (updatesDisabled) {
-    if (mainWindow) {
-      dialog.showMessageBox(mainWindow, {
+    const windowRef = getMainWindow();
+    if (windowRef) {
+      dialog.showMessageBox(windowRef, {
         type: 'info',
         title: 'Updates Disabled',
         message:
@@ -216,8 +243,9 @@ export const setUpdateChannel = (channel: UpdateChannel): void => {
 };
 
 const sendStatusToWindow = (message: string): void => {
-  if (mainWindow) {
-    mainWindow.webContents.send('update-status', message);
+  const windowRef = getMainWindow();
+  if (windowRef) {
+    windowRef.webContents.send('update-status', message);
   }
 };
 

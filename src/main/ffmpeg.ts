@@ -100,6 +100,10 @@ export interface ConversionResult {
   error?: string;
 }
 
+export interface ConvertVideoOptions {
+  removeSpacesFromOutputName?: boolean;
+}
+
 export interface VideoInfo {
   duration: number;
   size: number;
@@ -596,6 +600,23 @@ const parseProgress = (line: string, totalDuration: number): ConversionProgress 
   return null;
 };
 
+export const resolveUniqueOutputPath = (
+  outputDir: string,
+  outputBaseName: string,
+  extension: string
+): string => {
+  let suffix = 0;
+  while (true) {
+    const suffixPart = suffix === 0 ? '' : `_${suffix}`;
+    const candidate = path.join(outputDir, `${outputBaseName}_converted${suffixPart}.${extension}`);
+    const inProgress = [...outputPathByProcess.values()].includes(candidate);
+    if (!fs.existsSync(candidate) && !inProgress) {
+      return candidate;
+    }
+    suffix += 1;
+  }
+};
+
 export const ensureMp4PlaybackCompatibilityArgs = (
   preset: Preset,
   presetArgs: string[]
@@ -635,10 +656,16 @@ export const convertVideo = async (
   preset: Preset,
   gpu: GPUVendor,
   onProgress: (progress: ConversionProgress) => void,
-  onLog?: (message: string) => void
+  onLog?: (message: string) => void,
+  options: ConvertVideoOptions = {}
 ): Promise<ConversionResult> => {
   const inputBasename = path.basename(inputPath, path.extname(inputPath));
-  const outputPath = path.join(outputDir, `${inputBasename}_converted.${preset.extension}`);
+  const basenameWithoutSpaces = inputBasename.replace(/\s+/g, '');
+  const outputBaseName =
+    options.removeSpacesFromOutputName && basenameWithoutSpaces.length > 0
+      ? basenameWithoutSpaces
+      : inputBasename;
+  const outputPath = resolveUniqueOutputPath(outputDir, outputBaseName, preset.extension);
 
   let totalDuration = 0;
   let inputCodec: string | undefined;
