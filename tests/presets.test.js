@@ -101,3 +101,13 @@ test('avi gpu codec resolution follows advanced format settings context', () => 
   });
   assert.equal(overriddenCodec, 'h265');
 });
+
+test('avi presets carry explicit tier metadata', () => {
+  const aviPresets = presets.filter((entry) => entry.category === 'avi');
+  const tierById = Object.fromEntries(aviPresets.map((entry) => [entry.id, entry.aviTier]));
+  assert.deepEqual(tierById, {
+    'avi-best-quality': 'bestQuality',
+    'avi-best-compression': 'bestCompression',
+    'avi-balanced': 'balanced',
+  });
+});

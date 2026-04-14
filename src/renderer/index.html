@@ -145,7 +145,15 @@
         <div class="progress-container" id="progressContainer">
           <div class="progress-wrapper">
             <div class="progress-bar">
-              <div class="progress-fill" id="progressFill"></div>
+              <div
+                class="progress-fill"
+                id="progressFill"
+                role="progressbar"
+                aria-label="Conversion progress"
+                aria-valuemin="0"
+                aria-valuemax="100"
+                aria-valuenow="0"
+              ></div>
             </div>
           </div>
           <div class="progress-info">
@@ -162,7 +170,13 @@
         </div>
 
         <div class="status-row">
-          <div class="status-message" id="statusMessage">
+          <div
+            class="status-message"
+            id="statusMessage"
+            role="status"
+            aria-live="polite"
+            aria-atomic="true"
+          >
             <span class="status-icon"></span>
             <span class="status-text"></span>
           </div>
@@ -222,10 +236,18 @@
     </div>
 
     <div class="modal-overlay" id="settingsModal">
-      <div class="modal settings-modal">
+      <div
+        class="modal settings-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="settingsTitle"
+        tabindex="-1"
+      >
         <div class="modal-header">
-          <h2>Settings</h2>
-          <button class="modal-close" id="closeSettings">&times;</button>
+          <h2 id="settingsTitle">Settings</h2>
+          <button class="modal-close" id="closeSettings" aria-label="Close settings">
+            &times;
+          </button>
         </div>
 
         <div class="settings-content">
@@ -1410,10 +1432,16 @@
     </div>
 
     <div class="modal-overlay" id="creditsModal">
-      <div class="modal credits-modal">
+      <div
+        class="modal credits-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="creditsTitle"
+        tabindex="-1"
+      >
         <div class="modal-header">
-          <h2>Licenses &amp; Credits</h2>
-          <button class="modal-close" id="closeCredits">&times;</button>
+          <h2 id="creditsTitle">Licenses &amp; Credits</h2>
+          <button class="modal-close" id="closeCredits" aria-label="Close credits">&times;</button>
         </div>
         <div class="credits-body">
           <p class="credits-description">
@@ -1429,9 +1457,15 @@
     </div>
 
     <div class="modal-overlay" id="dynamicModal">
-      <div class="modal">
+      <div
+        class="modal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="dynamicModalTitle"
+        tabindex="-1"
+      >
         <div class="modal-header">
-          <h2>Title</h2>
+          <h2 id="dynamicModalTitle">Title</h2>
         </div>
         <div class="modal-body">
           <p>Message</p>
@@ -1444,10 +1478,16 @@
     </div>
 
     <div class="modal-overlay" id="logsModal">
-      <div class="modal logs-modal">
+      <div
+        class="modal logs-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="logsTitle"
+        tabindex="-1"
+      >
         <div class="modal-header">
-          <h2>FFmpeg Logs</h2>
-          <button class="modal-close" id="closeLogs">&times;</button>
+          <h2 id="logsTitle">FFmpeg Logs</h2>
+          <button class="modal-close" id="closeLogs" aria-label="Close logs">&times;</button>
         </div>
         <div class="logs-body">
           <pre id="logsContent"></pre>

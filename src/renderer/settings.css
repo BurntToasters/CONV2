@@ -607,6 +607,26 @@
 }
 
 @media (max-width: 760px) {
+  .settings-row {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 8px;
+  }
+
+  .settings-label {
+    white-space: normal;
+    min-width: 0;
+  }
+
+  .settings-inline {
+    width: 100%;
+    justify-content: flex-start;
+  }
+
+  .output-path {
+    white-space: normal;
+  }
+
   .advanced-tier-grid,
   .gif-tier-grid {
     grid-template-columns: 1fr;

@@ -146,6 +146,15 @@ interface VideoInfo {
   format: string;
 }
 
+interface ConversionProgressPayload {
+  percent: number;
+  frame: number;
+  fps: number;
+  time: string;
+  bitrate: string;
+  speed: string;
+}
+
 interface ConversionResult {
   success: boolean;
   outputPath: string;
@@ -211,6 +220,11 @@ let cancelRequested = false;
 let closeDynamicModal: (() => void) | null = null;
 let fileSelectionToken = 0;
 let advancedSaveDebounceTimer: ReturnType<typeof setTimeout> | null = null;
+let advancedSettingsSaveQueue: Promise<void> = Promise.resolve();
+let pendingLogBuffer = '';
+let logFlushScheduled = false;
+let pendingProgressUpdate: ConversionProgressPayload | null = null;
+let progressUpdateScheduled = false;
 
 const getRequiredElement = <T extends HTMLElement>(id: string): T => {
   const element = document.getElementById(id);
@@ -541,6 +555,62 @@ const setFormatPanel = (panelId: FormatPanelId): void => {
   });
 };
 
+const getFocusableElements = (container: HTMLElement): HTMLElement[] => {
+  return Array.from(
+    container.querySelectorAll<HTMLElement>(
+      'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+    )
+  ).filter((element) => element.offsetParent !== null);
+};
+
+const focusFirstInteractiveElement = (container: HTMLElement): void => {
+  const focusables = getFocusableElements(container);
+  if (focusables.length > 0) {
+    focusables[0].focus();
+  }
+};
+
+const getTopVisibleModal = (): HTMLDivElement | null => {
+  if (elements.dynamicModal.classList.contains('visible')) {
+    return elements.dynamicModal;
+  }
+  if (elements.settingsModal.classList.contains('visible')) {
+    return elements.settingsModal;
+  }
+  if (elements.logsModal.classList.contains('visible')) {
+    return elements.logsModal;
+  }
+  if (elements.creditsModal.classList.contains('visible')) {
+    return elements.creditsModal;
+  }
+  return null;
+};
+
+const trapFocusInModal = (event: KeyboardEvent, modalOverlay: HTMLDivElement): void => {
+  const modal = modalOverlay.querySelector<HTMLElement>('.modal');
+  if (!modal) {
+    return;
+  }
+  const focusables = getFocusableElements(modal);
+  if (focusables.length === 0) {
+    return;
+  }
+  const first = focusables[0];
+  const last = focusables[focusables.length - 1];
+  const active = document.activeElement as HTMLElement | null;
+  if (event.shiftKey) {
+    if (active === first || !active || !modal.contains(active)) {
+      event.preventDefault();
+      last.focus();
+    }
+    return;
+  }
+  if (active === last || !active || !modal.contains(active)) {
+    event.preventDefault();
+    first.focus();
+  }
+};
+
 const handleTabKeyboardNavigation = (
   event: KeyboardEvent,
   tabs: HTMLButtonElement[],
@@ -791,12 +861,20 @@ const readAdvancedFormatControls = (): AdvancedFormatSettings => {
   };
 };
 
-const saveAdvancedFormatSettingsFromControls = async (): Promise<void> => {
+const enqueueAdvancedSettingsTask = (task: () => Promise<void>): Promise<void> => {
+  const nextTask = advancedSettingsSaveQueue.then(task);
+  advancedSettingsSaveQueue = nextTask.catch(() => undefined);
+  return nextTask;
+};
+
+const persistAdvancedFormatSettings = async (
+  nextAdvancedSettings: AdvancedFormatSettings
+): Promise<void> => {
   const previousSettings = settings.advancedFormatSettings;
 
   try {
     await window.electronAPI.saveSettings({
-      advancedFormatSettings: readAdvancedFormatControls(),
+      advancedFormatSettings: nextAdvancedSettings,
     });
     settings = await window.electronAPI.getSettings();
     setAdvancedFormatControlValues(settings.advancedFormatSettings);
@@ -810,31 +888,43 @@ const saveAdvancedFormatSettingsFromControls = async (): Promise<void> => {
   }
 };
 
+const queueAdvancedSettingsSaveFromControls = (): void => {
+  const nextAdvancedSettings = readAdvancedFormatControls();
+  void enqueueAdvancedSettingsTask(() => persistAdvancedFormatSettings(nextAdvancedSettings));
+};
+
 type AdvancedFormatKey = keyof AdvancedFormatSettings;
 
 const resetFormatSettingsToDefaults = async (
   format: AdvancedFormatKey,
   label: string
 ): Promise<void> => {
-  const previousSettings = settings.advancedFormatSettings;
-
-  try {
-    const defaults = await window.electronAPI.getDefaultAdvancedFormatSettings();
-    await window.electronAPI.saveSettings({
-      advancedFormatSettings: {
-        [format]: defaults[format],
-      } as unknown as AdvancedFormatSettings,
-    });
-    settings = await window.electronAPI.getSettings();
-    setAdvancedFormatControlValues(settings.advancedFormatSettings);
-  } catch (err) {
-    settings.advancedFormatSettings = previousSettings;
-    setAdvancedFormatControlValues(previousSettings);
-    showStatus(
-      'error',
-      `Failed to reset ${label} settings: ${err instanceof Error ? err.message : String(err)}`
-    );
+  if (advancedSaveDebounceTimer) {
+    clearTimeout(advancedSaveDebounceTimer);
+    advancedSaveDebounceTimer = null;
   }
+
+  await enqueueAdvancedSettingsTask(async () => {
+    const previousSettings = settings.advancedFormatSettings;
+
+    try {
+      const defaults = await window.electronAPI.getDefaultAdvancedFormatSettings();
+      await window.electronAPI.saveSettings({
+        advancedFormatSettings: {
+          [format]: defaults[format],
+        } as unknown as AdvancedFormatSettings,
+      });
+      settings = await window.electronAPI.getSettings();
+      setAdvancedFormatControlValues(settings.advancedFormatSettings);
+    } catch (err) {
+      settings.advancedFormatSettings = previousSettings;
+      setAdvancedFormatControlValues(previousSettings);
+      showStatus(
+        'error',
+        `Failed to reset ${label} settings: ${err instanceof Error ? err.message : String(err)}`
+      );
+    }
+  });
 };
 
 const scheduleAdvancedSettingsSave = (): void => {
@@ -843,7 +933,7 @@ const scheduleAdvancedSettingsSave = (): void => {
   }
   advancedSaveDebounceTimer = setTimeout(() => {
     advancedSaveDebounceTimer = null;
-    void saveAdvancedFormatSettingsFromControls();
+    queueAdvancedSettingsSaveFromControls();
   }, 220);
 };
 
@@ -853,7 +943,31 @@ const flushPendingAdvancedSettingsSave = (): void => {
   }
   clearTimeout(advancedSaveDebounceTimer);
   advancedSaveDebounceTimer = null;
-  void saveAdvancedFormatSettingsFromControls();
+  queueAdvancedSettingsSaveFromControls();
+};
+
+const flushLogBuffer = (): void => {
+  if (pendingLogBuffer.length === 0) {
+    return;
+  }
+  elements.logsContent.textContent += pendingLogBuffer;
+  pendingLogBuffer = '';
+  elements.logsContent.scrollTop = elements.logsContent.scrollHeight;
+};
+
+const appendLogMessage = (message: string): void => {
+  if (!message) {
+    return;
+  }
+  pendingLogBuffer += message;
+  if (logFlushScheduled) {
+    return;
+  }
+  logFlushScheduled = true;
+  requestAnimationFrame(() => {
+    logFlushScheduled = false;
+    flushLogBuffer();
+  });
 };
 
 const getCheckingUpdateButtonHTML = (): string =>
@@ -927,6 +1041,7 @@ const showModal = (options: ModalOptions): void => {
 
   modal.addEventListener('click', overlayListener);
   modal.classList.add('visible');
+  focusFirstInteractiveElement(modal);
   closeDynamicModal = closeByEscape;
 };
 
@@ -1049,8 +1164,12 @@ const renderLicenses = (entries: LicenseDisplayEntry[]): void => {
 };
 
 const openCreditsModal = async (): Promise<void> => {
-  elements.settingsModal.classList.remove('visible');
+  if (elements.settingsModal.classList.contains('visible')) {
+    flushPendingAdvancedSettingsSave();
+    elements.settingsModal.classList.remove('visible');
+  }
   elements.creditsModal.classList.add('visible');
+  focusFirstInteractiveElement(elements.creditsModal);
   elements.licensesList.innerHTML = '<div class="license-item">Loading credits...</div>';
 
   try {
@@ -1253,19 +1372,37 @@ const applyTheme = async () => {
 
 const setupKeyboardShortcuts = () => {
   document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape') {
-      if (elements.settingsModal.classList.contains('visible')) {
-        flushPendingAdvancedSettingsSave();
-        elements.settingsModal.classList.remove('visible');
+    if (e.key === 'Tab') {
+      const topModal = getTopVisibleModal();
+      if (topModal) {
+        trapFocusInModal(e, topModal);
       }
-      if (elements.dynamicModal.classList.contains('visible')) {
+    }
+
+    if (e.key === 'Escape') {
+      const topModal = getTopVisibleModal();
+      if (!topModal) {
+        return;
+      }
+      e.preventDefault();
+      if (topModal === elements.dynamicModal) {
         if (closeDynamicModal) {
           closeDynamicModal();
         } else {
           elements.dynamicModal.classList.remove('visible');
         }
+        return;
       }
-      if (elements.creditsModal.classList.contains('visible')) {
+      if (topModal === elements.settingsModal) {
+        flushPendingAdvancedSettingsSave();
+        elements.settingsModal.classList.remove('visible');
+        return;
+      }
+      if (topModal === elements.logsModal) {
+        elements.logsModal.classList.remove('visible');
+        return;
+      }
+      if (topModal === elements.creditsModal) {
         closeCreditsModal();
       }
     }
@@ -1273,6 +1410,22 @@ const setupKeyboardShortcuts = () => {
     if ((e.ctrlKey || e.metaKey) && e.key === 'o') {
       e.preventDefault();
       elements.fileInput.click();
+      return;
+    }
+
+    if ((e.ctrlKey || e.metaKey) && (e.key === ',' || e.code === 'Comma')) {
+      e.preventDefault();
+      const hasBlockingModal =
+        elements.dynamicModal.classList.contains('visible') ||
+        elements.logsModal.classList.contains('visible') ||
+        elements.creditsModal.classList.contains('visible');
+      if (!hasBlockingModal) {
+        setSettingsPanel('settingsGeneralPanel');
+        setAdvancedFormatControlValues(settings.advancedFormatSettings);
+        elements.settingsModal.classList.add('visible');
+        focusFirstInteractiveElement(elements.settingsModal);
+      }
+      return;
     }
 
     if (e.key === 'Enter' && !e.ctrlKey && !e.metaKey) {
@@ -1287,6 +1440,7 @@ const setupKeyboardShortcuts = () => {
       const isModalOpen =
         elements.settingsModal.classList.contains('visible') ||
         elements.dynamicModal.classList.contains('visible') ||
+        elements.logsModal.classList.contains('visible') ||
         elements.creditsModal.classList.contains('visible');
       if (
         !isModalOpen &&
@@ -1357,8 +1511,12 @@ const setupEventListeners = () => {
         });
       }
 
-      control.addEventListener('change', async () => {
-        await saveAdvancedFormatSettingsFromControls();
+      control.addEventListener('change', () => {
+        if (control instanceof HTMLInputElement && control.type === 'number') {
+          flushPendingAdvancedSettingsSave();
+          return;
+        }
+        queueAdvancedSettingsSaveFromControls();
       });
     });
 
@@ -1556,6 +1714,7 @@ const setupEventListeners = () => {
     setSettingsPanel('settingsGeneralPanel');
     setAdvancedFormatControlValues(settings.advancedFormatSettings);
     elements.settingsModal.classList.add('visible');
+    focusFirstInteractiveElement(elements.settingsModal);
   });
 
   elements.closeSettings.addEventListener('click', () => {
@@ -1571,7 +1730,9 @@ const setupEventListeners = () => {
   });
 
   elements.showLogsBtn.addEventListener('click', () => {
+    flushLogBuffer();
     elements.logsModal.classList.add('visible');
+    focusFirstInteractiveElement(elements.logsModal);
   });
 
   elements.closeLogs.addEventListener('click', () => {
@@ -1585,10 +1746,12 @@ const setupEventListeners = () => {
   });
 
   elements.clearLogsBtn.addEventListener('click', () => {
+    pendingLogBuffer = '';
     elements.logsContent.textContent = '';
   });
 
   elements.copyLogsBtn.addEventListener('click', () => {
+    flushLogBuffer();
     navigator.clipboard.writeText(elements.logsContent.textContent || '');
     const originalHTML = elements.copyLogsBtn.innerHTML;
     elements.copyLogsBtn.innerHTML =
@@ -1683,29 +1846,47 @@ const setupEventListeners = () => {
   });
 
   window.electronAPI.onConversionProgress((progress) => {
-    elements.progressFill.style.width = `${progress.percent}%`;
-    elements.progressPercent.textContent = `${Math.floor(progress.percent)}%`;
-    elements.progressTime.textContent = progress.time;
+    pendingProgressUpdate = progress;
+    if (progressUpdateScheduled) {
+      return;
+    }
 
-    if (progress.percent > 0 && conversionStartTime > 0) {
-      const elapsed = (Date.now() - conversionStartTime) / 1000;
-      const estimatedTotal = elapsed / (progress.percent / 100);
-      const remaining = estimatedTotal - elapsed;
-      if (remaining > 0 && remaining < 86400) {
-        elements.progressEta.textContent = `ETA: ${formatDuration(remaining)}`;
+    progressUpdateScheduled = true;
+    requestAnimationFrame(() => {
+      progressUpdateScheduled = false;
+      const latestProgress = pendingProgressUpdate;
+      pendingProgressUpdate = null;
+      if (!latestProgress) {
+        return;
       }
-    }
 
-    if (progress.fps > 0) {
-      elements.progressSpeed.textContent = `${progress.fps.toFixed(1)} fps`;
-    } else if (progress.speed !== 'N/A') {
-      elements.progressSpeed.textContent = progress.speed;
-    }
+      elements.progressFill.style.width = `${latestProgress.percent}%`;
+      elements.progressFill.setAttribute(
+        'aria-valuenow',
+        String(Math.floor(latestProgress.percent))
+      );
+      elements.progressPercent.textContent = `${Math.floor(latestProgress.percent)}%`;
+      elements.progressTime.textContent = latestProgress.time;
+
+      if (latestProgress.percent > 0 && conversionStartTime > 0) {
+        const elapsed = (Date.now() - conversionStartTime) / 1000;
+        const estimatedTotal = elapsed / (latestProgress.percent / 100);
+        const remaining = estimatedTotal - elapsed;
+        if (remaining > 0 && remaining < 86400) {
+          elements.progressEta.textContent = `ETA: ${formatDuration(remaining)}`;
+        }
+      }
+
+      if (latestProgress.fps > 0) {
+        elements.progressSpeed.textContent = `${latestProgress.fps.toFixed(1)} fps`;
+      } else if (latestProgress.speed !== 'N/A') {
+        elements.progressSpeed.textContent = latestProgress.speed;
+      }
+    });
   });
 
   window.electronAPI.onConversionLog((message) => {
-    elements.logsContent.textContent += message;
-    elements.logsContent.scrollTop = elements.logsContent.scrollHeight;
+    appendLogMessage(message);
   });
 
   window.electronAPI.onGPUEncoderError((error: GPUEncoderError) => {
@@ -1812,6 +1993,7 @@ const showGPUErrorModal = (error: GPUEncoderError): void => {
 
   modal.addEventListener('click', overlayListener);
   modal.classList.add('visible');
+  focusFirstInteractiveElement(modal);
   closeDynamicModal = closeByEscape;
 };
 
@@ -1894,7 +2076,7 @@ const runSingleConversion = async (
   }
 
   if (batchOptions.showDebugOutput && totalFiles > 1) {
-    elements.logsContent.textContent += `\n=== [${fileIndex + 1}/${totalFiles}] ${fileName} ===\n`;
+    appendLogMessage(`\n=== [${fileIndex + 1}/${totalFiles}] ${fileName} ===\n`);
   }
 
   return window.electronAPI.startConversion(inputPath, presetId, batchOptions.gpu, {
@@ -1930,6 +2112,9 @@ const startConversion = async () => {
   elements.cancelBtn.style.display = 'inline-flex';
   elements.progressContainer.classList.add('visible');
   elements.showInFolderBtn.style.display = 'none';
+  pendingProgressUpdate = null;
+  progressUpdateScheduled = false;
+  pendingLogBuffer = '';
   elements.logsContent.textContent = '';
   hideStatus();
 

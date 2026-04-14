@@ -435,7 +435,7 @@ const getHardwareDecodeArgs = async (gpu: GPUVendor, codec?: string): Promise<st
     if (decoder && (await checkDecoderAvailable(decoder))) {
       return ['-hwaccel', 'videotoolbox', '-c:v', decoder];
     }
-    return ['-hwaccel', 'videotoolbox'];
+    return [];
   }
 
   if (process.platform === 'win32') {

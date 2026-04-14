@@ -24,6 +24,7 @@ export interface Preset {
   category: PresetCategory;
   extension: string;
   gpuCodec?: GPUCodec;
+  aviTier?: keyof AviTierCollection;
   getArgs: (
     inputFile: string,
     outputFile: string,
@@ -242,19 +243,6 @@ const buildAviArgs = (
   return args;
 };
 
-const getAviTierFromPresetId = (presetId: string): keyof AviTierCollection | null => {
-  if (presetId === 'avi-best-quality') {
-    return 'bestQuality';
-  }
-  if (presetId === 'avi-best-compression') {
-    return 'bestCompression';
-  }
-  if (presetId === 'avi-balanced') {
-    return 'balanced';
-  }
-  return null;
-};
-
 export const PRESET_CATEGORY_ORDER: PresetCategory[] = [
   'av1',
   'h264',
@@ -293,12 +281,9 @@ export const getPresetGpuCodec = (preset: Preset, context?: PresetContext): GPUC
     return preset.category;
   }
 
-  if (preset.category === 'avi') {
-    const aviTier = getAviTierFromPresetId(preset.id);
-    if (aviTier) {
-      const settings = getNormalizedAdvancedSettings(context);
-      return settings.avi.tiers[aviTier].codec;
-    }
+  if (preset.category === 'avi' && preset.aviTier) {
+    const settings = getNormalizedAdvancedSettings(context);
+    return settings.avi.tiers[preset.aviTier].codec;
   }
 
   if (preset.gpuCodec) {
@@ -418,6 +403,7 @@ export const presets: Preset[] = [
     name: 'AVI - Best Quality',
     description: 'AVI container with H.265 best quality encoding (CRF 16, veryslow)',
     category: 'avi',
+    aviTier: 'bestQuality',
     gpuCodec: 'h265',
     extension: 'avi',
     getArgs: (input, output, gpu, context) =>
@@ -428,6 +414,7 @@ export const presets: Preset[] = [
     name: 'AVI - Best Compression',
     description: 'AVI container with H.265 best compression (CRF 26, veryslow)',
     category: 'avi',
+    aviTier: 'bestCompression',
     gpuCodec: 'h265',
     extension: 'avi',
     getArgs: (input, output, gpu, context) =>
@@ -438,6 +425,7 @@ export const presets: Preset[] = [
     name: 'AVI - Balanced',
     description: 'AVI container with H.264 balanced encoding',
     category: 'avi',
+    aviTier: 'balanced',
     gpuCodec: 'h264',
     extension: 'avi',
     getArgs: (input, output, gpu, context) => buildAviArgs(input, output, gpu, 'balanced', context),
