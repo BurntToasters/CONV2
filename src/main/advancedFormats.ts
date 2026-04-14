@@ -282,9 +282,9 @@ export const createDefaultH265AdvancedSettings = (): H265AdvancedSettings => ({
     quality: { quality: 22, preset: 'slow', audioBitrateKbps: 192, useAdvancedParams: false },
     balanced: { quality: 28, preset: 'medium', audioBitrateKbps: 128, useAdvancedParams: false },
     bestCompression: {
-      quality: 26,
+      quality: 32,
       preset: 'veryslow',
-      audioBitrateKbps: 128,
+      audioBitrateKbps: 96,
       useAdvancedParams: true,
     },
   },

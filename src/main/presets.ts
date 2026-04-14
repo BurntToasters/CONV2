@@ -101,6 +101,20 @@ const getGifLoopArg = (context?: PresetContext): string => {
 
 const toBitrateKbps = (value: number): string => `${value}k`;
 
+const getQualityArgs = (gpu: GPUVendor, quality: number): string[] => {
+  switch (gpu) {
+    case 'nvidia':
+      // -b:v 0 required to enable proper CQ mode; without it, NVENC uses unconstrained VBR
+      return ['-cq', String(quality), '-b:v', '0'];
+    case 'amd':
+      return ['-rc', 'cqp', '-qp_i', String(quality), '-qp_p', String(quality)];
+    case 'intel':
+      return ['-global_quality', String(quality)];
+    default:
+      return ['-crf', String(quality)];
+  }
+};
+
 const getGifPaletteArgs = (
   input: string,
   output: string,
@@ -140,10 +154,13 @@ const buildAv1Args = (
   const args = [
     '-i',
     input,
+    '-map',
+    '0:v:0',
+    '-map',
+    '0:a',
     '-c:v',
     encoder,
-    gpu === 'cpu' ? '-crf' : '-cq',
-    String(tierSettings.quality),
+    ...getQualityArgs(gpu, tierSettings.quality),
   ];
 
   if (gpu === 'cpu') {
@@ -169,10 +186,13 @@ const buildH264Args = (
   return [
     '-i',
     input,
+    '-map',
+    '0:v:0',
+    '-map',
+    '0:a',
     '-c:v',
     encoder,
-    gpu === 'cpu' ? '-crf' : '-cq',
-    String(tierSettings.quality),
+    ...getQualityArgs(gpu, tierSettings.quality),
     '-preset',
     tierSettings.preset,
     '-c:a',
@@ -195,10 +215,13 @@ const buildH265Args = (
   const args = [
     '-i',
     input,
+    '-map',
+    '0:v:0',
+    '-map',
+    '0:a',
     '-c:v',
     encoder,
-    gpu === 'cpu' ? '-crf' : '-cq',
-    String(tierSettings.quality),
+    ...getQualityArgs(gpu, tierSettings.quality),
   ];
 
   if (gpu === 'cpu') {
@@ -224,10 +247,13 @@ const buildAviArgs = (
   const args = [
     '-i',
     input,
+    '-map',
+    '0:v:0',
+    '-map',
+    '0:a',
     '-c:v',
     encoder,
-    gpu === 'cpu' ? '-crf' : '-cq',
-    String(tierSettings.quality),
+    ...getQualityArgs(gpu, tierSettings.quality),
   ];
 
   if (tierSettings.codec === 'h264') {
@@ -391,7 +417,7 @@ export const presets: Preset[] = [
   {
     id: 'h265-best-compression',
     name: 'H.265/HEVC - Best Compression',
-    description: 'Smallest file size with comparable quality (CRF 26, veryslow)',
+    description: 'Smallest file size, some quality sacrificed (CRF 32, veryslow)',
     category: 'h265',
     gpuCodec: 'h265',
     extension: 'mp4',
@@ -471,7 +497,7 @@ export const presets: Preset[] = [
     description: 'Copy streams to MP4 container (no re-encoding)',
     category: 'remux',
     extension: 'mp4',
-    getArgs: (input, output) => ['-i', input, '-c', 'copy', output],
+    getArgs: (input, output) => ['-i', input, '-map', '0', '-c', 'copy', output],
   },
   {
     id: 'remux-mkv',
@@ -479,7 +505,7 @@ export const presets: Preset[] = [
     description: 'Copy streams to MKV container (no re-encoding)',
     category: 'remux',
     extension: 'mkv',
-    getArgs: (input, output) => ['-i', input, '-c', 'copy', output],
+    getArgs: (input, output) => ['-i', input, '-map', '0', '-c', 'copy', output],
   },
   {
     id: 'remux-webm',
@@ -487,7 +513,7 @@ export const presets: Preset[] = [
     description: 'Copy streams to WebM container (no re-encoding)',
     category: 'remux',
     extension: 'webm',
-    getArgs: (input, output) => ['-i', input, '-c', 'copy', output],
+    getArgs: (input, output) => ['-i', input, '-map', '0', '-c', 'copy', output],
   },
   {
     id: 'audio-mp3',
