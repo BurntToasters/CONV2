@@ -265,8 +265,9 @@
   align-items: center;
   justify-content: space-between;
   gap: 10px;
-  margin-bottom: 12px;
-  padding: 10px 12px;
+  margin-bottom: 10px;
+  padding: 7px 12px;
+  min-height: 36px;
   border-radius: var(--radius-sm);
   border: 1px solid var(--border);
   background: var(--bg-surface);
@@ -279,7 +280,9 @@
 }
 
 .advanced-format-select {
-  width: 180px;
+  width: auto;
+  min-width: 140px;
+  max-width: 220px;
 }
 
 .advanced-tier-grid,
@@ -291,37 +294,92 @@
 
 .advanced-tier-card,
 .gif-tier-card {
+  position: relative;
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   background: var(--bg-surface);
-  padding: 10px 10px 12px;
+  padding: 10px 12px 11px;
+  overflow: hidden;
+}
+
+.advanced-tier-card::before,
+.gif-tier-card::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: var(--tier-color, var(--accent-secondary));
+  opacity: 0.85;
+}
+
+.advanced-tier-card[data-tier='bestQuality'],
+.gif-tier-card[data-tier='bestQuality'] {
+  --tier-color: var(--tier-best);
+}
+.advanced-tier-card[data-tier='quality'],
+.gif-tier-card[data-tier='quality'] {
+  --tier-color: var(--tier-quality);
+}
+.advanced-tier-card[data-tier='balanced'],
+.gif-tier-card[data-tier='balanced'] {
+  --tier-color: var(--tier-balanced);
+}
+.advanced-tier-card[data-tier='bestCompression'],
+.gif-tier-card[data-tier='bestCompression'] {
+  --tier-color: var(--tier-compression);
+}
+.advanced-tier-card[data-tier='smallFile'],
+.advanced-tier-card[data-tier='compression'],
+.gif-tier-card[data-tier='smallFile'] {
+  --tier-color: var(--tier-small);
+}
+.advanced-tier-card[data-tier='fast'] {
+  --tier-color: var(--tier-fast);
 }
 
 .advanced-tier-card h4,
 .gif-tier-card h4 {
-  font-size: 12px;
-  font-weight: 600;
+  font-size: 11.5px;
+  font-weight: 700;
+  letter-spacing: 0.2px;
   color: var(--text-primary);
   margin-bottom: 8px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.advanced-tier-card h4::before,
+.gif-tier-card h4::before {
+  content: '';
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--tier-color, var(--accent-secondary));
+  flex: 0 0 auto;
 }
 
 .advanced-tier-fields,
 .gif-tier-fields {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
 }
 
 .advanced-tier-fields label,
 .gif-tier-fields label {
-  display: flex;
-  flex-direction: column;
-  gap: 5px;
-  font-size: 10px;
-  font-weight: 600;
-  letter-spacing: 0.2px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(96px, 140px);
+  align-items: center;
+  gap: 10px;
+  font-size: 10.5px;
+  font-weight: 500;
+  letter-spacing: 0.1px;
   color: var(--text-secondary);
-  text-transform: uppercase;
+  text-transform: none;
+  min-height: 26px;
 }
 
 .advanced-tier-fields input,
@@ -333,9 +391,10 @@
   border: 1px solid var(--border);
   background: var(--bg-primary);
   color: var(--text-primary);
-  padding: 6px 8px;
+  padding: 4px 7px;
   font-size: 12px;
   font-weight: 500;
+  height: 26px;
 }
 
 .advanced-tier-fields input:focus,
@@ -348,16 +407,24 @@
 }
 
 .advanced-tier-check {
+  display: flex !important;
+  grid-template-columns: none !important;
   flex-direction: row !important;
   align-items: center;
+  justify-content: flex-start;
   gap: 6px !important;
   text-transform: none !important;
   letter-spacing: 0 !important;
   font-size: 11px !important;
+  min-height: 22px !important;
+  margin-top: 2px;
 }
 
 .advanced-tier-check input {
   width: auto;
+  height: auto;
+  padding: 0;
+  box-shadow: none;
 }
 
 .settings-footer {

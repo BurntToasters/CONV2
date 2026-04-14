@@ -440,6 +440,13 @@ const getPresetIntentKey = (preset: Preset): PresetIntentKey => {
   return 'other';
 };
 
+const getPresetIntentTone = (intent: PresetIntentKey): 'quality' | 'speed' | 'size' | 'default' => {
+  if (intent === 'best-quality' || intent === 'quality') return 'quality';
+  if (intent === 'fast') return 'speed';
+  if (intent === 'best-compression' || intent === 'small-file') return 'size';
+  return 'default';
+};
+
 const getPresetIntentLabel = (intent: PresetIntentKey): string => {
   if (intent === 'best-quality') return 'Best Quality';
   if (intent === 'best-compression') return 'Best Compression';
@@ -642,41 +649,34 @@ const renderPresetCards = (groups: PresetGroup[]): void => {
     group.presets.forEach((preset) => {
       const codec = getPresetCodec(preset);
       const intentKey = getPresetIntentKey(preset);
+      const intentTone = getPresetIntentTone(intentKey);
       const card = document.createElement('button');
       card.type = 'button';
       card.className = `preset-card${preset.id === selectedPresetId ? ' is-selected' : ''}`;
       card.setAttribute('role', 'option');
       card.setAttribute('aria-selected', preset.id === selectedPresetId ? 'true' : 'false');
+      card.title = `${getPresetDisplayName(preset)} — ${getPresetIntentLabel(intentKey)}`;
+
+      const dot = document.createElement('span');
+      dot.className = 'preset-intent-dot';
+      dot.dataset.intent = intentTone;
+      dot.setAttribute('aria-hidden', 'true');
 
       const title = document.createElement('div');
       title.className = 'preset-card-title';
       title.textContent = getPresetDisplayName(preset);
 
+      const codecChip = document.createElement('span');
+      codecChip.className = 'preset-card-codec';
+      codecChip.textContent = codec
+        ? `${getCodecLabel(codec)} · ${preset.extension.toUpperCase()}`
+        : preset.extension.toUpperCase();
+
       const description = document.createElement('div');
       description.className = 'preset-card-description';
       description.textContent = preset.description;
 
-      const badges = document.createElement('div');
-      badges.className = 'preset-card-badges';
-
-      if (codec) {
-        const codecBadge = document.createElement('span');
-        codecBadge.className = 'preset-badge';
-        codecBadge.textContent = getCodecLabel(codec);
-        badges.appendChild(codecBadge);
-      }
-
-      const containerBadge = document.createElement('span');
-      containerBadge.className = 'preset-badge';
-      containerBadge.textContent = preset.extension.toUpperCase();
-      badges.appendChild(containerBadge);
-
-      const intentBadge = document.createElement('span');
-      intentBadge.className = 'preset-badge intent';
-      intentBadge.textContent = getPresetIntentLabel(intentKey);
-      badges.appendChild(intentBadge);
-
-      card.append(title, description, badges);
+      card.append(dot, title, codecChip, description);
       card.addEventListener('click', () => {
         selectedPresetId = preset.id;
         renderPresetPicker();
@@ -1814,9 +1814,31 @@ const closeCreditsModal = (): void => {
   elements.creditsModal.classList.remove('visible');
 };
 
+const TIER_LABEL_TO_KEY: Record<string, string> = {
+  'best quality': 'bestQuality',
+  quality: 'quality',
+  balanced: 'balanced',
+  'best compression': 'bestCompression',
+  'small file': 'smallFile',
+  compression: 'compression',
+  fast: 'fast',
+};
+
+const tagAdvancedTierCards = (): void => {
+  const cards = document.querySelectorAll<HTMLElement>('.advanced-tier-card, .gif-tier-card');
+  cards.forEach((card) => {
+    if (card.dataset.tier) return;
+    const heading = card.querySelector('h4');
+    const label = heading?.textContent?.trim().toLowerCase() ?? '';
+    const key = TIER_LABEL_TO_KEY[label];
+    if (key) card.dataset.tier = key;
+  });
+};
+
 const init = async () => {
   convertBtnOriginalHTML = elements.convertBtn.innerHTML;
   checkUpdateDefaultHTML = elements.checkUpdateBtn.innerHTML;
+  tagAdvancedTierCards();
   await checkFFmpeg();
   await checkPlatform();
   await loadSettings();
