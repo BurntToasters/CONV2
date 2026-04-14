@@ -76,14 +76,14 @@ jobs:
       - name: Generate license manifest
         run: npm run licenses
 
-      - name: Package smoke (Linux)
+      - name: Package smoke (Linux AppImage)
         if: runner.os == 'Linux'
-        run: npx electron-builder --linux --dir --publish never
+        run: npx electron-builder --linux AppImage --publish never
 
-      - name: Package smoke (Windows)
+      - name: Package smoke (Windows NSIS)
         if: runner.os == 'Windows'
-        run: npx electron-builder --win --dir --publish never
+        run: npx electron-builder --win nsis --publish never
 
-      - name: Package smoke (macOS)
+      - name: Package smoke (macOS DMG)
         if: runner.os == 'macOS'
-        run: npx electron-builder --mac --dir --publish never
+        run: npx electron-builder --mac dmg -c.mac.notarize=false --publish never

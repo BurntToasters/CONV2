@@ -1,4 +1,4 @@
-const { execSync } = require('child_process');
+const { execSync, execFileSync } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 const yaml = require('js-yaml');
@@ -120,7 +120,7 @@ function runSyntaxChecks() {
         // TypeScript files are validated by the tsc compile step, skip node --check
         continue;
       }
-      execSync(`node --check "${filePath}"`, { stdio: 'pipe' });
+      execFileSync(process.execPath, ['--check', filePath], { stdio: 'pipe' });
     } catch (error) {
       results.syntax.failed += 1;
       const relativePath = path.relative(process.cwd(), filePath);

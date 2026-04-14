@@ -20,16 +20,27 @@ exports.default = async function notarizing(context) {
   const appleId = process.env.APPLE_ID;
   const appleIdPassword = process.env.APPLE_APP_SPECIFIC_PASSWORD;
   const teamId = process.env.APPLE_TEAM_ID;
+  const requireNotarization = process.env.REQUIRE_NOTARIZATION === '1';
 
   if (!appleId || !appleIdPassword || !teamId) {
+    const missingCredentialsMessage =
+      'Missing Apple credentials. Required: APPLE_ID, APPLE_APP_SPECIFIC_PASSWORD, APPLE_TEAM_ID';
+    if (requireNotarization) {
+      throw new Error(
+        `Notarization required but credentials are missing. ${missingCredentialsMessage}`
+      );
+    }
     console.log('Skipping notarization: Missing Apple credentials');
-    console.log('  Required: APPLE_ID, APPLE_APP_SPECIFIC_PASSWORD, APPLE_TEAM_ID');
+    console.log(`  ${missingCredentialsMessage}`);
     return;
   }
 
   const appName = context.packager.appInfo.productFilename;
   const appPath = path.join(appOutDir, `${appName}.app`);
   if (!fs.existsSync(appPath)) {
+    if (requireNotarization) {
+      throw new Error(`Notarization required but app bundle not found at ${appPath}`);
+    }
     console.log(`Skipping notarization: App bundle not found at ${appPath}`);
     return;
   }

@@ -1,6 +1,6 @@
 import { autoUpdater, UpdateInfo } from 'electron-updater';
 import { app, BrowserWindow, dialog } from 'electron';
-import { execSync } from 'child_process';
+import { execFileSync } from 'child_process';
 
 type UpdateChannel = 'auto' | 'stable' | 'beta';
 
@@ -40,8 +40,9 @@ const checkMsiInstallation = (): boolean => {
 
   for (const key of registryKeys) {
     try {
-      const result = execSync(`reg query "${key}"`, {
+      const result = execFileSync('reg', ['query', key], {
         encoding: 'utf8',
+        windowsHide: true,
         stdio: ['pipe', 'pipe', 'pipe'],
       });
       if (hasRegistryDwordValue(result, ['InstalledViaMsi', 'DisableAutoUpdates'])) {
@@ -216,7 +217,7 @@ export const checkForUpdates = (): void => {
   }
 
   applyUpdaterChannel();
-  autoUpdater.checkForUpdates();
+  void autoUpdater.checkForUpdates().catch(() => undefined);
 };
 
 export const isUpdateDisabled = (): boolean => {

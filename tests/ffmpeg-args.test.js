@@ -8,6 +8,7 @@ const {
   ensureMp4PlaybackCompatibilityArgs,
   resolveUniqueOutputPath,
 } = require('../dist/main/ffmpeg.js');
+const { presets } = require('../dist/main/presets.js');
 
 test('adds faststart and hvc1 for H.265 MP4 output', () => {
   const preset = {
@@ -113,4 +114,229 @@ test('resolveUniqueOutputPath increments suffix when output exists', () => {
   } finally {
     fs.rmSync(tempDir, { recursive: true, force: true });
   }
+});
+
+test('gif preset includes palette workflow args and loop flag', () => {
+  const preset = presets.find((entry) => entry.id === 'gif-best-quality');
+  assert.ok(preset);
+
+  const args = preset.getArgs('input.mp4', 'output.gif', 'cpu');
+  assert.equal(args[args.length - 1], 'output.gif');
+  assert.ok(args.includes('-filter_complex'));
+  assert.ok(args.includes('-loop'));
+
+  const filterIndex = args.indexOf('-filter_complex');
+  assert.ok(filterIndex >= 0);
+  const filter = args[filterIndex + 1];
+  assert.ok(filter.includes('palettegen'));
+  assert.ok(filter.includes('paletteuse'));
+  assert.ok(args.includes('-map'));
+  assert.ok(args.includes('[gifout]'));
+  assert.ok(args.includes('-an'));
+  assert.ok(args.includes('-sn'));
+  assert.ok(args.includes('-dn'));
+});
+
+test('gif preset uses custom advanced settings in generated args', () => {
+  const preset = presets.find((entry) => entry.id === 'gif-best-compression');
+  assert.ok(preset);
+
+  const args = preset.getArgs('input.mp4', 'output.gif', 'cpu', {
+    advancedFormatSettings: {
+      gif: {
+        loopMode: 'once',
+        tiers: {
+          bestQuality: { fps: 15, maxDimension: 1080, maxColors: 256, dither: 'sierra2_4a' },
+          quality: { fps: 12, maxDimension: 900, maxColors: 224, dither: 'sierra2_4a' },
+          balanced: { fps: 10, maxDimension: 720, maxColors: 192, dither: 'bayer' },
+          bestCompression: {
+            fps: 22,
+            maxDimension: 480,
+            maxColors: 48,
+            dither: 'floyd_steinberg',
+          },
+        },
+      },
+    },
+  });
+
+  const filter = args[args.indexOf('-filter_complex') + 1];
+  assert.ok(filter.includes('fps=22'));
+  assert.ok(filter.includes('scale=480:480'));
+  assert.ok(filter.includes('max_colors=48'));
+  assert.ok(filter.includes('dither=floyd_steinberg'));
+  assert.equal(args[args.indexOf('-loop') + 1], '-1');
+});
+
+test('gif presets map to expected default tier values', () => {
+  const expectedByPreset = {
+    'gif-best-quality': {
+      fps: 15,
+      maxDimension: 1080,
+      maxColors: 256,
+      dither: 'sierra2_4a',
+    },
+    'gif-quality': {
+      fps: 12,
+      maxDimension: 900,
+      maxColors: 224,
+      dither: 'sierra2_4a',
+    },
+    'gif-balanced': {
+      fps: 10,
+      maxDimension: 720,
+      maxColors: 192,
+      dither: 'bayer',
+    },
+    'gif-best-compression': {
+      fps: 8,
+      maxDimension: 540,
+      maxColors: 128,
+      dither: 'none',
+    },
+  };
+
+  for (const [presetId, expected] of Object.entries(expectedByPreset)) {
+    const preset = presets.find((entry) => entry.id === presetId);
+    assert.ok(preset, `missing ${presetId}`);
+    const args = preset.getArgs('input.mp4', 'output.gif', 'cpu');
+    const filter = args[args.indexOf('-filter_complex') + 1];
+    assert.ok(filter.includes(`fps=${expected.fps}`), `${presetId} missing fps`);
+    assert.ok(
+      filter.includes(`scale=${expected.maxDimension}:${expected.maxDimension}`),
+      `${presetId} missing scale`
+    );
+    assert.ok(
+      filter.includes(`max_colors=${expected.maxColors}`),
+      `${presetId} missing max colors`
+    );
+    assert.ok(filter.includes(`dither=${expected.dither}`), `${presetId} missing dither`);
+  }
+});
+
+test('gif presets normalize malformed advanced settings at arg boundary', () => {
+  const preset = presets.find((entry) => entry.id === 'gif-best-quality');
+  assert.ok(preset);
+
+  const args = preset.getArgs('input.mp4', 'output.gif', 'cpu', {
+    advancedFormatSettings: {
+      gif: {
+        loopMode: 'bogus',
+        tiers: {
+          bestQuality: {
+            fps: 999,
+            maxDimension: 99,
+            maxColors: 9999,
+            dither: 'invalid',
+          },
+        },
+      },
+    },
+  });
+
+  const filter = args[args.indexOf('-filter_complex') + 1];
+  assert.ok(filter.includes('fps=60'));
+  assert.ok(filter.includes('scale=160:160'));
+  assert.ok(filter.includes('max_colors=256'));
+  assert.ok(filter.includes('dither=sierra2_4a'));
+  assert.equal(args[args.indexOf('-loop') + 1], '0');
+});
+
+test('av1 preset uses advanced quality, cpu preset, and audio bitrate', () => {
+  const preset = presets.find((entry) => entry.id === 'av1-best-quality');
+  assert.ok(preset);
+
+  const args = preset.getArgs('input.mp4', 'output.mp4', 'cpu', {
+    advancedFormatSettings: {
+      av1: {
+        tiers: {
+          bestQuality: {
+            quality: 12,
+            cpuPreset: 3,
+            audioBitrateKbps: 320,
+          },
+        },
+      },
+    },
+  });
+
+  assert.ok(args.includes('-crf'));
+  assert.equal(args[args.indexOf('-crf') + 1], '12');
+  assert.equal(args[args.indexOf('-preset') + 1], '3');
+  assert.equal(args[args.indexOf('-b:a') + 1], '320k');
+});
+
+test('h264 preset uses advanced quality, preset, and audio bitrate', () => {
+  const preset = presets.find((entry) => entry.id === 'h264-fast');
+  assert.ok(preset);
+
+  const args = preset.getArgs('input.mp4', 'output.mp4', 'cpu', {
+    advancedFormatSettings: {
+      h264: {
+        tiers: {
+          fast: {
+            quality: 19,
+            preset: 'veryslow',
+            audioBitrateKbps: 160,
+          },
+        },
+      },
+    },
+  });
+
+  assert.equal(args[args.indexOf('-crf') + 1], '19');
+  assert.equal(args[args.indexOf('-preset') + 1], 'veryslow');
+  assert.equal(args[args.indexOf('-b:a') + 1], '160k');
+});
+
+test('h265 preset toggles advanced x265 params based on settings', () => {
+  const preset = presets.find((entry) => entry.id === 'h265-best-quality');
+  assert.ok(preset);
+
+  const args = preset.getArgs('input.mp4', 'output.mp4', 'cpu', {
+    advancedFormatSettings: {
+      h265: {
+        tiers: {
+          bestQuality: {
+            quality: 14,
+            preset: 'slow',
+            audioBitrateKbps: 224,
+            useAdvancedParams: false,
+          },
+        },
+      },
+    },
+  });
+
+  assert.equal(args[args.indexOf('-crf') + 1], '14');
+  assert.equal(args[args.indexOf('-preset') + 1], 'slow');
+  assert.equal(args[args.indexOf('-b:a') + 1], '224k');
+  assert.equal(args.includes('-x265-params'), false);
+});
+
+test('avi preset uses advanced codec and parameters', () => {
+  const preset = presets.find((entry) => entry.id === 'avi-balanced');
+  assert.ok(preset);
+
+  const args = preset.getArgs('input.mp4', 'output.avi', 'cpu', {
+    advancedFormatSettings: {
+      avi: {
+        tiers: {
+          balanced: {
+            codec: 'h265',
+            quality: 24,
+            preset: 'slow',
+            audioBitrateKbps: 144,
+            useAdvancedParams: true,
+          },
+        },
+      },
+    },
+  });
+
+  assert.equal(args[args.indexOf('-c:v') + 1], 'libx265');
+  assert.equal(args[args.indexOf('-crf') + 1], '24');
+  assert.equal(args[args.indexOf('-preset') + 1], 'slow');
+  assert.equal(args[args.indexOf('-b:a') + 1], '144k');
+  assert.ok(args.includes('-x265-params'));
 });
