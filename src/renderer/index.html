@@ -74,39 +74,67 @@
           </div>
         </div>
 
-        <div class="options-panel">
-          <div class="option-group">
-            <label for="presetSelect">Conversion Preset</label>
-            <select id="presetSelect"></select>
-          </div>
-          <div class="option-group">
-            <label for="gpuSelect">Hardware Acceleration</label>
-            <select id="gpuSelect">
-              <option value="cpu" title="Uses CPU for encoding. Slower but always available.">
-                CPU (Software)
-              </option>
-              <option
-                value="apple"
-                hidden
-                title="Apple VideoToolbox. Requires Apple Silicon (M1/M2/M3) or Intel Mac with T2."
-              >
-                Apple Silicon (VideoToolbox)
-              </option>
-              <option value="nvidia" title="NVIDIA NVENC. Requires NVIDIA GPU with NVENC support.">
-                NVIDIA (NVENC)
-              </option>
-              <option value="amd" title="AMD AMF. Requires AMD GPU with AMF support.">
-                AMD (AMF)
-              </option>
-              <option
-                value="intel"
-                title="Intel Quick Sync. Requires Intel CPU/GPU with QSV support."
-              >
-                Intel (Quick Sync)
-              </option>
-            </select>
-            <span class="option-hint">Select GPU for faster encoding if available</span>
-          </div>
+        <div class="options-panel options-redesign">
+          <section class="preset-panel" aria-labelledby="presetPanelTitle">
+            <div class="panel-label-row">
+              <label id="presetPanelTitle" for="presetSearch">Conversion Preset</label>
+              <span class="panel-meta" id="presetCountLabel"></span>
+            </div>
+            <input
+              id="presetSearch"
+              class="preset-search"
+              type="search"
+              placeholder="Search preset, codec, container, or intent"
+              autocomplete="off"
+              spellcheck="false"
+            />
+            <div class="preset-chip-row" id="presetCategoryChips" role="tablist"></div>
+            <div class="preset-card-list" id="presetCardList" role="listbox"></div>
+          </section>
+
+          <section class="gpu-panel" aria-labelledby="gpuPanelTitle">
+            <div class="panel-label-row">
+              <span id="gpuPanelTitle" class="panel-label">Hardware Acceleration</span>
+              <button class="btn btn-secondary btn-xs" id="refreshGpuCapsBtn" type="button">
+                Refresh
+              </button>
+            </div>
+
+            <div class="gpu-mode-toggle" role="radiogroup" aria-label="Hardware acceleration mode">
+              <label class="mode-chip">
+                <input type="radio" name="gpuMode" id="gpuModeAuto" value="auto" />
+                <span>Auto</span>
+              </label>
+              <label class="mode-chip">
+                <input type="radio" name="gpuMode" id="gpuModeManual" value="manual" />
+                <span>Manual</span>
+              </label>
+            </div>
+
+            <div class="gpu-manual-row" id="gpuManualRow">
+              <label for="gpuManualVendorSelect">Manual Vendor Override</label>
+              <select id="gpuManualVendorSelect">
+                <option value="cpu">CPU (Software)</option>
+                <option value="apple">Apple (VideoToolbox)</option>
+                <option value="nvidia">NVIDIA (NVENC)</option>
+                <option value="amd">AMD (AMF)</option>
+                <option value="intel">Intel (Quick Sync)</option>
+              </select>
+            </div>
+
+            <div class="gpu-matrix-controls">
+              <button class="btn btn-secondary btn-xs" id="toggleGpuDetailsBtn" type="button">
+                Show details
+              </button>
+              <label class="show-all-codecs" id="showAllCodecsLabel">
+                <input type="checkbox" id="showAllGpuCodecsCheck" />
+                <span>Show all codecs</span>
+              </label>
+            </div>
+
+            <div class="gpu-effective-summary" id="gpuEffectiveSummary"></div>
+            <div class="gpu-capability-matrix" id="gpuCapabilityMatrix"></div>
+          </section>
         </div>
 
         <div class="convert-section">

@@ -14,11 +14,19 @@ export interface ConversionResult {
   success: boolean;
   outputPath: string;
   error?: string;
+  retryWithCpuSuggested?: boolean;
 }
 
+export type GPUVendor = 'nvidia' | 'amd' | 'intel' | 'apple' | 'cpu';
+export type GPUMode = 'auto' | 'manual';
+export type GPUCodec = 'h264' | 'h265' | 'av1';
+
 export interface AppSettings {
+  settingsSchemaVersion: number;
   outputDirectory: string;
-  gpu: 'nvidia' | 'amd' | 'intel' | 'apple' | 'cpu';
+  gpu: GPUVendor;
+  gpuMode: GPUMode;
+  gpuManualVendor: GPUVendor;
   theme: 'system' | 'dark' | 'light';
   showDebugOutput: boolean;
   autoCheckUpdates: boolean;
@@ -26,6 +34,7 @@ export interface AppSettings {
   updateChannel: 'auto' | 'stable' | 'beta';
   showAdvancedPresets: boolean;
   removeSpacesFromFilenames: boolean;
+  recentPresetIds: string[];
   advancedFormatSettings: AdvancedFormatSettings;
 }
 
@@ -45,7 +54,7 @@ export interface GPUEncoderError {
   suggestion: string;
   canRetryWithCPU: boolean;
   codec?: string;
-  gpu?: 'nvidia' | 'amd' | 'intel' | 'apple' | 'cpu';
+  gpu?: GPUVendor;
 }
 
 export interface StartConversionOptions {
@@ -63,6 +72,23 @@ export interface RendererPreset {
   categoryLabel: string;
   categoryOrder: number;
   isAdvanced: boolean;
+  extension: string;
+  aviTier: string | null;
+}
+
+export interface GPUCapabilityStatus {
+  available: boolean;
+  reason: string;
+  encoder: string;
+}
+
+export interface GPUCapabilitiesPayload {
+  platform: string;
+  requestedCodec: GPUCodec | null;
+  checkedCodecs: GPUCodec[];
+  matrix: Partial<Record<GPUCodec, Record<GPUVendor, GPUCapabilityStatus>>>;
+  recommendedVendor: GPUVendor;
+  recommendationReason: string;
 }
 
 const subscribe = <T>(channel: string, callback: (payload: T) => void): (() => void) => {
@@ -86,7 +112,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   startConversion: (
     inputPath: string,
     presetId: string,
-    gpu: AppSettings['gpu'],
+    gpu: GPUVendor,
     options?: StartConversionOptions
   ): Promise<ConversionResult> =>
     ipcRenderer.invoke('start-conversion', inputPath, presetId, gpu, options),
@@ -96,14 +122,15 @@ contextBridge.exposeInMainWorld('electronAPI', {
     subscribe('conversion-progress', callback),
   onConversionLog: (callback: (message: string) => void): (() => void) =>
     subscribe('conversion-log', callback),
-  onConversionComplete: (
-    callback: (result: { success: boolean; outputPath: string; error?: string }) => void
-  ): (() => void) => subscribe('conversion-complete', callback),
+  onConversionComplete: (callback: (result: ConversionResult) => void): (() => void) =>
+    subscribe('conversion-complete', callback),
   onGPUEncoderError: (callback: (error: GPUEncoderError) => void): (() => void) =>
     subscribe('gpu-encoder-error', callback),
 
   // Presets
   getPresets: (): Promise<RendererPreset[]> => ipcRenderer.invoke('get-presets'),
+  getGpuCapabilities: (requestedCodec?: GPUCodec | null): Promise<GPUCapabilitiesPayload> =>
+    ipcRenderer.invoke('get-gpu-capabilities', requestedCodec ?? null),
 
   // Settings
   getSettings: (): Promise<AppSettings> => ipcRenderer.invoke('get-settings'),
@@ -156,17 +183,16 @@ declare global {
       startConversion: (
         inputPath: string,
         presetId: string,
-        gpu: AppSettings['gpu'],
+        gpu: GPUVendor,
         options?: StartConversionOptions
       ) => Promise<ConversionResult>;
       cancelConversion: (force?: boolean) => Promise<void>;
       onConversionProgress: (callback: (progress: ConversionProgress) => void) => () => void;
       onConversionLog: (callback: (message: string) => void) => () => void;
-      onConversionComplete: (
-        callback: (result: { success: boolean; outputPath: string; error?: string }) => void
-      ) => () => void;
+      onConversionComplete: (callback: (result: ConversionResult) => void) => () => void;
       onGPUEncoderError: (callback: (error: GPUEncoderError) => void) => () => void;
       getPresets: () => Promise<RendererPreset[]>;
+      getGpuCapabilities: (requestedCodec?: GPUCodec | null) => Promise<GPUCapabilitiesPayload>;
       getSettings: () => Promise<AppSettings>;
       getDefaultAdvancedFormatSettings: () => Promise<AdvancedFormatSettings>;
       saveSettings: (settings: Partial<AppSettings>) => Promise<void>;

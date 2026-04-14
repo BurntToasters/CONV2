@@ -11,15 +11,7 @@ import {
 import * as path from 'path';
 import * as fs from 'fs';
 import { pathToFileURL } from 'url';
-import {
-  presets,
-  getPresetById,
-  GPUVendor,
-  getPresetGpuCodec,
-  PRESET_CATEGORY_LABELS,
-  PRESET_CATEGORY_ORDER,
-  isPresetCategoryAdvanced,
-} from './presets';
+import { presets, getPresetById, GPUVendor, GPUCodec, getPresetGpuCodec } from './presets';
 import {
   AdvancedFormatSettings,
   createDefaultAdvancedFormatSettings,
@@ -31,6 +23,7 @@ import {
   cancelConversion,
   checkFFmpegInstalled,
   getVideoInfo,
+  GPU_ENCODERS,
   checkGPUEncoderSupport,
   parseGPUError,
   ConversionResult,
@@ -46,6 +39,13 @@ import {
 } from './updater';
 import { setUseSystemFFmpeg } from './ffmpegPath';
 import { clearFFmpegCaches } from './ffmpeg';
+import {
+  SETTINGS_SCHEMA_VERSION,
+  normalizeRecentPresetIds,
+  shouldHardResetSettings,
+} from './settingsSchema';
+import { recommendGpuVendorFromAvailability } from './gpuRecommendation';
+import { mapPresetsForRenderer } from './presetProjection';
 
 if (process.platform === 'darwin') {
   const commonPaths = [
@@ -72,9 +72,14 @@ let isConversionActive = false;
 let lastOutputPath = '';
 let trustedRendererUrl: string | null = null;
 
+type GPUMode = 'auto' | 'manual';
+
 interface AppSettings {
+  settingsSchemaVersion: number;
   outputDirectory: string;
   gpu: GPUVendor;
+  gpuMode: GPUMode;
+  gpuManualVendor: GPUVendor;
   theme: 'system' | 'dark' | 'light';
   showDebugOutput: boolean;
   autoCheckUpdates: boolean;
@@ -82,12 +87,16 @@ interface AppSettings {
   updateChannel: 'auto' | 'stable' | 'beta';
   showAdvancedPresets: boolean;
   removeSpacesFromFilenames: boolean;
+  recentPresetIds: string[];
   advancedFormatSettings: AdvancedFormatSettings;
 }
 
 const createDefaultSettings = (): AppSettings => ({
+  settingsSchemaVersion: SETTINGS_SCHEMA_VERSION,
   outputDirectory: '',
   gpu: 'cpu',
+  gpuMode: 'auto',
+  gpuManualVendor: 'cpu',
   theme: 'system',
   showDebugOutput: false,
   autoCheckUpdates: true,
@@ -95,11 +104,16 @@ const createDefaultSettings = (): AppSettings => ({
   updateChannel: 'auto',
   showAdvancedPresets: false,
   removeSpacesFromFilenames: false,
+  recentPresetIds: [],
   advancedFormatSettings: createDefaultAdvancedFormatSettings(),
 });
 
 const normalizeUpdateChannel = (value: unknown): AppSettings['updateChannel'] => {
   return value === 'stable' || value === 'beta' || value === 'auto' ? value : 'auto';
+};
+
+const normalizeGpuMode = (value: unknown): GPUMode => {
+  return value === 'manual' || value === 'auto' ? value : 'auto';
 };
 
 const normalizeGpuVendor = (value: unknown): GPUVendor => {
@@ -123,12 +137,20 @@ const normalizeSettings = (value: unknown): AppSettings => {
       ? (value as Partial<Record<keyof AppSettings, unknown>>)
       : {};
 
+  const normalizedManualVendor = normalizeGpuVendor(
+    incoming.gpuManualVendor ?? incoming.gpu ?? defaults.gpuManualVendor
+  );
+  const normalizedMode = normalizeGpuMode(incoming.gpuMode ?? defaults.gpuMode);
+
   return {
+    settingsSchemaVersion: SETTINGS_SCHEMA_VERSION,
     outputDirectory:
       typeof incoming.outputDirectory === 'string'
         ? incoming.outputDirectory
         : defaults.outputDirectory,
-    gpu: normalizeGpuVendor(incoming.gpu ?? defaults.gpu),
+    gpu: normalizedManualVendor,
+    gpuMode: normalizedMode,
+    gpuManualVendor: normalizedManualVendor,
     theme: normalizeTheme(incoming.theme ?? defaults.theme),
     showDebugOutput: incoming.showDebugOutput === true,
     autoCheckUpdates: incoming.autoCheckUpdates !== false,
@@ -136,6 +158,7 @@ const normalizeSettings = (value: unknown): AppSettings => {
     updateChannel: normalizeUpdateChannel(incoming.updateChannel ?? defaults.updateChannel),
     showAdvancedPresets: incoming.showAdvancedPresets === true,
     removeSpacesFromFilenames: incoming.removeSpacesFromFilenames === true,
+    recentPresetIds: normalizeRecentPresetIds(incoming.recentPresetIds),
     advancedFormatSettings: normalizeAdvancedFormatSettings(incoming.advancedFormatSettings),
   };
 };
@@ -189,6 +212,115 @@ const resolveExistingDirectoryPath = (value: unknown): string | null => {
   }
 };
 
+interface GPUCapabilityStatus {
+  available: boolean;
+  reason: string;
+  encoder: string;
+}
+
+type GPUCapabilityMatrix = Partial<Record<GPUCodec, Record<GPUVendor, GPUCapabilityStatus>>>;
+
+interface GPUCapabilitiesPayload {
+  platform: NodeJS.Platform;
+  requestedCodec: GPUCodec | null;
+  checkedCodecs: GPUCodec[];
+  matrix: GPUCapabilityMatrix;
+  recommendedVendor: GPUVendor;
+  recommendationReason: string;
+}
+
+const GPU_VENDORS: GPUVendor[] = ['nvidia', 'amd', 'intel', 'apple', 'cpu'];
+const GPU_CODECS: GPUCodec[] = ['h264', 'h265', 'av1'];
+
+const getRecommendedVendor = (
+  platform: NodeJS.Platform,
+  requestedCodec: GPUCodec | null,
+  matrix: GPUCapabilityMatrix
+): { vendor: GPUVendor; reason: string } => {
+  if (!requestedCodec) {
+    return {
+      vendor: 'cpu',
+      reason: 'Preset does not use GPU-accelerated video encoding.',
+    };
+  }
+
+  const row = matrix[requestedCodec];
+  if (!row) {
+    return {
+      vendor: 'cpu',
+      reason: 'Capability data unavailable. Falling back to CPU.',
+    };
+  }
+
+  const availabilityByVendor = GPU_VENDORS.reduce(
+    (acc, vendor) => {
+      acc[vendor] = row[vendor]?.available === true;
+      return acc;
+    },
+    {} as Record<GPUVendor, boolean>
+  );
+
+  return recommendGpuVendorFromAvailability(platform, requestedCodec, availabilityByVendor);
+};
+
+const buildGpuCapabilitiesPayload = async (
+  requestedCodec: GPUCodec | null
+): Promise<GPUCapabilitiesPayload> => {
+  const codecsToCheck = requestedCodec ? [requestedCodec] : GPU_CODECS;
+  const matrix: GPUCapabilityMatrix = {};
+
+  for (const codec of codecsToCheck) {
+    const row = {} as Record<GPUVendor, GPUCapabilityStatus>;
+    for (const vendor of GPU_VENDORS) {
+      if (vendor === 'cpu') {
+        row[vendor] = {
+          available: true,
+          reason: 'Software encoding fallback.',
+          encoder: GPU_ENCODERS[codec].cpu,
+        };
+        continue;
+      }
+
+      if (vendor === 'apple' && process.platform !== 'darwin') {
+        row[vendor] = {
+          available: false,
+          reason: 'Apple VideoToolbox available only on macOS.',
+          encoder: GPU_ENCODERS[codec].apple,
+        };
+        continue;
+      }
+
+      if (vendor === 'apple' && codec === 'av1') {
+        row[vendor] = {
+          available: false,
+          reason: 'Apple AV1 hardware encode unavailable. Use CPU for AV1.',
+          encoder: GPU_ENCODERS[codec].apple,
+        };
+        continue;
+      }
+
+      const check = await checkGPUEncoderSupport(vendor, codec);
+      row[vendor] = {
+        available: check.available,
+        reason: check.available ? 'Available' : check.error?.message || 'Unavailable',
+        encoder: check.encoder || GPU_ENCODERS[codec][vendor],
+      };
+    }
+    matrix[codec] = row;
+  }
+
+  const recommendation = getRecommendedVendor(process.platform, requestedCodec, matrix);
+
+  return {
+    platform: process.platform,
+    requestedCodec,
+    checkedCodecs: codecsToCheck,
+    matrix,
+    recommendedVendor: recommendation.vendor,
+    recommendationReason: recommendation.reason,
+  };
+};
+
 const isTrustedIpcSender = (event: IpcMainInvokeEvent): boolean => {
   if (!mainWindow) {
     return false;
@@ -218,18 +350,31 @@ const getSettingsPath = (): string => {
 };
 
 const loadSettings = (): void => {
+  let shouldPersist = false;
   try {
     const settingsPath = getSettingsPath();
     if (fs.existsSync(settingsPath)) {
       const data = fs.readFileSync(settingsPath, 'utf-8');
-      settings = normalizeSettings(JSON.parse(data));
+      const parsed = JSON.parse(data);
+      if (shouldHardResetSettings(parsed)) {
+        settings = createDefaultSettings();
+        shouldPersist = true;
+      } else {
+        settings = normalizeSettings(parsed);
+      }
+    } else {
+      settings = createDefaultSettings();
     }
   } catch {
     settings = createDefaultSettings();
+    shouldPersist = true;
   }
   setUpdateChannel(settings.updateChannel);
   setUseSystemFFmpeg(settings.useSystemFFmpeg);
   clearFFmpegCaches();
+  if (shouldPersist) {
+    saveSettings();
+  }
 };
 
 const saveSettings = (): void => {
@@ -443,7 +588,8 @@ ipcMain.handle(
       return invalidPresetResult;
     }
 
-    const requestedGpu = gpuOverride === undefined ? settings.gpu : normalizeGpuVendor(gpuOverride);
+    const requestedGpu =
+      gpuOverride === undefined ? settings.gpuManualVendor : normalizeGpuVendor(gpuOverride);
     const codec = getPresetGpuCodec(preset, {
       advancedFormatSettings: settings.advancedFormatSettings,
     });
@@ -459,6 +605,7 @@ ipcMain.handle(
           success: false,
           outputPath: '',
           error: encoderCheck.error.message,
+          retryWithCpuSuggested: encoderCheck.error.canRetryWithCPU,
         };
         mainWindow?.webContents.send('conversion-complete', unsupportedEncoderResult);
         return unsupportedEncoderResult;
@@ -508,6 +655,7 @@ ipcMain.handle(
     if (!result.success && result.error && effectiveGpu !== 'cpu' && codec !== null) {
       const gpuError = parseGPUError(result.error, effectiveGpu, codec);
       if (gpuError) {
+        result.retryWithCpuSuggested = gpuError.canRetryWithCPU;
         if (!suppressGpuErrorEvent) {
           mainWindow?.webContents.send('gpu-encoder-error', gpuError);
         }
@@ -544,16 +692,20 @@ ipcMain.handle('get-file-info', async (event: IpcMainInvokeEvent, filePath: stri
 
 ipcMain.handle('get-presets', (event: IpcMainInvokeEvent) => {
   assertTrustedIpcSender(event);
-  return presets.map((p) => ({
-    id: p.id,
-    name: p.name,
-    description: p.description,
-    category: p.category,
-    categoryLabel: PRESET_CATEGORY_LABELS[p.category] || p.category,
-    categoryOrder: PRESET_CATEGORY_ORDER.indexOf(p.category),
-    isAdvanced: isPresetCategoryAdvanced(p.category),
-  }));
+  return mapPresetsForRenderer(presets);
 });
+
+ipcMain.handle(
+  'get-gpu-capabilities',
+  async (event: IpcMainInvokeEvent, requestedCodec?: GPUCodec | null) => {
+    assertTrustedIpcSender(event);
+    const normalizedRequestedCodec: GPUCodec | null =
+      requestedCodec === 'h264' || requestedCodec === 'h265' || requestedCodec === 'av1'
+        ? requestedCodec
+        : null;
+    return buildGpuCapabilitiesPayload(normalizedRequestedCodec);
+  }
+);
 
 ipcMain.handle('get-settings', (event: IpcMainInvokeEvent) => {
   assertTrustedIpcSender(event);
@@ -581,11 +733,24 @@ ipcMain.handle('save-settings', (event: IpcMainInvokeEvent, newSettings: Partial
           settings.advancedFormatSettings,
           incomingSettings.advancedFormatSettings
         );
+  const nextGpuMode =
+    safeIncomingSettings.gpuMode !== undefined
+      ? normalizeGpuMode(safeIncomingSettings.gpuMode)
+      : safeIncomingSettings.gpu !== undefined
+        ? 'manual'
+        : settings.gpuMode;
+  const nextGpuManualVendor =
+    safeIncomingSettings.gpuManualVendor !== undefined || safeIncomingSettings.gpu !== undefined
+      ? normalizeGpuVendor(safeIncomingSettings.gpuManualVendor ?? safeIncomingSettings.gpu)
+      : settings.gpuManualVendor;
 
   settings = normalizeSettings({
     ...settings,
     ...safeIncomingSettings,
     updateChannel: nextUpdateChannel,
+    gpuMode: nextGpuMode,
+    gpuManualVendor: nextGpuManualVendor,
+    gpu: nextGpuManualVendor,
     advancedFormatSettings: nextAdvancedFormatSettings,
   });
   saveSettings();

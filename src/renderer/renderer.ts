@@ -6,7 +6,13 @@ interface Preset {
   categoryLabel: string;
   categoryOrder: number;
   isAdvanced: boolean;
+  extension: string;
+  aviTier: string | null;
 }
+
+type GPUVendor = 'nvidia' | 'amd' | 'intel' | 'apple' | 'cpu';
+type GPUMode = 'auto' | 'manual';
+type GPUCodec = 'h264' | 'h265' | 'av1';
 
 type GifLoopMode = 'forever' | 'once';
 type GifDither = 'sierra2_4a' | 'floyd_steinberg' | 'bayer' | 'none';
@@ -125,8 +131,11 @@ interface AdvancedFormatSettings {
 }
 
 interface AppSettings {
+  settingsSchemaVersion: number;
   outputDirectory: string;
-  gpu: 'nvidia' | 'amd' | 'intel' | 'apple' | 'cpu';
+  gpu: GPUVendor;
+  gpuMode: GPUMode;
+  gpuManualVendor: GPUVendor;
   theme: 'system' | 'dark' | 'light';
   showDebugOutput: boolean;
   autoCheckUpdates: boolean;
@@ -134,6 +143,7 @@ interface AppSettings {
   updateChannel: 'auto' | 'stable' | 'beta';
   showAdvancedPresets: boolean;
   removeSpacesFromFilenames: boolean;
+  recentPresetIds: string[];
   advancedFormatSettings: AdvancedFormatSettings;
 }
 
@@ -159,10 +169,11 @@ interface ConversionResult {
   success: boolean;
   outputPath: string;
   error?: string;
+  retryWithCpuSuggested?: boolean;
 }
 
 interface BatchConversionOptions {
-  gpu: AppSettings['gpu'];
+  gpu: GPUVendor;
   removeSpacesFromFilenames: boolean;
   outputDirectory: string;
   showDebugOutput: boolean;
@@ -185,7 +196,22 @@ interface GPUEncoderError {
   suggestion: string;
   canRetryWithCPU: boolean;
   codec?: string;
-  gpu?: 'nvidia' | 'amd' | 'intel' | 'apple' | 'cpu';
+  gpu?: GPUVendor;
+}
+
+interface GPUCapabilityStatus {
+  available: boolean;
+  reason: string;
+  encoder: string;
+}
+
+interface GPUCapabilitiesPayload {
+  platform: string;
+  requestedCodec: GPUCodec | null;
+  checkedCodecs: GPUCodec[];
+  matrix: Partial<Record<GPUCodec, Record<GPUVendor, GPUCapabilityStatus>>>;
+  recommendedVendor: GPUVendor;
+  recommendationReason: string;
 }
 
 interface LicenseCrawlerEntry {
@@ -226,6 +252,18 @@ let logFlushScheduled = false;
 let pendingProgressUpdate: ConversionProgressPayload | null = null;
 let progressUpdateScheduled = false;
 const MAX_LOG_CHARS = 512 * 1024;
+const MAX_RECENT_PRESET_IDS = 8;
+const GPU_VENDORS: GPUVendor[] = ['nvidia', 'amd', 'intel', 'apple', 'cpu'];
+const GPU_CODECS: GPUCodec[] = ['h264', 'h265', 'av1'];
+const DISPLAY_CATEGORY_ORDER = ['recent', 'av1', 'h265', 'h264', 'remux', 'audio', 'avi', 'gif'];
+type PresetCategoryKey = 'all' | 'recent' | (typeof DISPLAY_CATEGORY_ORDER)[number];
+let selectedPresetId = '';
+let activePresetCategory: PresetCategoryKey = 'all';
+let currentPlatform = '';
+let showAllGpuCodecs = false;
+let showGpuDetails = false;
+const gpuCapabilitiesCache = new Map<string, GPUCapabilitiesPayload>();
+let gpuPanelRenderToken = 0;
 
 const getRequiredElement = <T extends HTMLElement>(id: string): T => {
   const element = document.getElementById(id);
@@ -241,8 +279,20 @@ const elements = {
   fileInfo: document.getElementById('fileInfo') as HTMLDivElement,
   fileName: document.getElementById('fileName') as HTMLSpanElement,
   fileDetails: document.getElementById('fileDetails') as HTMLSpanElement,
-  presetSelect: document.getElementById('presetSelect') as HTMLSelectElement,
-  gpuSelect: document.getElementById('gpuSelect') as HTMLSelectElement,
+  presetSearch: getRequiredElement<HTMLInputElement>('presetSearch'),
+  presetCountLabel: getRequiredElement<HTMLSpanElement>('presetCountLabel'),
+  presetCategoryChips: getRequiredElement<HTMLDivElement>('presetCategoryChips'),
+  presetCardList: getRequiredElement<HTMLDivElement>('presetCardList'),
+  refreshGpuCapsBtn: getRequiredElement<HTMLButtonElement>('refreshGpuCapsBtn'),
+  gpuModeAuto: getRequiredElement<HTMLInputElement>('gpuModeAuto'),
+  gpuModeManual: getRequiredElement<HTMLInputElement>('gpuModeManual'),
+  gpuManualRow: getRequiredElement<HTMLDivElement>('gpuManualRow'),
+  gpuManualVendorSelect: getRequiredElement<HTMLSelectElement>('gpuManualVendorSelect'),
+  toggleGpuDetailsBtn: getRequiredElement<HTMLButtonElement>('toggleGpuDetailsBtn'),
+  showAllGpuCodecsCheck: getRequiredElement<HTMLInputElement>('showAllGpuCodecsCheck'),
+  showAllCodecsLabel: getRequiredElement<HTMLLabelElement>('showAllCodecsLabel'),
+  gpuEffectiveSummary: getRequiredElement<HTMLDivElement>('gpuEffectiveSummary'),
+  gpuCapabilityMatrix: getRequiredElement<HTMLDivElement>('gpuCapabilityMatrix'),
   convertBtn: document.getElementById('convertBtn') as HTMLButtonElement,
   cancelBtn: document.getElementById('cancelBtn') as HTMLButtonElement,
   progressContainer: document.getElementById('progressContainer') as HTMLDivElement,
@@ -322,6 +372,537 @@ const elements = {
   logsContent: document.getElementById('logsContent') as HTMLPreElement,
   clearLogsBtn: document.getElementById('clearLogsBtn') as HTMLButtonElement,
   copyLogsBtn: document.getElementById('copyLogsBtn') as HTMLButtonElement,
+};
+
+const normalizeRecentPresetIds = (value: unknown): string[] => {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return Array.from(
+    new Set(
+      value
+        .filter((entry): entry is string => typeof entry === 'string')
+        .map((entry) => entry.trim())
+        .filter((entry) => entry.length > 0)
+    )
+  ).slice(0, MAX_RECENT_PRESET_IDS);
+};
+
+const getGpuVendorLabel = (vendor: GPUVendor): string => {
+  if (vendor === 'nvidia') return 'NVIDIA';
+  if (vendor === 'amd') return 'AMD';
+  if (vendor === 'intel') return 'Intel';
+  if (vendor === 'apple') return 'Apple';
+  return 'CPU';
+};
+
+const getCodecLabel = (codec: GPUCodec): string => {
+  if (codec === 'h264') return 'H.264';
+  if (codec === 'h265') return 'H.265/HEVC';
+  return 'AV1';
+};
+
+const getPresetDisplayName = (preset: Preset): string => {
+  if (preset.category === 'remux') {
+    return preset.name.replace(/^Remux to\s+/i, '');
+  }
+  if (preset.category === 'audio') {
+    return preset.name.replace(/^Extract Audio\s*\(/i, '').replace(/\)\s*$/i, '');
+  }
+  const prefix = `${preset.categoryLabel} - `;
+  if (preset.name.startsWith(prefix)) {
+    return preset.name.slice(prefix.length);
+  }
+  return preset.name;
+};
+
+type PresetIntentKey =
+  | 'fast'
+  | 'balanced'
+  | 'quality'
+  | 'best-quality'
+  | 'best-compression'
+  | 'small-file'
+  | 'remux'
+  | 'audio'
+  | 'other';
+
+const getPresetIntentKey = (preset: Preset): PresetIntentKey => {
+  if (preset.category === 'remux') return 'remux';
+  if (preset.category === 'audio') return 'audio';
+  const text = `${preset.name} ${preset.description}`.toLowerCase();
+  if (text.includes('best quality')) return 'best-quality';
+  if (text.includes('best compression')) return 'best-compression';
+  if (text.includes('small file')) return 'small-file';
+  if (text.includes('balanced')) return 'balanced';
+  if (text.includes('quality')) return 'quality';
+  if (text.includes('fast')) return 'fast';
+  return 'other';
+};
+
+const getPresetIntentLabel = (intent: PresetIntentKey): string => {
+  if (intent === 'best-quality') return 'Best Quality';
+  if (intent === 'best-compression') return 'Best Compression';
+  if (intent === 'small-file') return 'Small File';
+  if (intent === 'balanced') return 'Balanced';
+  if (intent === 'quality') return 'Quality';
+  if (intent === 'fast') return 'Fast';
+  if (intent === 'remux') return 'Remux';
+  if (intent === 'audio') return 'Audio Extract';
+  return 'General';
+};
+
+const getPresetIntentWeight = (intent: PresetIntentKey): number => {
+  if (intent === 'fast') return 0;
+  if (intent === 'balanced') return 1;
+  if (intent === 'quality') return 2;
+  if (intent === 'best-quality') return 3;
+  if (intent === 'best-compression') return 4;
+  if (intent === 'small-file') return 5;
+  if (intent === 'remux') return 6;
+  if (intent === 'audio') return 7;
+  return 8;
+};
+
+const getPresetCodec = (preset: Preset): GPUCodec | null => {
+  if (preset.category === 'av1' || preset.category === 'h264' || preset.category === 'h265') {
+    return preset.category;
+  }
+  if (preset.category === 'avi' && preset.aviTier) {
+    const tierKey = preset.aviTier as AviTierKey;
+    const tier = settings.advancedFormatSettings?.avi?.tiers?.[tierKey];
+    if (tier?.codec === 'h264' || tier?.codec === 'h265') {
+      return tier.codec;
+    }
+  }
+  return null;
+};
+
+const getVisiblePresets = (): Preset[] => {
+  return presets.filter((preset) => settings.showAdvancedPresets || !preset.isAdvanced);
+};
+
+const getPresetCategoryWeight = (category: string): number => {
+  const index = DISPLAY_CATEGORY_ORDER.indexOf(category);
+  return index >= 0 ? index : DISPLAY_CATEGORY_ORDER.length + 1;
+};
+
+const sortPresets = (left: Preset, right: Preset): number => {
+  const leftIntent = getPresetIntentKey(left);
+  const rightIntent = getPresetIntentKey(right);
+  const byIntent = getPresetIntentWeight(leftIntent) - getPresetIntentWeight(rightIntent);
+  if (byIntent !== 0) {
+    return byIntent;
+  }
+  return getPresetDisplayName(left).localeCompare(getPresetDisplayName(right));
+};
+
+const matchesPresetSearch = (preset: Preset, rawQuery: string): boolean => {
+  const query = rawQuery.trim().toLowerCase();
+  if (!query) return true;
+  const codec = getPresetCodec(preset);
+  const intent = getPresetIntentLabel(getPresetIntentKey(preset));
+  const tokens = [
+    preset.name,
+    getPresetDisplayName(preset),
+    preset.description,
+    preset.categoryLabel,
+    preset.extension,
+    codec ? getCodecLabel(codec) : '',
+    intent,
+  ]
+    .join(' ')
+    .toLowerCase();
+  return query
+    .split(/\s+/)
+    .filter((part) => part.length > 0)
+    .every((part) => tokens.includes(part));
+};
+
+interface PresetGroup {
+  key: PresetCategoryKey;
+  label: string;
+  presets: Preset[];
+}
+
+const buildPresetGroups = (): PresetGroup[] => {
+  const visible = getVisiblePresets().filter((preset) =>
+    matchesPresetSearch(preset, elements.presetSearch.value)
+  );
+  const grouped = new Map<string, Preset[]>();
+  visible.forEach((preset) => {
+    if (!grouped.has(preset.category)) {
+      grouped.set(preset.category, []);
+    }
+    grouped.get(preset.category)?.push(preset);
+  });
+  grouped.forEach((entries) => entries.sort(sortPresets));
+
+  const groups: PresetGroup[] = [];
+  const recentIds = normalizeRecentPresetIds(settings.recentPresetIds);
+  if (recentIds.length > 0) {
+    const byId = new Map(visible.map((preset) => [preset.id, preset] as const));
+    const recents = recentIds
+      .map((id) => byId.get(id))
+      .filter((preset): preset is Preset => !!preset);
+    if (recents.length > 0) {
+      groups.push({ key: 'recent', label: 'Recent', presets: recents });
+    }
+  }
+
+  Array.from(grouped.entries())
+    .sort((left, right) => getPresetCategoryWeight(left[0]) - getPresetCategoryWeight(right[0]))
+    .forEach(([category, categoryPresets]) => {
+      const label = categoryPresets[0]?.categoryLabel || category.toUpperCase();
+      groups.push({
+        key: category as PresetCategoryKey,
+        label,
+        presets: categoryPresets,
+      });
+    });
+
+  return groups;
+};
+
+const getActivePresetGroups = (groups: PresetGroup[]): PresetGroup[] => {
+  if (activePresetCategory === 'all') {
+    return groups;
+  }
+  return groups.filter((group) => group.key === activePresetCategory);
+};
+
+const ensureSelectedPreset = (groups: PresetGroup[]): void => {
+  const flattened = groups.flatMap((group) => group.presets);
+  if (flattened.length === 0) {
+    selectedPresetId = '';
+    return;
+  }
+  if (!selectedPresetId || !flattened.some((preset) => preset.id === selectedPresetId)) {
+    selectedPresetId = flattened[0].id;
+  }
+};
+
+const renderPresetCategoryChips = (groups: PresetGroup[]): void => {
+  const chipData = [
+    {
+      key: 'all' as PresetCategoryKey,
+      label: 'All',
+      count: groups.reduce((count, group) => count + group.presets.length, 0),
+    },
+    ...groups.map((group) => ({
+      key: group.key,
+      label: group.label,
+      count: group.presets.length,
+    })),
+  ];
+
+  const availableKeys = new Set(chipData.map((entry) => entry.key));
+  if (!availableKeys.has(activePresetCategory)) {
+    activePresetCategory = 'all';
+  }
+
+  elements.presetCategoryChips.innerHTML = '';
+  chipData.forEach((entry) => {
+    const chip = document.createElement('button');
+    chip.type = 'button';
+    chip.className = `preset-chip${activePresetCategory === entry.key ? ' is-active' : ''}`;
+    chip.textContent = `${entry.label} (${entry.count})`;
+    chip.setAttribute('role', 'tab');
+    chip.setAttribute('aria-selected', activePresetCategory === entry.key ? 'true' : 'false');
+    chip.addEventListener('click', () => {
+      activePresetCategory = entry.key;
+      renderPresetPicker();
+    });
+    elements.presetCategoryChips.appendChild(chip);
+  });
+};
+
+const renderPresetCards = (groups: PresetGroup[]): void => {
+  elements.presetCardList.innerHTML = '';
+  const totalVisible = groups.reduce((count, group) => count + group.presets.length, 0);
+  elements.presetCountLabel.textContent = `${totalVisible} preset${totalVisible === 1 ? '' : 's'}`;
+
+  if (totalVisible === 0) {
+    const empty = document.createElement('div');
+    empty.className = 'preset-empty';
+    empty.textContent = 'No presets match your filters.';
+    elements.presetCardList.appendChild(empty);
+    return;
+  }
+
+  groups.forEach((group) => {
+    const block = document.createElement('section');
+    block.className = 'preset-category-block';
+
+    const heading = document.createElement('h3');
+    heading.className = 'preset-category-heading';
+    heading.textContent = group.label;
+    block.appendChild(heading);
+
+    group.presets.forEach((preset) => {
+      const codec = getPresetCodec(preset);
+      const intentKey = getPresetIntentKey(preset);
+      const card = document.createElement('button');
+      card.type = 'button';
+      card.className = `preset-card${preset.id === selectedPresetId ? ' is-selected' : ''}`;
+      card.setAttribute('role', 'option');
+      card.setAttribute('aria-selected', preset.id === selectedPresetId ? 'true' : 'false');
+
+      const title = document.createElement('div');
+      title.className = 'preset-card-title';
+      title.textContent = getPresetDisplayName(preset);
+
+      const description = document.createElement('div');
+      description.className = 'preset-card-description';
+      description.textContent = preset.description;
+
+      const badges = document.createElement('div');
+      badges.className = 'preset-card-badges';
+
+      if (codec) {
+        const codecBadge = document.createElement('span');
+        codecBadge.className = 'preset-badge';
+        codecBadge.textContent = getCodecLabel(codec);
+        badges.appendChild(codecBadge);
+      }
+
+      const containerBadge = document.createElement('span');
+      containerBadge.className = 'preset-badge';
+      containerBadge.textContent = preset.extension.toUpperCase();
+      badges.appendChild(containerBadge);
+
+      const intentBadge = document.createElement('span');
+      intentBadge.className = 'preset-badge intent';
+      intentBadge.textContent = getPresetIntentLabel(intentKey);
+      badges.appendChild(intentBadge);
+
+      card.append(title, description, badges);
+      card.addEventListener('click', () => {
+        selectedPresetId = preset.id;
+        renderPresetPicker();
+      });
+      block.appendChild(card);
+    });
+
+    elements.presetCardList.appendChild(block);
+  });
+};
+
+const renderPresetPicker = (): void => {
+  const allGroups = buildPresetGroups();
+  renderPresetCategoryChips(allGroups);
+  const activeGroups = getActivePresetGroups(allGroups);
+  ensureSelectedPreset(activeGroups);
+  renderPresetCards(activeGroups);
+  void refreshGpuPanel(false);
+};
+
+const rememberRecentPreset = async (presetId: string): Promise<void> => {
+  const nextRecent = normalizeRecentPresetIds([presetId, ...(settings.recentPresetIds || [])]);
+  if (JSON.stringify(nextRecent) === JSON.stringify(settings.recentPresetIds || [])) {
+    return;
+  }
+  settings.recentPresetIds = nextRecent;
+  await window.electronAPI.saveSettings({ recentPresetIds: nextRecent });
+};
+
+const getSelectedPreset = (): Preset | undefined => {
+  return presets.find((preset) => preset.id === selectedPresetId);
+};
+
+const getSelectedPresetCodec = (): GPUCodec | null => {
+  const selectedPreset = getSelectedPreset();
+  if (!selectedPreset) {
+    return null;
+  }
+  return getPresetCodec(selectedPreset);
+};
+
+const getGpuCapabilitiesCacheKey = (requestedCodec: GPUCodec | null): string => {
+  return requestedCodec ?? 'all';
+};
+
+const getGpuCapabilities = async (
+  requestedCodec: GPUCodec | null,
+  forceRefresh = false
+): Promise<GPUCapabilitiesPayload> => {
+  const key = getGpuCapabilitiesCacheKey(requestedCodec);
+  if (forceRefresh) {
+    gpuCapabilitiesCache.delete(key);
+  }
+  const cached = gpuCapabilitiesCache.get(key);
+  if (cached) {
+    return cached;
+  }
+  const payload = await window.electronAPI.getGpuCapabilities(requestedCodec);
+  gpuCapabilitiesCache.set(key, payload);
+  return payload;
+};
+
+const clearGpuCapabilitiesCache = (): void => {
+  gpuCapabilitiesCache.clear();
+};
+
+const renderGpuCapabilityMatrix = (
+  payload: GPUCapabilitiesPayload,
+  codecsToRender: GPUCodec[]
+): void => {
+  elements.gpuCapabilityMatrix.innerHTML = '';
+
+  if (codecsToRender.length === 0) {
+    const empty = document.createElement('div');
+    empty.className = 'preset-empty';
+    empty.textContent = 'Selected preset does not use video encoding.';
+    elements.gpuCapabilityMatrix.appendChild(empty);
+    return;
+  }
+
+  const table = document.createElement('table');
+  table.className = 'gpu-capability-table';
+
+  const thead = document.createElement('thead');
+  const headerRow = document.createElement('tr');
+  const vendorHeader = document.createElement('th');
+  vendorHeader.textContent = 'Vendor';
+  headerRow.appendChild(vendorHeader);
+
+  if (codecsToRender.length === 1) {
+    const statusHeader = document.createElement('th');
+    statusHeader.textContent = `${getCodecLabel(codecsToRender[0])} Status`;
+    headerRow.appendChild(statusHeader);
+  } else {
+    codecsToRender.forEach((codec) => {
+      const codecHeader = document.createElement('th');
+      codecHeader.textContent = getCodecLabel(codec);
+      headerRow.appendChild(codecHeader);
+    });
+  }
+
+  thead.appendChild(headerRow);
+  table.appendChild(thead);
+
+  const tbody = document.createElement('tbody');
+  GPU_VENDORS.forEach((vendor) => {
+    const row = document.createElement('tr');
+    const vendorCell = document.createElement('td');
+    vendorCell.className = 'vendor';
+    vendorCell.textContent = getGpuVendorLabel(vendor);
+    row.appendChild(vendorCell);
+
+    const appendStatusCell = (codec: GPUCodec) => {
+      const cell = document.createElement('td');
+      const entry = payload.matrix[codec]?.[vendor];
+      const status = document.createElement('span');
+      status.className = `gpu-status ${entry?.available ? 'available' : 'unavailable'}`;
+      status.textContent = entry?.available ? 'Available' : 'Unavailable';
+      cell.appendChild(status);
+
+      const reason = document.createElement('div');
+      reason.className = 'gpu-reason';
+      const reasonText = entry?.reason || 'Not checked.';
+      reason.textContent = reasonText.length > 120 ? `${reasonText.slice(0, 117)}...` : reasonText;
+      cell.appendChild(reason);
+      row.appendChild(cell);
+    };
+
+    if (codecsToRender.length === 1) {
+      appendStatusCell(codecsToRender[0]);
+    } else {
+      codecsToRender.forEach((codec) => appendStatusCell(codec));
+    }
+
+    tbody.appendChild(row);
+  });
+
+  table.appendChild(tbody);
+  elements.gpuCapabilityMatrix.appendChild(table);
+};
+
+const isGpuDetailsVisible = (): boolean => {
+  return settings.gpuMode === 'manual' || showGpuDetails;
+};
+
+const applyGpuDetailsUi = (): void => {
+  const detailsVisible = isGpuDetailsVisible();
+  elements.toggleGpuDetailsBtn.hidden = settings.gpuMode === 'manual';
+  elements.showAllCodecsLabel.hidden = !detailsVisible;
+  elements.gpuCapabilityMatrix.hidden = !detailsVisible;
+  elements.toggleGpuDetailsBtn.textContent = detailsVisible ? 'Hide details' : 'Show details';
+  elements.toggleGpuDetailsBtn.setAttribute('aria-expanded', detailsVisible ? 'true' : 'false');
+};
+
+const applyGpuModeUi = (): void => {
+  elements.gpuManualRow.hidden = settings.gpuMode !== 'manual';
+  elements.gpuModeAuto.checked = settings.gpuMode !== 'manual';
+  elements.gpuModeManual.checked = settings.gpuMode === 'manual';
+  applyGpuDetailsUi();
+};
+
+const refreshGpuPanel = async (forceRefresh: boolean): Promise<void> => {
+  const token = ++gpuPanelRenderToken;
+  const selectedPreset = getSelectedPreset();
+  const selectedCodec = getSelectedPresetCodec();
+  const detailsVisible = isGpuDetailsVisible();
+
+  try {
+    const summaryPayload = await getGpuCapabilities(selectedCodec, forceRefresh);
+    if (token !== gpuPanelRenderToken) {
+      return;
+    }
+
+    const matrixPayload =
+      detailsVisible && showAllGpuCodecs
+        ? await getGpuCapabilities(null, forceRefresh)
+        : summaryPayload;
+    if (token !== gpuPanelRenderToken) {
+      return;
+    }
+
+    if (!selectedPreset) {
+      elements.gpuEffectiveSummary.textContent =
+        'Select a preset to evaluate hardware acceleration.';
+      if (detailsVisible) {
+        renderGpuCapabilityMatrix(matrixPayload, showAllGpuCodecs ? GPU_CODECS : []);
+      }
+      return;
+    }
+
+    if (!selectedCodec) {
+      elements.gpuEffectiveSummary.textContent =
+        'Selected preset does not use video encoding. GPU selection is ignored for this preset.';
+      if (detailsVisible) {
+        renderGpuCapabilityMatrix(matrixPayload, showAllGpuCodecs ? GPU_CODECS : []);
+      }
+      return;
+    }
+
+    if (settings.gpuMode === 'auto') {
+      const autoVendor = summaryPayload.recommendedVendor;
+      elements.gpuEffectiveSummary.textContent = `Auto: ${getGpuVendorLabel(autoVendor)} for ${getCodecLabel(selectedCodec)}. ${summaryPayload.recommendationReason}`;
+    } else {
+      const manualVendor = settings.gpuManualVendor;
+      const manualEntry = summaryPayload.matrix[selectedCodec]?.[manualVendor];
+      if (manualEntry?.available) {
+        elements.gpuEffectiveSummary.textContent = `Manual: ${getGpuVendorLabel(manualVendor)} selected for ${getCodecLabel(selectedCodec)}. Encoder is available.`;
+      } else {
+        elements.gpuEffectiveSummary.textContent = `Manual: ${getGpuVendorLabel(manualVendor)} selected for ${getCodecLabel(selectedCodec)}. ${manualEntry?.reason || 'Availability unknown.'}`;
+      }
+    }
+
+    if (detailsVisible) {
+      renderGpuCapabilityMatrix(matrixPayload, showAllGpuCodecs ? GPU_CODECS : [selectedCodec]);
+    }
+  } catch (err) {
+    if (token !== gpuPanelRenderToken) {
+      return;
+    }
+    elements.gpuEffectiveSummary.textContent = 'Unable to load GPU capability data.';
+    elements.gpuCapabilityMatrix.innerHTML = '';
+    const empty = document.createElement('div');
+    empty.className = 'preset-empty';
+    empty.textContent = err instanceof Error ? err.message : String(err);
+    elements.gpuCapabilityMatrix.appendChild(empty);
+  }
 };
 
 const gifTierInputs: Record<
@@ -1248,13 +1829,13 @@ const init = async () => {
 };
 
 const checkPlatform = async () => {
-  const platform = await window.electronAPI.getPlatform();
-  if (platform === 'darwin') {
-    const appleOption =
-      elements.gpuSelect.querySelector<HTMLOptionElement>('option[value="apple"]');
-    if (appleOption) {
-      appleOption.hidden = false;
-    }
+  currentPlatform = await window.electronAPI.getPlatform();
+  const appleOption =
+    elements.gpuManualVendorSelect.querySelector<HTMLOptionElement>('option[value="apple"]');
+  if (appleOption) {
+    const allowApple = currentPlatform === 'darwin';
+    appleOption.hidden = !allowApple;
+    appleOption.disabled = !allowApple;
   }
 };
 
@@ -1277,6 +1858,7 @@ const checkFFmpeg = async () => {
 
 const loadSettings = async () => {
   settings = await window.electronAPI.getSettings();
+  settings.recentPresetIds = normalizeRecentPresetIds(settings.recentPresetIds);
   if (
     !settings.advancedFormatSettings ||
     !settings.advancedFormatSettings.gif ||
@@ -1287,7 +1869,19 @@ const loadSettings = async () => {
   ) {
     settings.advancedFormatSettings = await window.electronAPI.getDefaultAdvancedFormatSettings();
   }
-  elements.gpuSelect.value = settings.gpu;
+  settings.gpuMode = settings.gpuMode === 'manual' ? 'manual' : 'auto';
+  if (!GPU_VENDORS.includes(settings.gpuManualVendor)) {
+    settings.gpuManualVendor = 'cpu';
+  }
+  if (currentPlatform !== 'darwin' && settings.gpuManualVendor === 'apple') {
+    settings.gpuManualVendor = 'cpu';
+  }
+  showGpuDetails = settings.gpuMode === 'manual';
+  settings.gpu = settings.gpuManualVendor;
+  applyGpuModeUi();
+  elements.gpuManualVendorSelect.value = settings.gpuManualVendor;
+  showAllGpuCodecs = false;
+  elements.showAllGpuCodecsCheck.checked = false;
   elements.themeSelect.value = settings.theme;
   elements.debugOutputCheck.checked = settings.showDebugOutput;
   elements.advancedPresetsCheck.checked = settings.showAdvancedPresets;
@@ -1314,46 +1908,14 @@ const loadSettings = async () => {
 
 const loadPresets = async () => {
   presets = await window.electronAPI.getPresets();
-  elements.presetSelect.innerHTML = '';
-
-  const categories = Array.from(
-    presets
-      .reduce((acc, preset) => {
-        if (!acc.has(preset.category)) {
-          acc.set(preset.category, {
-            category: preset.category,
-            label: preset.categoryLabel || preset.category,
-            order: Number.isFinite(preset.categoryOrder) ? preset.categoryOrder : 999,
-            isAdvanced: preset.isAdvanced === true,
-          });
-        }
-        return acc;
-      }, new Map<string, { category: string; label: string; order: number; isAdvanced: boolean }>())
-      .values()
-  )
-    .sort((a, b) => {
-      if (a.order !== b.order) {
-        return a.order - b.order;
-      }
-      return a.label.localeCompare(b.label);
-    })
-    .filter((entry) => settings.showAdvancedPresets || !entry.isAdvanced);
-
-  categories.forEach((entry) => {
-    const catPresets = presets.filter((p) => p.category === entry.category);
-    if (catPresets.length > 0) {
-      const optgroup = document.createElement('optgroup');
-      optgroup.label = entry.label;
-      catPresets.forEach((preset) => {
-        const option = document.createElement('option');
-        option.value = preset.id;
-        option.textContent = preset.name;
-        option.title = preset.description;
-        optgroup.appendChild(option);
-      });
-      elements.presetSelect.appendChild(optgroup);
-    }
-  });
+  const visiblePresetIds = new Set(getVisiblePresets().map((preset) => preset.id));
+  if (!selectedPresetId || !visiblePresetIds.has(selectedPresetId)) {
+    const firstRecent = normalizeRecentPresetIds(settings.recentPresetIds).find((id) =>
+      visiblePresetIds.has(id)
+    );
+    selectedPresetId = firstRecent || getVisiblePresets()[0]?.id || '';
+  }
+  renderPresetPicker();
 };
 
 const loadVersion = async () => {
@@ -1659,9 +2221,73 @@ const setupEventListeners = () => {
     }
   });
 
-  elements.gpuSelect.addEventListener('change', async () => {
-    settings.gpu = elements.gpuSelect.value as AppSettings['gpu'];
-    await window.electronAPI.saveSettings({ gpu: settings.gpu });
+  elements.presetSearch.addEventListener('input', () => {
+    renderPresetPicker();
+  });
+
+  elements.refreshGpuCapsBtn.addEventListener('click', () => {
+    clearGpuCapabilitiesCache();
+    void refreshGpuPanel(true);
+  });
+
+  elements.showAllGpuCodecsCheck.addEventListener('change', () => {
+    showAllGpuCodecs = elements.showAllGpuCodecsCheck.checked;
+    void refreshGpuPanel(false);
+  });
+
+  elements.toggleGpuDetailsBtn.addEventListener('click', () => {
+    showGpuDetails = !showGpuDetails;
+    applyGpuDetailsUi();
+    void refreshGpuPanel(false);
+  });
+
+  const persistGpuMode = async (nextMode: GPUMode): Promise<void> => {
+    try {
+      settings.gpuMode = nextMode;
+      showGpuDetails = nextMode === 'manual';
+      settings.gpu = settings.gpuManualVendor;
+      applyGpuModeUi();
+      await window.electronAPI.saveSettings({
+        gpuMode: settings.gpuMode,
+        gpuManualVendor: settings.gpuManualVendor,
+        gpu: settings.gpuManualVendor,
+      });
+      void refreshGpuPanel(false);
+    } catch (err) {
+      showStatus(
+        'error',
+        `Failed to save GPU mode: ${err instanceof Error ? err.message : String(err)}`
+      );
+    }
+  };
+
+  elements.gpuModeAuto.addEventListener('change', () => {
+    if (elements.gpuModeAuto.checked) {
+      void persistGpuMode('auto');
+    }
+  });
+
+  elements.gpuModeManual.addEventListener('change', () => {
+    if (elements.gpuModeManual.checked) {
+      void persistGpuMode('manual');
+    }
+  });
+
+  elements.gpuManualVendorSelect.addEventListener('change', async () => {
+    try {
+      settings.gpuManualVendor = elements.gpuManualVendorSelect.value as GPUVendor;
+      settings.gpu = settings.gpuManualVendor;
+      await window.electronAPI.saveSettings({
+        gpuManualVendor: settings.gpuManualVendor,
+        gpu: settings.gpuManualVendor,
+      });
+      void refreshGpuPanel(false);
+    } catch (err) {
+      showStatus(
+        'error',
+        `Failed to save GPU vendor: ${err instanceof Error ? err.message : String(err)}`
+      );
+    }
   });
 
   elements.themeSelect.addEventListener('change', async () => {
@@ -1716,7 +2342,9 @@ const setupEventListeners = () => {
   elements.useSystemFFmpegCheck.addEventListener('change', async () => {
     settings.useSystemFFmpeg = elements.useSystemFFmpegCheck.checked;
     await window.electronAPI.saveSettings({ useSystemFFmpeg: settings.useSystemFFmpeg });
+    clearGpuCapabilitiesCache();
     await checkFFmpeg();
+    void refreshGpuPanel(true);
   });
 
   elements.convertBtn.addEventListener('click', () => {
@@ -1922,7 +2550,7 @@ const setupEventListeners = () => {
   });
 
   window.electronAPI.onGPUEncoderError((error: GPUEncoderError) => {
-    showGPUErrorModal(error);
+    showGPUErrorStatus(error);
   });
 
   window.electronAPI.onUpdateAvailable((available: boolean) => {
@@ -1939,94 +2567,9 @@ const setupEventListeners = () => {
   });
 };
 
-const showGPUErrorModal = (error: GPUEncoderError): void => {
-  const modal = elements.dynamicModal;
-  const titleEl = modal.querySelector('.modal-header h2') as HTMLElement;
-  const bodyEl = modal.querySelector('.modal-body p') as HTMLElement;
-  const confirmBtn = modal.querySelector('#modalConfirm') as HTMLButtonElement;
-  const cancelBtn = modal.querySelector('#modalCancel') as HTMLButtonElement;
-
-  titleEl.textContent = 'GPU Encoding Error';
-  bodyEl.textContent = '';
-  const messageEl = document.createElement('strong');
-  messageEl.style.color = 'var(--error)';
-  messageEl.textContent = error.message;
-
-  const detailsEl = document.createElement('div');
-  detailsEl.style.marginTop = '12px';
-  detailsEl.style.whiteSpace = 'pre-line';
-  detailsEl.style.opacity = '0.85';
-  detailsEl.style.fontSize = '0.9em';
-  detailsEl.textContent = error.details;
-
-  const suggestionEl = document.createElement('div');
-  suggestionEl.style.marginTop = '12px';
-  suggestionEl.style.padding = '8px 12px';
-  suggestionEl.style.background = 'var(--bg-tertiary)';
-  suggestionEl.style.borderRadius = '6px';
-  suggestionEl.style.fontSize = '0.9em';
-
-  const suggestionLabel = document.createElement('strong');
-  suggestionLabel.textContent = 'Suggestion: ';
-  suggestionEl.append(suggestionLabel, document.createTextNode(error.suggestion));
-
-  bodyEl.append(messageEl, detailsEl, suggestionEl);
-
-  if (error.canRetryWithCPU) {
-    confirmBtn.textContent = 'Retry with CPU';
-    cancelBtn.textContent = 'Cancel';
-    confirmBtn.className = 'btn btn-sm btn-primary';
-  } else {
-    confirmBtn.textContent = 'OK';
-    cancelBtn.style.display = 'none';
-    confirmBtn.className = 'btn btn-sm btn-primary';
-  }
-
-  const overlayListener = (e: Event) => {
-    if (e.target === modal) {
-      closeByEscape();
-    }
-  };
-
-  const cleanup = () => {
-    modal.classList.remove('visible');
-    modal.removeEventListener('click', overlayListener);
-    cancelBtn.style.display = '';
-    bodyEl.textContent = '';
-    confirmBtn.replaceWith(confirmBtn.cloneNode(true));
-    cancelBtn.replaceWith(cancelBtn.cloneNode(true));
-    if (closeDynamicModal === closeByEscape) {
-      closeDynamicModal = null;
-    }
-  };
-
-  const closeByEscape = () => {
-    cleanup();
-    showStatus('error', error.message);
-  };
-
-  const newConfirmBtn = modal.querySelector('#modalConfirm') as HTMLButtonElement;
-  const newCancelBtn = modal.querySelector('#modalCancel') as HTMLButtonElement;
-
-  newConfirmBtn.addEventListener('click', async () => {
-    cleanup();
-    if (error.canRetryWithCPU) {
-      settings.gpu = 'cpu';
-      elements.gpuSelect.value = 'cpu';
-      await window.electronAPI.saveSettings({ gpu: 'cpu' });
-      showStatus('warning', 'Switched to CPU encoding. Start conversion again to retry.');
-    }
-  });
-
-  newCancelBtn.addEventListener('click', () => {
-    cleanup();
-    showStatus('error', error.message);
-  });
-
-  modal.addEventListener('click', overlayListener);
-  modal.classList.add('visible');
-  focusFirstInteractiveElement(modal);
-  closeDynamicModal = closeByEscape;
+const showGPUErrorStatus = (error: GPUEncoderError): void => {
+  appendLogMessage(`[GPU] ${error.message}\n${error.details}\n`);
+  showStatus('warning', `${error.message}. ${error.suggestion}`);
 };
 
 const getFileName = (filePath: string): string => filePath.split(/[/\\]/).pop() || filePath;
@@ -2088,13 +2631,61 @@ const handleFileSelect = async (filePaths: string[]) => {
   hideStatus();
 };
 
+const resolvePreferredGpuVendor = async (
+  preset: Preset
+): Promise<{ gpu: GPUVendor; codec: GPUCodec | null; reason: string }> => {
+  const codec = getPresetCodec(preset);
+  if (!codec) {
+    return {
+      gpu: 'cpu',
+      codec: null,
+      reason: 'Selected preset does not use video encoding.',
+    };
+  }
+
+  const payload = await getGpuCapabilities(codec, false);
+  if (settings.gpuMode === 'manual') {
+    return {
+      gpu: settings.gpuManualVendor,
+      codec,
+      reason: `Manual override: ${getGpuVendorLabel(settings.gpuManualVendor)}`,
+    };
+  }
+
+  return {
+    gpu: payload.recommendedVendor,
+    codec,
+    reason: payload.recommendationReason,
+  };
+};
+
+const shouldRetryWithCpu = (
+  result: ConversionResult,
+  attemptedGpu: GPUVendor,
+  codec: GPUCodec | null
+): boolean => {
+  if (attemptedGpu === 'cpu' || codec === null || result.success) {
+    return false;
+  }
+  if (result.error === 'Conversion cancelled') {
+    return false;
+  }
+  if (result.retryWithCpuSuggested === true) {
+    return true;
+  }
+  const message = (result.error || '').toLowerCase();
+  const gpuMarkers = ['nvenc', 'amf', 'qsv', 'videotoolbox', 'encoder', 'hardware', 'gpu'];
+  return gpuMarkers.some((marker) => message.includes(marker));
+};
+
 const runSingleConversion = async (
   inputPath: string,
   presetId: string,
   fileIndex: number,
   totalFiles: number,
-  batchOptions: BatchConversionOptions
-): Promise<ConversionResult> => {
+  batchOptions: BatchConversionOptions,
+  codec: GPUCodec | null
+): Promise<ConversionResult & { usedCpuFallback?: boolean }> => {
   conversionStartTime = Date.now();
   elements.progressFill.style.width = '0%';
   elements.progressPercent.textContent = '0%';
@@ -2111,12 +2702,37 @@ const runSingleConversion = async (
     appendLogMessage(`\n=== [${fileIndex + 1}/${totalFiles}] ${fileName} ===\n`);
   }
 
-  return window.electronAPI.startConversion(inputPath, presetId, batchOptions.gpu, {
-    suppressGpuErrorEvent: totalFiles > 1,
-    removeSpacesFromFilenames: batchOptions.removeSpacesFromFilenames,
-    outputDirectory: batchOptions.outputDirectory,
-    showDebugOutput: batchOptions.showDebugOutput,
-  });
+  const firstAttempt = await window.electronAPI.startConversion(
+    inputPath,
+    presetId,
+    batchOptions.gpu,
+    {
+      suppressGpuErrorEvent: true,
+      removeSpacesFromFilenames: batchOptions.removeSpacesFromFilenames,
+      outputDirectory: batchOptions.outputDirectory,
+      showDebugOutput: batchOptions.showDebugOutput,
+    }
+  );
+
+  if (!cancelRequested && shouldRetryWithCpu(firstAttempt, batchOptions.gpu, codec)) {
+    const fileNameForStatus = getFileName(inputPath);
+    showStatus('warning', `GPU path failed for ${fileNameForStatus}. Retrying with CPU...`);
+    if (batchOptions.showDebugOutput) {
+      appendLogMessage(`[GPU fallback] Retry with CPU for ${fileNameForStatus}\n`);
+    }
+    const retryResult = await window.electronAPI.startConversion(inputPath, presetId, 'cpu', {
+      suppressGpuErrorEvent: true,
+      removeSpacesFromFilenames: batchOptions.removeSpacesFromFilenames,
+      outputDirectory: batchOptions.outputDirectory,
+      showDebugOutput: batchOptions.showDebugOutput,
+    });
+    return {
+      ...retryResult,
+      usedCpuFallback: true,
+    };
+  }
+
+  return firstAttempt;
 };
 
 const finishConversionUi = () => {
@@ -2134,10 +2750,30 @@ const startConversion = async () => {
 
   if (selectedFiles.length === 0) return;
 
-  const presetId = elements.presetSelect.value;
+  const presetId = selectedPresetId;
   if (!presetId) {
     showStatus('error', 'Select a conversion preset first');
     return;
+  }
+  const preset = presets.find((entry) => entry.id === presetId);
+  if (!preset) {
+    showStatus('error', 'Selected preset is no longer available');
+    return;
+  }
+
+  try {
+    await rememberRecentPreset(presetId);
+  } catch {}
+
+  let resolvedGpuVendor: GPUVendor = 'cpu';
+  let codecForRetry: GPUCodec | null = null;
+  try {
+    const resolvedGpu = await resolvePreferredGpuVendor(preset);
+    resolvedGpuVendor = resolvedGpu.gpu;
+    codecForRetry = resolvedGpu.codec;
+  } catch {
+    resolvedGpuVendor = 'cpu';
+    codecForRetry = null;
   }
 
   isConverting = true;
@@ -2153,7 +2789,7 @@ const startConversion = async () => {
   hideStatus();
 
   const batchOptions: BatchConversionOptions = {
-    gpu: settings.gpu,
+    gpu: resolvedGpuVendor,
     removeSpacesFromFilenames: settings.removeSpacesFromFilenames,
     outputDirectory: settings.outputDirectory,
     showDebugOutput: settings.showDebugOutput,
@@ -2161,7 +2797,7 @@ const startConversion = async () => {
 
   const filesToConvert = [...selectedFiles];
   const totalFiles = filesToConvert.length;
-  const results: Array<ConversionResult & { inputPath: string }> = [];
+  const results: Array<ConversionResult & { inputPath: string; usedCpuFallback?: boolean }> = [];
   let unexpectedError: string | null = null;
 
   try {
@@ -2176,7 +2812,8 @@ const startConversion = async () => {
         presetId,
         fileIndex,
         totalFiles,
-        batchOptions
+        batchOptions,
+        codecForRetry
       );
       results.push({ inputPath, ...result });
 
@@ -2203,7 +2840,10 @@ const startConversion = async () => {
 
   if (totalFiles === 1) {
     const [result] = results;
-    if (result?.success) {
+    if (result?.success && result.usedCpuFallback) {
+      showStatus('warning', 'Conversion complete. GPU unavailable; retried with CPU.');
+      elements.showInFolderBtn.style.display = 'inline-flex';
+    } else if (result?.success) {
       showStatus('success', 'Conversion complete!');
       elements.showInFolderBtn.style.display = 'inline-flex';
     } else if (result?.error === 'Conversion cancelled' || wasCancelled) {
@@ -2216,15 +2856,26 @@ const startConversion = async () => {
 
   const successCount = results.filter((result) => result.success).length;
   const failedCount = results.length - successCount;
+  const fallbackCount = results.filter((result) => result.usedCpuFallback).length;
 
   if (wasCancelled) {
     showStatus('warning', `Batch cancelled. ${successCount}/${totalFiles} converted.`);
   } else if (failedCount === 0) {
-    showStatus('success', `Batch complete. ${successCount}/${totalFiles} converted.`);
+    if (fallbackCount > 0) {
+      showStatus(
+        'warning',
+        `Batch complete. ${successCount}/${totalFiles} converted (${fallbackCount} CPU fallback).`
+      );
+    } else {
+      showStatus('success', `Batch complete. ${successCount}/${totalFiles} converted.`);
+    }
   } else if (successCount === 0) {
     showStatus('error', `Batch failed. 0/${totalFiles} converted.`);
   } else {
-    showStatus('warning', `Batch complete with errors. ${successCount}/${totalFiles} converted.`);
+    showStatus(
+      'warning',
+      `Batch complete with errors. ${successCount}/${totalFiles} converted${fallbackCount > 0 ? ` (${fallbackCount} CPU fallback).` : '.'}`
+    );
   }
 
   if (successCount > 0) {
