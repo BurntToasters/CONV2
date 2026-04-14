@@ -225,6 +225,7 @@ let pendingLogBuffer = '';
 let logFlushScheduled = false;
 let pendingProgressUpdate: ConversionProgressPayload | null = null;
 let progressUpdateScheduled = false;
+const MAX_LOG_CHARS = 512 * 1024;
 
 const getRequiredElement = <T extends HTMLElement>(id: string): T => {
   const element = document.getElementById(id);
@@ -861,6 +862,13 @@ const readAdvancedFormatControls = (): AdvancedFormatSettings => {
   };
 };
 
+const areAdvancedSettingsEqual = (
+  left: AdvancedFormatSettings,
+  right: AdvancedFormatSettings
+): boolean => {
+  return JSON.stringify(left) === JSON.stringify(right);
+};
+
 const enqueueAdvancedSettingsTask = (task: () => Promise<void>): Promise<void> => {
   const nextTask = advancedSettingsSaveQueue.then(task);
   advancedSettingsSaveQueue = nextTask.catch(() => undefined);
@@ -876,8 +884,11 @@ const persistAdvancedFormatSettings = async (
     await window.electronAPI.saveSettings({
       advancedFormatSettings: nextAdvancedSettings,
     });
-    settings = await window.electronAPI.getSettings();
-    setAdvancedFormatControlValues(settings.advancedFormatSettings);
+    const refreshed = await window.electronAPI.getSettings();
+    settings = refreshed;
+    if (!areAdvancedSettingsEqual(refreshed.advancedFormatSettings, nextAdvancedSettings)) {
+      setAdvancedFormatControlValues(refreshed.advancedFormatSettings);
+    }
   } catch (err) {
     settings.advancedFormatSettings = previousSettings;
     setAdvancedFormatControlValues(previousSettings);
@@ -946,11 +957,34 @@ const flushPendingAdvancedSettingsSave = (): void => {
   queueAdvancedSettingsSaveFromControls();
 };
 
+const waitForAdvancedSettingsIdle = async (): Promise<void> => {
+  flushPendingAdvancedSettingsSave();
+  await advancedSettingsSaveQueue.catch(() => undefined);
+};
+
+const openSettingsModal = (): void => {
+  if (elements.settingsModal.classList.contains('visible')) {
+    return;
+  }
+  setSettingsPanel('settingsGeneralPanel');
+  setAdvancedFormatControlValues(settings.advancedFormatSettings);
+  elements.settingsModal.classList.add('visible');
+  focusFirstInteractiveElement(elements.settingsModal);
+};
+
+const closeSettingsModal = async (): Promise<void> => {
+  await waitForAdvancedSettingsIdle();
+  elements.settingsModal.classList.remove('visible');
+};
+
 const flushLogBuffer = (): void => {
   if (pendingLogBuffer.length === 0) {
     return;
   }
-  elements.logsContent.textContent += pendingLogBuffer;
+  const existingLogText = elements.logsContent.textContent || '';
+  const combined = existingLogText + pendingLogBuffer;
+  elements.logsContent.textContent =
+    combined.length <= MAX_LOG_CHARS ? combined : combined.slice(combined.length - MAX_LOG_CHARS);
   pendingLogBuffer = '';
   elements.logsContent.scrollTop = elements.logsContent.scrollHeight;
 };
@@ -959,7 +993,11 @@ const appendLogMessage = (message: string): void => {
   if (!message) {
     return;
   }
-  pendingLogBuffer += message;
+  const nextPending = pendingLogBuffer + message;
+  pendingLogBuffer =
+    nextPending.length <= MAX_LOG_CHARS
+      ? nextPending
+      : nextPending.slice(nextPending.length - MAX_LOG_CHARS);
   if (logFlushScheduled) {
     return;
   }
@@ -1165,8 +1203,7 @@ const renderLicenses = (entries: LicenseDisplayEntry[]): void => {
 
 const openCreditsModal = async (): Promise<void> => {
   if (elements.settingsModal.classList.contains('visible')) {
-    flushPendingAdvancedSettingsSave();
-    elements.settingsModal.classList.remove('visible');
+    await closeSettingsModal();
   }
   elements.creditsModal.classList.add('visible');
   focusFirstInteractiveElement(elements.creditsModal);
@@ -1394,8 +1431,7 @@ const setupKeyboardShortcuts = () => {
         return;
       }
       if (topModal === elements.settingsModal) {
-        flushPendingAdvancedSettingsSave();
-        elements.settingsModal.classList.remove('visible');
+        void closeSettingsModal();
         return;
       }
       if (topModal === elements.logsModal) {
@@ -1409,6 +1445,9 @@ const setupKeyboardShortcuts = () => {
 
     if ((e.ctrlKey || e.metaKey) && e.key === 'o') {
       e.preventDefault();
+      if (getTopVisibleModal()) {
+        return;
+      }
       elements.fileInput.click();
       return;
     }
@@ -1416,14 +1455,12 @@ const setupKeyboardShortcuts = () => {
     if ((e.ctrlKey || e.metaKey) && (e.key === ',' || e.code === 'Comma')) {
       e.preventDefault();
       const hasBlockingModal =
+        elements.settingsModal.classList.contains('visible') ||
         elements.dynamicModal.classList.contains('visible') ||
         elements.logsModal.classList.contains('visible') ||
         elements.creditsModal.classList.contains('visible');
       if (!hasBlockingModal) {
-        setSettingsPanel('settingsGeneralPanel');
-        setAdvancedFormatControlValues(settings.advancedFormatSettings);
-        elements.settingsModal.classList.add('visible');
-        focusFirstInteractiveElement(elements.settingsModal);
+        openSettingsModal();
       }
       return;
     }
@@ -1711,21 +1748,16 @@ const setupEventListeners = () => {
   });
 
   elements.settingsBtn.addEventListener('click', () => {
-    setSettingsPanel('settingsGeneralPanel');
-    setAdvancedFormatControlValues(settings.advancedFormatSettings);
-    elements.settingsModal.classList.add('visible');
-    focusFirstInteractiveElement(elements.settingsModal);
+    openSettingsModal();
   });
 
   elements.closeSettings.addEventListener('click', () => {
-    flushPendingAdvancedSettingsSave();
-    elements.settingsModal.classList.remove('visible');
+    void closeSettingsModal();
   });
 
   elements.settingsModal.addEventListener('click', (e) => {
     if (e.target === elements.settingsModal) {
-      flushPendingAdvancedSettingsSave();
-      elements.settingsModal.classList.remove('visible');
+      void closeSettingsModal();
     }
   });
 
@@ -2098,6 +2130,8 @@ const finishConversionUi = () => {
 };
 
 const startConversion = async () => {
+  await waitForAdvancedSettingsIdle();
+
   if (selectedFiles.length === 0) return;
 
   const presetId = elements.presetSelect.value;

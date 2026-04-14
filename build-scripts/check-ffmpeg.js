@@ -62,7 +62,7 @@ function normalizeArch(value) {
 
 function usage() {
   console.error(
-    'Usage: node build-scripts/check-ffmpeg.js [--all] [--current] [--target <platform:arch>]... [--generate-checksums]'
+    'Usage: node build-scripts/check-ffmpeg.js [--all] [--current] [--target <platform:arch>]... [--generate-checksums] [--require-checksums]'
   );
   process.exit(1);
 }
@@ -110,6 +110,7 @@ function parseArgs(args) {
   let explicitAll = false;
   let includeCurrent = false;
   let generateChecksums = false;
+  let requireChecksums = false;
   const targets = [];
 
   for (let i = 0; i < args.length; i += 1) {
@@ -124,6 +125,10 @@ function parseArgs(args) {
     }
     if (arg === '--generate-checksums') {
       generateChecksums = true;
+      continue;
+    }
+    if (arg === '--require-checksums') {
+      requireChecksums = true;
       continue;
     }
     if (arg === '--target') {
@@ -161,7 +166,7 @@ function parseArgs(args) {
     resolvedTargets = dedupeTargets(targets);
   }
 
-  return { targets: resolvedTargets, generateChecksums };
+  return { targets: resolvedTargets, generateChecksums, requireChecksums };
 }
 
 function computeSha256(filePath) {
@@ -201,10 +206,17 @@ function generateChecksumManifest(targets) {
   console.log(`Checksums written to resources/ffmpeg/checksums.json`);
 }
 
-function validateTargets(targets) {
+function validateTargets(targets, requireChecksums = false) {
   const missing = [];
   const checksumErrors = [];
   const manifest = loadChecksums();
+
+  if (requireChecksums && !manifest) {
+    console.error('\nFFmpeg/ffprobe checksum verification failed.');
+    console.error('- resources/ffmpeg/checksums.json is missing');
+    console.error('\nGenerate with: node build-scripts/check-ffmpeg.js --all --generate-checksums');
+    process.exit(1);
+  }
 
   for (const target of targets) {
     const key = `${target.platform}:${target.arch}`;
@@ -290,12 +302,16 @@ function validateTargets(targets) {
   }
 }
 
-const { targets, generateChecksums: shouldGenerate } = parseArgs(process.argv.slice(2));
+const {
+  targets,
+  generateChecksums: shouldGenerate,
+  requireChecksums,
+} = parseArgs(process.argv.slice(2));
 if (shouldGenerate) {
-  validateTargets(targets);
+  validateTargets(targets, requireChecksums);
   generateChecksumManifest(targets);
 } else {
-  validateTargets(targets);
+  validateTargets(targets, requireChecksums);
 }
 const checksumNote = loadChecksums() ? ' (checksums verified)' : ' (no checksum manifest found)';
 console.log(

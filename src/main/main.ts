@@ -10,6 +10,7 @@ import {
 } from 'electron';
 import * as path from 'path';
 import * as fs from 'fs';
+import { pathToFileURL } from 'url';
 import {
   presets,
   getPresetById,
@@ -33,6 +34,7 @@ import {
   checkGPUEncoderSupport,
   parseGPUError,
   ConversionResult,
+  waitForConversionStop,
 } from './ffmpeg';
 import {
   initUpdater,
@@ -68,6 +70,7 @@ if (process.platform === 'darwin') {
 
 let isConversionActive = false;
 let lastOutputPath = '';
+let trustedRendererUrl: string | null = null;
 
 interface AppSettings {
   outputDirectory: string;
@@ -196,7 +199,7 @@ const isTrustedIpcSender = (event: IpcMainInvokeEvent): boolean => {
   }
 
   const senderUrl = normalizeFileUrl(event.senderFrame?.url || '');
-  const expectedUrl = normalizeFileUrl(mainWindow.webContents.getURL());
+  const expectedUrl = trustedRendererUrl;
   return senderUrl !== null && expectedUrl !== null && senderUrl === expectedUrl;
 };
 
@@ -260,6 +263,8 @@ const getLicensesFilePath = (): string | null => {
 
 const createWindow = (): void => {
   Menu.setApplicationMenu(null);
+  const rendererEntryPath = path.join(__dirname, '../renderer/index.html');
+  trustedRendererUrl = normalizeFileUrl(pathToFileURL(rendererEntryPath).toString());
 
   mainWindow = new BrowserWindow({
     width: 900,
@@ -275,7 +280,26 @@ const createWindow = (): void => {
     show: false,
   });
 
-  mainWindow.loadFile(path.join(__dirname, '../renderer/index.html'));
+  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+    try {
+      const parsed = new URL(url);
+      if (parsed.protocol === 'https:') {
+        void shell.openExternal(parsed.toString());
+      }
+    } catch {
+      return { action: 'deny' };
+    }
+    return { action: 'deny' };
+  });
+
+  mainWindow.webContents.on('will-navigate', (event, targetUrl) => {
+    const normalized = normalizeFileUrl(targetUrl);
+    if (!normalized || normalized !== trustedRendererUrl) {
+      event.preventDefault();
+    }
+  });
+
+  mainWindow.loadFile(rendererEntryPath);
 
   mainWindow.once('ready-to-show', () => {
     mainWindow?.show();
@@ -294,6 +318,7 @@ const createWindow = (): void => {
   mainWindow.on('closed', () => {
     setUpdaterWindow(null);
     mainWindow = null;
+    trustedRendererUrl = null;
   });
 
   mainWindow.on('close', (e) => {
@@ -308,9 +333,10 @@ const createWindow = (): void => {
           defaultId: 0,
           cancelId: 0,
         })
-        .then((result) => {
+        .then(async (result) => {
           if (result.response === 1) {
             cancelConversion(true);
+            await waitForConversionStop(3000);
             isConversionActive = false;
             mainWindow?.destroy();
           }
@@ -613,7 +639,7 @@ ipcMain.handle('open-external', async (event: IpcMainInvokeEvent, url: string) =
   }
   try {
     const parsed = new URL(url);
-    if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') {
+    if (parsed.protocol !== 'https:') {
       return;
     }
     await shell.openExternal(parsed.toString());

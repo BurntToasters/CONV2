@@ -60,40 +60,68 @@ export const setUseSystemFFmpeg = (value: boolean): void => {
 };
 
 const getBundledFFmpegDir = (): string | null => {
-  if (typeof process.resourcesPath !== 'string') {
-    return null;
+  const candidateBaseDirs: string[] = [];
+
+  if (typeof process.resourcesPath === 'string') {
+    candidateBaseDirs.push(
+      path.join(process.resourcesPath, 'ffmpeg'),
+      path.join(process.resourcesPath, 'app.asar.unpacked', 'ffmpeg')
+    );
   }
 
-  const baseDir = path.join(process.resourcesPath, 'ffmpeg');
+  const appPath = app.getAppPath();
+  candidateBaseDirs.push(
+    path.join(appPath, 'resources', 'ffmpeg'),
+    path.resolve(appPath, '..', 'resources', 'ffmpeg'),
+    path.resolve(appPath, '..', 'ffmpeg')
+  );
 
-  // Preferred: flat layout where binaries are directly in resources/ffmpeg/
-  // (used when electron-builder copies the correct arch via ${arch})
+  const seen = new Set<string>();
   const ffmpegName = process.platform === 'win32' ? 'ffmpeg.exe' : 'ffmpeg';
-  if (fs.existsSync(path.join(baseDir, ffmpegName))) {
-    return baseDir;
-  }
 
-  // Fallback: arch-specific subdirectory layout (resources/ffmpeg/<arch>/)
-  if (process.platform === 'darwin' || process.platform === 'win32') {
-    const archDir = path.join(baseDir, process.arch);
-    if (fs.existsSync(archDir)) {
-      return archDir;
+  for (const baseDir of candidateBaseDirs) {
+    const normalizedBaseDir = path.resolve(baseDir);
+    if (seen.has(normalizedBaseDir)) {
+      continue;
     }
-    const x64Dir = path.join(baseDir, 'x64');
-    if (process.arch === 'x64' && fs.existsSync(x64Dir)) {
-      return x64Dir;
-    }
-    const arm64Dir = path.join(baseDir, 'arm64');
-    if (process.arch === 'arm64' && fs.existsSync(arm64Dir)) {
-      return arm64Dir;
-    }
-  }
+    seen.add(normalizedBaseDir);
 
-  if (fs.existsSync(baseDir)) {
-    return baseDir;
+    if (!fs.existsSync(normalizedBaseDir)) {
+      continue;
+    }
+
+    if (fs.existsSync(path.join(normalizedBaseDir, ffmpegName))) {
+      return normalizedBaseDir;
+    }
+
+    if (process.platform === 'darwin' || process.platform === 'win32') {
+      const archDir = path.join(normalizedBaseDir, process.arch);
+      if (fs.existsSync(path.join(archDir, ffmpegName))) {
+        return archDir;
+      }
+
+      const x64Dir = path.join(normalizedBaseDir, 'x64');
+      if (process.arch === 'x64' && fs.existsSync(path.join(x64Dir, ffmpegName))) {
+        return x64Dir;
+      }
+
+      const arm64Dir = path.join(normalizedBaseDir, 'arm64');
+      if (process.arch === 'arm64' && fs.existsSync(path.join(arm64Dir, ffmpegName))) {
+        return arm64Dir;
+      }
+    }
   }
 
   return null;
+};
+
+const getMissingBundledBinaryPath = (binaryName: 'ffmpeg' | 'ffprobe'): string => {
+  const ext = process.platform === 'win32' ? '.exe' : '';
+  const basePath =
+    typeof process.resourcesPath === 'string'
+      ? process.resourcesPath
+      : path.dirname(app.getAppPath());
+  return path.join(basePath, 'ffmpeg', `__missing_${binaryName}${ext}`);
 };
 
 export const getFFmpegPath = (): string => {
@@ -115,6 +143,15 @@ export const getFFmpegPath = (): string => {
       cachedFFmpegPath = effectivePath;
       return effectivePath;
     }
+  }
+
+  if (app.isPackaged) {
+    const missingBundledPath = getMissingBundledBinaryPath('ffmpeg');
+    console.error(
+      `Bundled ffmpeg binary not found in packaged app. Expected under resources/ffmpeg for ${process.platform}/${process.arch}.`
+    );
+    cachedFFmpegPath = missingBundledPath;
+    return missingBundledPath;
   }
 
   cachedFFmpegPath = 'ffmpeg';
@@ -142,13 +179,25 @@ export const getFFprobePath = (): string => {
     }
   }
 
+  if (app.isPackaged) {
+    const missingBundledPath = getMissingBundledBinaryPath('ffprobe');
+    console.error(
+      `Bundled ffprobe binary not found in packaged app. Expected under resources/ffmpeg for ${process.platform}/${process.arch}.`
+    );
+    cachedFFprobePath = missingBundledPath;
+    return missingBundledPath;
+  }
+
   cachedFFprobePath = 'ffprobe';
   return 'ffprobe';
 };
 
 export const hasBundledFFmpeg = (): boolean => {
   const ffmpegPath = getFFmpegPath();
-  return ffmpegPath !== 'ffmpeg';
+  if (ffmpegPath === 'ffmpeg') {
+    return false;
+  }
+  return fs.existsSync(ffmpegPath);
 };
 
 export const clearFFmpegPathCache = (): void => {
