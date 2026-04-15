@@ -1045,9 +1045,11 @@ select option {
 }
 
 .btn-xs {
-  padding: 6px 12px;
+  padding: 6px 14px;
   font-size: 11px;
   border-radius: var(--radius-xs);
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 
 .full-width {

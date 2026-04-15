@@ -89,6 +89,12 @@
   justify-content: flex-end;
 }
 
+.settings-inline select {
+  width: auto;
+  min-width: 0;
+  flex-shrink: 1;
+}
+
 .output-path {
   font-size: 11px;
   color: var(--text-muted);
