@@ -340,3 +340,92 @@ test('avi preset uses advanced codec and parameters', () => {
   assert.equal(args[args.indexOf('-b:a') + 1], '144k');
   assert.ok(args.includes('-x265-params'));
 });
+
+test('nvidia GPU encodes use -cq with -b:v 0 for proper CQ mode', () => {
+  const av1Preset = presets.find((p) => p.id === 'av1-best-quality');
+  const h265Preset = presets.find((p) => p.id === 'h265-best-quality');
+  const h264Preset = presets.find((p) => p.id === 'h264-quality');
+
+  for (const preset of [av1Preset, h265Preset, h264Preset]) {
+    assert.ok(preset, `missing preset ${preset?.id}`);
+    const args = preset.getArgs('input.mp4', 'output.mp4', 'nvidia');
+    assert.ok(args.includes('-cq'), `${preset.id}: missing -cq`);
+    assert.ok(args.includes('-b:v'), `${preset.id}: missing -b:v (required for NVENC CQ mode)`);
+    assert.equal(args[args.indexOf('-b:v') + 1], '0', `${preset.id}: -b:v must be 0`);
+    assert.ok(!args.includes('-crf'), `${preset.id}: should not use -crf for GPU`);
+  }
+});
+
+test('AMD GPU encodes use CQP rate control', () => {
+  const preset = presets.find((p) => p.id === 'av1-best-quality');
+  assert.ok(preset);
+  const args = preset.getArgs('input.mp4', 'output.mp4', 'amd');
+  assert.ok(args.includes('-rc'), 'missing -rc');
+  assert.equal(args[args.indexOf('-rc') + 1], 'cqp');
+  assert.ok(args.includes('-qp_i'));
+  assert.ok(args.includes('-qp_p'));
+});
+
+test('Intel GPU encodes use -global_quality', () => {
+  const preset = presets.find((p) => p.id === 'h265-best-quality');
+  assert.ok(preset);
+  const args = preset.getArgs('input.mp4', 'output.mp4', 'intel');
+  assert.ok(args.includes('-global_quality'), 'missing -global_quality');
+  assert.ok(!args.includes('-cq'), 'should not use -cq for Intel');
+});
+
+test('video presets include -map 0:v:0 and -map 0:a for multi-track preservation', () => {
+  const videoPresetIds = [
+    'av1-balanced',
+    'av1-quality',
+    'av1-best-quality',
+    'av1-best-compression',
+    'av1-compression',
+    'h264-fast',
+    'h264-quality',
+    'h265-balanced',
+    'h265-quality',
+    'h265-best-quality',
+    'h265-best-compression',
+    'avi-best-quality',
+    'avi-best-compression',
+    'avi-balanced',
+  ];
+
+  for (const id of videoPresetIds) {
+    const preset = presets.find((p) => p.id === id);
+    assert.ok(preset, `missing preset ${id}`);
+    const args = preset.getArgs('input.mp4', 'output.mp4', 'cpu');
+    const mapArgs = args.filter((a) => a === '-map');
+    assert.ok(mapArgs.length >= 2, `${id}: expected at least 2 -map flags`);
+    assert.ok(args.includes('0:v:0'), `${id}: missing -map 0:v:0`);
+    assert.ok(args.includes('0:a'), `${id}: missing -map 0:a`);
+  }
+});
+
+test('remux presets include -map 0 to copy all streams', () => {
+  const remuxIds = ['remux-mp4', 'remux-mkv', 'remux-webm'];
+
+  for (const id of remuxIds) {
+    const preset = presets.find((p) => p.id === id);
+    assert.ok(preset, `missing preset ${id}`);
+    const args = preset.getArgs('input.mp4', `output.${preset.extension}`, 'cpu');
+    const mapIdx = args.indexOf('-map');
+    assert.ok(mapIdx >= 0, `${id}: missing -map`);
+    assert.equal(args[mapIdx + 1], '0', `${id}: -map must be 0`);
+    assert.ok(args.includes('-c'), `${id}: missing -c`);
+    assert.equal(args[args.indexOf('-c') + 1], 'copy', `${id}: must use stream copy`);
+  }
+});
+
+test('audio extract presets strip video and produce no -map', () => {
+  const audioIds = ['audio-mp3', 'audio-aac', 'audio-flac'];
+
+  for (const id of audioIds) {
+    const preset = presets.find((p) => p.id === id);
+    assert.ok(preset, `missing preset ${id}`);
+    const args = preset.getArgs('input.mp4', `output.${preset.extension}`, 'cpu');
+    assert.ok(args.includes('-vn'), `${id}: missing -vn`);
+    assert.ok(!args.includes('-map'), `${id}: should not have -map`);
+  }
+});

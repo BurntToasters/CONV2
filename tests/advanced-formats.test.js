@@ -46,9 +46,9 @@ test('normalizeAdvancedFormatSettings returns defaults when values are missing',
     audioBitrateKbps: 128,
   });
   assert.deepEqual(normalized.h265.tiers.bestCompression, {
-    quality: 26,
+    quality: 32,
     preset: 'veryslow',
-    audioBitrateKbps: 128,
+    audioBitrateKbps: 96,
     useAdvancedParams: true,
   });
   assert.deepEqual(normalized.avi.tiers.balanced, {

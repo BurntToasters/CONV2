@@ -99,6 +99,7 @@ export interface ConversionResult {
   success: boolean;
   outputPath: string;
   error?: string;
+  retryWithCpuSuggested?: boolean;
 }
 
 export interface ConvertVideoOptions {
