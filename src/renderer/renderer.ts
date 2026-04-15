@@ -130,6 +130,11 @@ interface AdvancedFormatSettings {
   avi: AviAdvancedSettings;
 }
 
+interface UIPanelSettings {
+  presetExpanded: boolean;
+  gpuExpanded: boolean;
+}
+
 interface AppSettings {
   settingsSchemaVersion: number;
   outputDirectory: string;
@@ -144,6 +149,7 @@ interface AppSettings {
   showAdvancedPresets: boolean;
   removeSpacesFromFilenames: boolean;
   recentPresetIds: string[];
+  uiPanels: UIPanelSettings;
   advancedFormatSettings: AdvancedFormatSettings;
 }
 
@@ -214,6 +220,52 @@ interface GPUCapabilitiesPayload {
   recommendationReason: string;
 }
 
+interface PresetPickerModelPreset {
+  id: string;
+  category: string;
+  categoryLabel: string;
+  displayName: string;
+  searchText: string;
+}
+
+interface PresetParentBucket {
+  key: string;
+  label: string;
+  presets: PresetPickerModelPreset[];
+}
+
+interface PresetPaneGroup {
+  key: string;
+  label: string;
+  presets: PresetPickerModelPreset[];
+}
+
+interface PresetPaneState {
+  groups: PresetPaneGroup[];
+  totalVisible: number;
+  hasMatchesOutsideActive: boolean;
+}
+
+interface PresetPickerModelApi {
+  buildPresetParentBuckets: (args: {
+    presets: PresetPickerModelPreset[];
+    recentPresetIds: string[];
+    categoryOrder: string[];
+  }) => PresetParentBucket[];
+  resolveActiveParentKey: (requestedKey: string, buckets: PresetParentBucket[]) => string;
+  pickPresetIdForParent: (
+    currentSelectedId: string,
+    parentPresets: PresetPickerModelPreset[]
+  ) => string;
+  buildPresetPaneState: (args: {
+    buckets: PresetParentBucket[];
+    activeParentKey: string;
+    query: string;
+    searchAllFormats: boolean;
+  }) => PresetPaneState;
+  isPresetVisibleInGroups: (presetId: string, groups: PresetPaneGroup[]) => boolean;
+}
+
 interface LicenseCrawlerEntry {
   licenses: string | string[];
   repository?: string;
@@ -255,15 +307,28 @@ const MAX_LOG_CHARS = 512 * 1024;
 const MAX_RECENT_PRESET_IDS = 8;
 const GPU_VENDORS: GPUVendor[] = ['nvidia', 'amd', 'intel', 'apple', 'cpu'];
 const GPU_CODECS: GPUCodec[] = ['h264', 'h265', 'av1'];
-const DISPLAY_CATEGORY_ORDER = ['recent', 'av1', 'h265', 'h264', 'remux', 'audio', 'avi', 'gif'];
-type PresetCategoryKey = 'all' | 'recent' | (typeof DISPLAY_CATEGORY_ORDER)[number];
+type UIPanelKey = keyof UIPanelSettings;
+const PRESET_CATEGORY_ORDER = ['av1', 'h265', 'h264', 'remux', 'audio', 'avi', 'gif'];
+type PresetParentKey = 'recent' | (typeof PRESET_CATEGORY_ORDER)[number];
 let selectedPresetId = '';
-let activePresetCategory: PresetCategoryKey = 'all';
+let activePresetParentKey: PresetParentKey | '' = '';
+let presetSearchAllFormats = false;
 let currentPlatform = '';
 let showAllGpuCodecs = false;
 let showGpuDetails = false;
 const gpuCapabilitiesCache = new Map<string, GPUCapabilitiesPayload>();
 let gpuPanelRenderToken = 0;
+
+const normalizeUiPanels = (value: unknown): UIPanelSettings => {
+  const incoming =
+    value && typeof value === 'object'
+      ? (value as Partial<Record<keyof UIPanelSettings, unknown>>)
+      : {};
+  return {
+    presetExpanded: incoming.presetExpanded === true,
+    gpuExpanded: incoming.gpuExpanded === true,
+  };
+};
 
 const getRequiredElement = <T extends HTMLElement>(id: string): T => {
   const element = document.getElementById(id);
@@ -279,10 +344,21 @@ const elements = {
   fileInfo: document.getElementById('fileInfo') as HTMLDivElement,
   fileName: document.getElementById('fileName') as HTMLSpanElement,
   fileDetails: document.getElementById('fileDetails') as HTMLSpanElement,
+  presetPanelSection: getRequiredElement<HTMLElement>('presetPanelSection'),
+  presetPanelToggle: getRequiredElement<HTMLButtonElement>('presetPanelToggle'),
+  presetPanelBody: getRequiredElement<HTMLDivElement>('presetPanelBody'),
+  presetPanelSummary: getRequiredElement<HTMLSpanElement>('presetPanelSummary'),
   presetSearch: getRequiredElement<HTMLInputElement>('presetSearch'),
+  presetSearchAllCheck: getRequiredElement<HTMLInputElement>('presetSearchAllCheck'),
+  presetSearchScopeLabel: getRequiredElement<HTMLLabelElement>('presetSearchScopeLabel'),
   presetCountLabel: getRequiredElement<HTMLSpanElement>('presetCountLabel'),
-  presetCategoryChips: getRequiredElement<HTMLDivElement>('presetCategoryChips'),
+  presetParentList: getRequiredElement<HTMLDivElement>('presetParentList'),
+  presetSelectionPreview: getRequiredElement<HTMLDivElement>('presetSelectionPreview'),
   presetCardList: getRequiredElement<HTMLDivElement>('presetCardList'),
+  gpuPanelSection: getRequiredElement<HTMLElement>('gpuPanelSection'),
+  gpuPanelToggle: getRequiredElement<HTMLButtonElement>('gpuPanelToggle'),
+  gpuPanelBody: getRequiredElement<HTMLDivElement>('gpuPanelBody'),
+  gpuPanelSummary: getRequiredElement<HTMLSpanElement>('gpuPanelSummary'),
   refreshGpuCapsBtn: getRequiredElement<HTMLButtonElement>('refreshGpuCapsBtn'),
   gpuModeAuto: getRequiredElement<HTMLInputElement>('gpuModeAuto'),
   gpuModeManual: getRequiredElement<HTMLInputElement>('gpuModeManual'),
@@ -373,6 +449,122 @@ const elements = {
   clearLogsBtn: document.getElementById('clearLogsBtn') as HTMLButtonElement,
   copyLogsBtn: document.getElementById('copyLogsBtn') as HTMLButtonElement,
 };
+
+const createFallbackPresetPickerModel = (): PresetPickerModelApi => {
+  const normalizeQueryTokens = (query: string): string[] => {
+    return query
+      .trim()
+      .toLowerCase()
+      .split(/\s+/)
+      .filter((token) => token.length > 0);
+  };
+
+  const matchesQuery = (preset: PresetPickerModelPreset, queryTokens: string[]): boolean => {
+    if (queryTokens.length === 0) {
+      return true;
+    }
+    return queryTokens.every((token) => preset.searchText.includes(token));
+  };
+
+  return {
+    buildPresetParentBuckets: ({ presets, recentPresetIds, categoryOrder }) => {
+      const grouped = new Map<string, PresetPickerModelPreset[]>();
+      presets.forEach((preset) => {
+        if (!grouped.has(preset.category)) {
+          grouped.set(preset.category, []);
+        }
+        grouped.get(preset.category)?.push(preset);
+      });
+
+      const buckets: PresetParentBucket[] = [];
+      const byId = new Map(presets.map((preset) => [preset.id, preset] as const));
+      const recents = recentPresetIds
+        .map((id) => byId.get(id))
+        .filter((preset): preset is PresetPickerModelPreset => !!preset);
+      if (recents.length > 0) {
+        buckets.push({ key: 'recent', label: 'Recent', presets: recents });
+      }
+
+      Array.from(grouped.keys())
+        .sort((left, right) => {
+          const leftIndex = categoryOrder.indexOf(left);
+          const rightIndex = categoryOrder.indexOf(right);
+          const normalizedLeft = leftIndex >= 0 ? leftIndex : categoryOrder.length + 1;
+          const normalizedRight = rightIndex >= 0 ? rightIndex : categoryOrder.length + 1;
+          return normalizedLeft - normalizedRight;
+        })
+        .forEach((category) => {
+          const categoryPresets = grouped.get(category) || [];
+          if (categoryPresets.length > 0) {
+            buckets.push({
+              key: category,
+              label: categoryPresets[0].categoryLabel,
+              presets: categoryPresets,
+            });
+          }
+        });
+      return buckets;
+    },
+    resolveActiveParentKey: (requestedKey, buckets) => {
+      if (buckets.length === 0) return '';
+      return buckets.some((bucket) => bucket.key === requestedKey) ? requestedKey : buckets[0].key;
+    },
+    pickPresetIdForParent: (currentSelectedId, parentPresets) => {
+      if (parentPresets.length === 0) return '';
+      if (parentPresets.some((preset) => preset.id === currentSelectedId)) {
+        return currentSelectedId;
+      }
+      const balanced = parentPresets.find((preset) =>
+        preset.displayName.toLowerCase().includes('balanced')
+      );
+      return balanced?.id || parentPresets[0].id;
+    },
+    buildPresetPaneState: ({ buckets, activeParentKey, query, searchAllFormats }) => {
+      const queryTokens = normalizeQueryTokens(query);
+      if (searchAllFormats) {
+        const groups = buckets
+          .map((bucket) => ({
+            key: bucket.key,
+            label: bucket.label,
+            presets: bucket.presets.filter((preset) => matchesQuery(preset, queryTokens)),
+          }))
+          .filter((group) => group.presets.length > 0);
+        return {
+          groups,
+          totalVisible: groups.reduce((count, group) => count + group.presets.length, 0),
+          hasMatchesOutsideActive: false,
+        };
+      }
+
+      const activeBucket = buckets.find((bucket) => bucket.key === activeParentKey);
+      const activeMatches = (activeBucket?.presets || []).filter((preset) =>
+        matchesQuery(preset, queryTokens)
+      );
+      const hasMatchesOutsideActive =
+        queryTokens.length > 0 &&
+        buckets.some((bucket) => {
+          if (bucket.key === activeParentKey) {
+            return false;
+          }
+          return bucket.presets.some((preset) => matchesQuery(preset, queryTokens));
+        });
+      return {
+        groups: activeBucket
+          ? [{ key: activeBucket.key, label: activeBucket.label, presets: activeMatches }]
+          : [],
+        totalVisible: activeMatches.length,
+        hasMatchesOutsideActive,
+      };
+    },
+    isPresetVisibleInGroups: (presetId, groups) => {
+      return groups.some((group) => group.presets.some((preset) => preset.id === presetId));
+    },
+  };
+};
+
+const pickerModel =
+  (window as Window & { presetPickerModel?: PresetPickerModelApi }).presetPickerModel ||
+  createFallbackPresetPickerModel();
 
 const normalizeRecentPresetIds = (value: unknown): string[] => {
   if (!Array.isArray(value)) {
@@ -489,11 +681,6 @@ const getVisiblePresets = (): Preset[] => {
   return presets.filter((preset) => settings.showAdvancedPresets || !preset.isAdvanced);
 };
 
-const getPresetCategoryWeight = (category: string): number => {
-  const index = DISPLAY_CATEGORY_ORDER.indexOf(category);
-  return index >= 0 ? index : DISPLAY_CATEGORY_ORDER.length + 1;
-};
-
 const sortPresets = (left: Preset, right: Preset): number => {
   const leftIntent = getPresetIntentKey(left);
   const rightIntent = getPresetIntentKey(right);
@@ -504,12 +691,10 @@ const sortPresets = (left: Preset, right: Preset): number => {
   return getPresetDisplayName(left).localeCompare(getPresetDisplayName(right));
 };
 
-const matchesPresetSearch = (preset: Preset, rawQuery: string): boolean => {
-  const query = rawQuery.trim().toLowerCase();
-  if (!query) return true;
+const getPresetSearchText = (preset: Preset): string => {
   const codec = getPresetCodec(preset);
   const intent = getPresetIntentLabel(getPresetIntentKey(preset));
-  const tokens = [
+  return [
     preset.name,
     getPresetDisplayName(preset),
     preset.description,
@@ -520,165 +705,138 @@ const matchesPresetSearch = (preset: Preset, rawQuery: string): boolean => {
   ]
     .join(' ')
     .toLowerCase();
-  return query
-    .split(/\s+/)
-    .filter((part) => part.length > 0)
-    .every((part) => tokens.includes(part));
 };
 
-interface PresetGroup {
-  key: PresetCategoryKey;
-  label: string;
-  presets: Preset[];
-}
-
-const buildPresetGroups = (): PresetGroup[] => {
-  const visible = getVisiblePresets().filter((preset) =>
-    matchesPresetSearch(preset, elements.presetSearch.value)
-  );
-  const grouped = new Map<string, Preset[]>();
-  visible.forEach((preset) => {
-    if (!grouped.has(preset.category)) {
-      grouped.set(preset.category, []);
-    }
-    grouped.get(preset.category)?.push(preset);
-  });
-  grouped.forEach((entries) => entries.sort(sortPresets));
-
-  const groups: PresetGroup[] = [];
-  const recentIds = normalizeRecentPresetIds(settings.recentPresetIds);
-  if (recentIds.length > 0) {
-    const byId = new Map(visible.map((preset) => [preset.id, preset] as const));
-    const recents = recentIds
-      .map((id) => byId.get(id))
-      .filter((preset): preset is Preset => !!preset);
-    if (recents.length > 0) {
-      groups.push({ key: 'recent', label: 'Recent', presets: recents });
-    }
-  }
-
-  Array.from(grouped.entries())
-    .sort((left, right) => getPresetCategoryWeight(left[0]) - getPresetCategoryWeight(right[0]))
-    .forEach(([category, categoryPresets]) => {
-      const label = categoryPresets[0]?.categoryLabel || category.toUpperCase();
-      groups.push({
-        key: category as PresetCategoryKey,
-        label,
-        presets: categoryPresets,
-      });
-    });
-
-  return groups;
-};
-
-const getActivePresetGroups = (groups: PresetGroup[]): PresetGroup[] => {
-  if (activePresetCategory === 'all') {
-    return groups;
-  }
-  return groups.filter((group) => group.key === activePresetCategory);
-};
-
-const ensureSelectedPreset = (groups: PresetGroup[]): void => {
-  const flattened = groups.flatMap((group) => group.presets);
-  if (flattened.length === 0) {
-    selectedPresetId = '';
+const updatePresetPanelSummary = (totalVisible: number): void => {
+  if (totalVisible === 0) {
+    elements.presetPanelSummary.textContent = 'No matches';
     return;
   }
-  if (!selectedPresetId || !flattened.some((preset) => preset.id === selectedPresetId)) {
-    selectedPresetId = flattened[0].id;
+
+  const selectedPreset = getSelectedPreset();
+  if (!selectedPreset) {
+    elements.presetPanelSummary.textContent = `${totalVisible} shown`;
+    return;
   }
+
+  elements.presetPanelSummary.textContent = `${getPresetDisplayName(selectedPreset)} · ${totalVisible} shown`;
 };
 
-const renderPresetCategoryChips = (groups: PresetGroup[]): void => {
-  const chipData = [
-    {
-      key: 'all' as PresetCategoryKey,
-      label: 'All',
-      count: groups.reduce((count, group) => count + group.presets.length, 0),
-    },
-    ...groups.map((group) => ({
-      key: group.key,
-      label: group.label,
-      count: group.presets.length,
-    })),
-  ];
-
-  const availableKeys = new Set(chipData.map((entry) => entry.key));
-  if (!availableKeys.has(activePresetCategory)) {
-    activePresetCategory = 'all';
+const renderPresetSelectionPreview = (preset: Preset | undefined): void => {
+  elements.presetSelectionPreview.innerHTML = '';
+  if (!preset) {
+    const empty = document.createElement('div');
+    empty.className = 'preset-preview-empty';
+    empty.textContent = 'Select preset to see details.';
+    elements.presetSelectionPreview.appendChild(empty);
+    return;
   }
 
-  elements.presetCategoryChips.innerHTML = '';
-  chipData.forEach((entry) => {
-    const chip = document.createElement('button');
-    chip.type = 'button';
-    chip.className = `preset-chip${activePresetCategory === entry.key ? ' is-active' : ''}`;
-    chip.textContent = `${entry.label} (${entry.count})`;
-    chip.setAttribute('role', 'tab');
-    chip.setAttribute('aria-selected', activePresetCategory === entry.key ? 'true' : 'false');
-    chip.addEventListener('click', () => {
-      activePresetCategory = entry.key;
+  const codec = getPresetCodec(preset);
+  const intent = getPresetIntentLabel(getPresetIntentKey(preset));
+  const title = document.createElement('div');
+  title.className = 'preset-preview-title';
+  title.textContent = getPresetDisplayName(preset);
+
+  const meta = document.createElement('div');
+  meta.className = 'preset-preview-meta';
+  meta.textContent = `${preset.categoryLabel} · ${codec ? getCodecLabel(codec) : 'No GPU codec'} · ${preset.extension.toUpperCase()} · ${intent}`;
+
+  const description = document.createElement('div');
+  description.className = 'preset-preview-description';
+  description.textContent = preset.description;
+
+  elements.presetSelectionPreview.append(title, meta, description);
+};
+
+const renderPresetParentList = (buckets: PresetParentBucket[]): void => {
+  elements.presetParentList.innerHTML = '';
+  buckets.forEach((bucket) => {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = `preset-parent-btn${bucket.key === activePresetParentKey ? ' is-active' : ''}`;
+    button.setAttribute('role', 'option');
+    button.setAttribute('aria-selected', bucket.key === activePresetParentKey ? 'true' : 'false');
+
+    const label = document.createElement('span');
+    label.className = 'preset-parent-label';
+    label.textContent = bucket.label;
+
+    const count = document.createElement('span');
+    count.className = 'preset-parent-count';
+    count.textContent = String(bucket.presets.length);
+
+    button.append(label, count);
+    button.addEventListener('click', () => {
+      activePresetParentKey = bucket.key as PresetParentKey;
+      selectedPresetId = pickerModel.pickPresetIdForParent(selectedPresetId, bucket.presets);
       renderPresetPicker();
     });
-    elements.presetCategoryChips.appendChild(chip);
+    elements.presetParentList.appendChild(button);
   });
 };
 
-const renderPresetCards = (groups: PresetGroup[]): void => {
+const renderPresetPaneGroups = (
+  paneState: PresetPaneState,
+  visiblePresetById: Map<string, Preset>
+): void => {
   elements.presetCardList.innerHTML = '';
-  const totalVisible = groups.reduce((count, group) => count + group.presets.length, 0);
+  const totalVisible = paneState.totalVisible;
   elements.presetCountLabel.textContent = `${totalVisible} preset${totalVisible === 1 ? '' : 's'}`;
+  updatePresetPanelSummary(totalVisible);
 
   if (totalVisible === 0) {
     const empty = document.createElement('div');
     empty.className = 'preset-empty';
-    empty.textContent = 'No presets match your filters.';
+    empty.textContent =
+      presetSearchAllFormats || !elements.presetSearch.value.trim()
+        ? 'No presets match your filters.'
+        : 'No matches in this format.';
+    if (!presetSearchAllFormats && paneState.hasMatchesOutsideActive) {
+      const widenBtn = document.createElement('button');
+      widenBtn.type = 'button';
+      widenBtn.className = 'btn btn-secondary btn-xs preset-empty-action';
+      widenBtn.textContent = 'Search all formats';
+      widenBtn.addEventListener('click', () => {
+        presetSearchAllFormats = true;
+        elements.presetSearchAllCheck.checked = true;
+        renderPresetPicker();
+      });
+      empty.appendChild(document.createElement('br'));
+      empty.appendChild(widenBtn);
+    }
     elements.presetCardList.appendChild(empty);
     return;
   }
 
-  groups.forEach((group) => {
-    const block = document.createElement('section');
-    block.className = 'preset-category-block';
+  const showGroupHeadings = presetSearchAllFormats && paneState.groups.length > 1;
+  paneState.groups.forEach((group) => {
+    const block = document.createElement('div');
+    block.className = 'preset-result-group';
 
-    const heading = document.createElement('h3');
-    heading.className = 'preset-category-heading';
-    heading.textContent = group.label;
-    block.appendChild(heading);
+    if (showGroupHeadings) {
+      const heading = document.createElement('h3');
+      heading.className = 'preset-result-group-heading';
+      heading.textContent = group.label;
+      block.appendChild(heading);
+    }
 
-    group.presets.forEach((preset) => {
-      const codec = getPresetCodec(preset);
-      const intentKey = getPresetIntentKey(preset);
-      const intentTone = getPresetIntentTone(intentKey);
+    group.presets.forEach((pickerPreset) => {
       const card = document.createElement('button');
       card.type = 'button';
-      card.className = `preset-card${preset.id === selectedPresetId ? ' is-selected' : ''}`;
+      card.className = `preset-card${pickerPreset.id === selectedPresetId ? ' is-selected' : ''}`;
       card.setAttribute('role', 'option');
-      card.setAttribute('aria-selected', preset.id === selectedPresetId ? 'true' : 'false');
-      card.title = `${getPresetDisplayName(preset)} — ${getPresetIntentLabel(intentKey)}`;
-
-      const dot = document.createElement('span');
-      dot.className = 'preset-intent-dot';
-      dot.dataset.intent = intentTone;
-      dot.setAttribute('aria-hidden', 'true');
-
-      const title = document.createElement('div');
-      title.className = 'preset-card-title';
-      title.textContent = getPresetDisplayName(preset);
-
-      const codecChip = document.createElement('span');
-      codecChip.className = 'preset-card-codec';
-      codecChip.textContent = codec
-        ? `${getCodecLabel(codec)} · ${preset.extension.toUpperCase()}`
-        : preset.extension.toUpperCase();
-
-      const description = document.createElement('div');
-      description.className = 'preset-card-description';
-      description.textContent = preset.description;
-
-      card.append(dot, title, codecChip, description);
+      card.setAttribute('aria-selected', pickerPreset.id === selectedPresetId ? 'true' : 'false');
+      card.textContent = pickerPreset.displayName;
+      const fullPreset = visiblePresetById.get(pickerPreset.id);
+      if (fullPreset) {
+        card.title = fullPreset.description;
+      }
       card.addEventListener('click', () => {
-        selectedPresetId = preset.id;
+        selectedPresetId = pickerPreset.id;
+        if (group.key !== 'recent') {
+          activePresetParentKey = group.key as PresetParentKey;
+        }
         renderPresetPicker();
       });
       block.appendChild(card);
@@ -689,12 +847,71 @@ const renderPresetCards = (groups: PresetGroup[]): void => {
 };
 
 const renderPresetPicker = (): void => {
-  const allGroups = buildPresetGroups();
-  renderPresetCategoryChips(allGroups);
-  const activeGroups = getActivePresetGroups(allGroups);
-  ensureSelectedPreset(activeGroups);
-  renderPresetCards(activeGroups);
-  void refreshGpuPanel(false);
+  try {
+    const visibleSorted = [...getVisiblePresets()].sort((left, right) => {
+      const leftCategoryWeight = PRESET_CATEGORY_ORDER.indexOf(left.category);
+      const rightCategoryWeight = PRESET_CATEGORY_ORDER.indexOf(right.category);
+      const normalizedLeft =
+        leftCategoryWeight >= 0 ? leftCategoryWeight : PRESET_CATEGORY_ORDER.length + 1;
+      const normalizedRight =
+        rightCategoryWeight >= 0 ? rightCategoryWeight : PRESET_CATEGORY_ORDER.length + 1;
+      if (normalizedLeft !== normalizedRight) {
+        return normalizedLeft - normalizedRight;
+      }
+      return sortPresets(left, right);
+    });
+
+    const visiblePickerPresets: PresetPickerModelPreset[] = visibleSorted.map((preset) => ({
+      id: preset.id,
+      category: preset.category,
+      categoryLabel: preset.categoryLabel,
+      displayName: getPresetDisplayName(preset),
+      searchText: getPresetSearchText(preset),
+    }));
+
+    const buckets = pickerModel.buildPresetParentBuckets({
+      presets: visiblePickerPresets,
+      recentPresetIds: normalizeRecentPresetIds(settings.recentPresetIds),
+      categoryOrder: [...PRESET_CATEGORY_ORDER],
+    });
+
+    activePresetParentKey = pickerModel.resolveActiveParentKey(activePresetParentKey, buckets) as
+      | PresetParentKey
+      | '';
+    renderPresetParentList(buckets);
+
+    const activeBucket = buckets.find((bucket) => bucket.key === activePresetParentKey);
+    selectedPresetId = pickerModel.pickPresetIdForParent(
+      selectedPresetId,
+      activeBucket?.presets || []
+    );
+
+    const paneState = pickerModel.buildPresetPaneState({
+      buckets,
+      activeParentKey: activePresetParentKey,
+      query: elements.presetSearch.value,
+      searchAllFormats: presetSearchAllFormats,
+    });
+
+    if (!pickerModel.isPresetVisibleInGroups(selectedPresetId, paneState.groups)) {
+      selectedPresetId = paneState.groups[0]?.presets[0]?.id || '';
+    }
+
+    const visiblePresetById = new Map(visibleSorted.map((preset) => [preset.id, preset] as const));
+    renderPresetPaneGroups(paneState, visiblePresetById);
+    renderPresetSelectionPreview(visiblePresetById.get(selectedPresetId));
+
+    void refreshGpuPanel(false);
+  } catch (err) {
+    console.error('Preset picker render failed:', err);
+    elements.presetCountLabel.textContent = 'Unavailable';
+    elements.presetPanelSummary.textContent = 'Preset UI error';
+    elements.presetParentList.innerHTML = '';
+    elements.presetSelectionPreview.innerHTML =
+      '<div class="preset-preview-empty">Preset UI failed to load.</div>';
+    elements.presetCardList.innerHTML =
+      '<div class="preset-empty">Reload app or open Settings.</div>';
+  }
 };
 
 const rememberRecentPreset = async (presetId: string): Promise<void> => {
@@ -818,6 +1035,46 @@ const renderGpuCapabilityMatrix = (
   elements.gpuCapabilityMatrix.appendChild(table);
 };
 
+const setGpuPanelSummary = (summary: string): void => {
+  elements.gpuPanelSummary.textContent = summary;
+};
+
+const applyPanelCollapseUi = (): void => {
+  const presetExpanded = settings.uiPanels.presetExpanded;
+  const gpuExpanded = settings.uiPanels.gpuExpanded;
+
+  elements.presetPanelBody.hidden = !presetExpanded;
+  elements.presetPanelToggle.setAttribute('aria-expanded', presetExpanded ? 'true' : 'false');
+  elements.presetPanelSection.classList.toggle('is-expanded', presetExpanded);
+
+  elements.gpuPanelBody.hidden = !gpuExpanded;
+  elements.gpuPanelToggle.setAttribute('aria-expanded', gpuExpanded ? 'true' : 'false');
+  elements.gpuPanelSection.classList.toggle('is-expanded', gpuExpanded);
+};
+
+const persistUiPanelState = async (panel: UIPanelKey, expanded: boolean): Promise<void> => {
+  if (settings.uiPanels[panel] === expanded) {
+    return;
+  }
+
+  const previousPanels = settings.uiPanels;
+  settings.uiPanels = { ...settings.uiPanels, [panel]: expanded };
+  applyPanelCollapseUi();
+
+  try {
+    const panelUpdate: Partial<UIPanelSettings> =
+      panel === 'presetExpanded' ? { presetExpanded: expanded } : { gpuExpanded: expanded };
+    await window.electronAPI.saveSettings({ uiPanels: panelUpdate });
+  } catch (err) {
+    settings.uiPanels = previousPanels;
+    applyPanelCollapseUi();
+    showStatus(
+      'error',
+      `Failed to save panel layout: ${err instanceof Error ? err.message : String(err)}`
+    );
+  }
+};
+
 const isGpuDetailsVisible = (): boolean => {
   return settings.gpuMode === 'manual' || showGpuDetails;
 };
@@ -861,6 +1118,7 @@ const refreshGpuPanel = async (forceRefresh: boolean): Promise<void> => {
     if (!selectedPreset) {
       elements.gpuEffectiveSummary.textContent =
         'Select a preset to evaluate hardware acceleration.';
+      setGpuPanelSummary('Select preset');
       if (detailsVisible) {
         renderGpuCapabilityMatrix(matrixPayload, showAllGpuCodecs ? GPU_CODECS : []);
       }
@@ -870,6 +1128,7 @@ const refreshGpuPanel = async (forceRefresh: boolean): Promise<void> => {
     if (!selectedCodec) {
       elements.gpuEffectiveSummary.textContent =
         'Selected preset does not use video encoding. GPU selection is ignored for this preset.';
+      setGpuPanelSummary('CPU only preset');
       if (detailsVisible) {
         renderGpuCapabilityMatrix(matrixPayload, showAllGpuCodecs ? GPU_CODECS : []);
       }
@@ -879,6 +1138,9 @@ const refreshGpuPanel = async (forceRefresh: boolean): Promise<void> => {
     if (settings.gpuMode === 'auto') {
       const autoVendor = summaryPayload.recommendedVendor;
       elements.gpuEffectiveSummary.textContent = `Auto: ${getGpuVendorLabel(autoVendor)} for ${getCodecLabel(selectedCodec)}. ${summaryPayload.recommendationReason}`;
+      setGpuPanelSummary(
+        `Auto · ${getGpuVendorLabel(autoVendor)} · ${getCodecLabel(selectedCodec)}`
+      );
     } else {
       const manualVendor = settings.gpuManualVendor;
       const manualEntry = summaryPayload.matrix[selectedCodec]?.[manualVendor];
@@ -887,6 +1149,9 @@ const refreshGpuPanel = async (forceRefresh: boolean): Promise<void> => {
       } else {
         elements.gpuEffectiveSummary.textContent = `Manual: ${getGpuVendorLabel(manualVendor)} selected for ${getCodecLabel(selectedCodec)}. ${manualEntry?.reason || 'Availability unknown.'}`;
       }
+      setGpuPanelSummary(
+        `Manual · ${getGpuVendorLabel(manualVendor)} · ${getCodecLabel(selectedCodec)}`
+      );
     }
 
     if (detailsVisible) {
@@ -897,6 +1162,7 @@ const refreshGpuPanel = async (forceRefresh: boolean): Promise<void> => {
       return;
     }
     elements.gpuEffectiveSummary.textContent = 'Unable to load GPU capability data.';
+    setGpuPanelSummary('Status unavailable');
     elements.gpuCapabilityMatrix.innerHTML = '';
     const empty = document.createElement('div');
     empty.className = 'preset-empty';
@@ -1842,12 +2108,12 @@ const init = async () => {
   await checkFFmpeg();
   await checkPlatform();
   await loadSettings();
+  setupEventListeners();
+  setupKeyboardShortcuts();
   await loadPresets();
   await loadVersion();
   await applyTheme();
   await applyUpdateVisibility();
-  setupEventListeners();
-  setupKeyboardShortcuts();
 };
 
 const checkPlatform = async () => {
@@ -1898,10 +2164,16 @@ const loadSettings = async () => {
   if (currentPlatform !== 'darwin' && settings.gpuManualVendor === 'apple') {
     settings.gpuManualVendor = 'cpu';
   }
+  settings.uiPanels = normalizeUiPanels(settings.uiPanels);
   showGpuDetails = settings.gpuMode === 'manual';
   settings.gpu = settings.gpuManualVendor;
   applyGpuModeUi();
+  applyPanelCollapseUi();
   elements.gpuManualVendorSelect.value = settings.gpuManualVendor;
+  elements.presetPanelSummary.textContent = 'No preset selected';
+  setGpuPanelSummary('Select preset');
+  presetSearchAllFormats = false;
+  elements.presetSearchAllCheck.checked = false;
   showAllGpuCodecs = false;
   elements.showAllGpuCodecsCheck.checked = false;
   elements.themeSelect.value = settings.theme;
@@ -1929,15 +2201,22 @@ const loadSettings = async () => {
 };
 
 const loadPresets = async () => {
-  presets = await window.electronAPI.getPresets();
-  const visiblePresetIds = new Set(getVisiblePresets().map((preset) => preset.id));
-  if (!selectedPresetId || !visiblePresetIds.has(selectedPresetId)) {
-    const firstRecent = normalizeRecentPresetIds(settings.recentPresetIds).find((id) =>
-      visiblePresetIds.has(id)
+  try {
+    presets = await window.electronAPI.getPresets();
+    const visiblePresetIds = new Set(getVisiblePresets().map((preset) => preset.id));
+    if (!selectedPresetId || !visiblePresetIds.has(selectedPresetId)) {
+      const firstRecent = normalizeRecentPresetIds(settings.recentPresetIds).find((id) =>
+        visiblePresetIds.has(id)
+      );
+      selectedPresetId = firstRecent || getVisiblePresets()[0]?.id || '';
+    }
+    renderPresetPicker();
+  } catch (err) {
+    showStatus(
+      'error',
+      `Failed to load presets: ${err instanceof Error ? err.message : String(err)}`
     );
-    selectedPresetId = firstRecent || getVisiblePresets()[0]?.id || '';
   }
-  renderPresetPicker();
 };
 
 const loadVersion = async () => {
@@ -2241,9 +2520,23 @@ const setupEventListeners = () => {
         .filter((filePath) => filePath && filePath.length > 0);
       handleFileSelect(filePaths);
     }
+    elements.fileInput.value = '';
+  });
+
+  elements.presetPanelToggle.addEventListener('click', () => {
+    void persistUiPanelState('presetExpanded', !settings.uiPanels.presetExpanded);
+  });
+
+  elements.gpuPanelToggle.addEventListener('click', () => {
+    void persistUiPanelState('gpuExpanded', !settings.uiPanels.gpuExpanded);
   });
 
   elements.presetSearch.addEventListener('input', () => {
+    renderPresetPicker();
+  });
+
+  elements.presetSearchAllCheck.addEventListener('change', () => {
+    presetSearchAllFormats = elements.presetSearchAllCheck.checked;
     renderPresetPicker();
   });
 

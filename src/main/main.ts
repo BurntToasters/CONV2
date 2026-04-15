@@ -41,7 +41,9 @@ import { setUseSystemFFmpeg } from './ffmpegPath';
 import { clearFFmpegCaches } from './ffmpeg';
 import {
   SETTINGS_SCHEMA_VERSION,
+  UIPanelSettings,
   normalizeRecentPresetIds,
+  normalizeUiPanels,
   shouldHardResetSettings,
 } from './settingsSchema';
 import { recommendGpuVendorFromAvailability } from './gpuRecommendation';
@@ -58,14 +60,11 @@ if (process.platform === 'darwin') {
   ];
 
   const currentPath = process.env.PATH || '';
-  const newPath = commonPaths.reduce((acc, p) => {
-    if (!acc.includes(p)) {
-      return `${acc}:${p}`;
-    }
-    return acc;
-  }, currentPath);
-
-  process.env.PATH = newPath;
+  const existingParts = new Set(currentPath.split(path.delimiter));
+  const missing = commonPaths.filter((p) => !existingParts.has(p));
+  if (missing.length > 0) {
+    process.env.PATH = currentPath + path.delimiter + missing.join(path.delimiter);
+  }
 }
 
 let isConversionActive = false;
@@ -88,8 +87,13 @@ interface AppSettings {
   showAdvancedPresets: boolean;
   removeSpacesFromFilenames: boolean;
   recentPresetIds: string[];
+  uiPanels: UIPanelSettings;
   advancedFormatSettings: AdvancedFormatSettings;
 }
+
+type SaveSettingsPayload = Omit<Partial<AppSettings>, 'uiPanels'> & {
+  uiPanels?: Partial<UIPanelSettings>;
+};
 
 const createDefaultSettings = (): AppSettings => ({
   settingsSchemaVersion: SETTINGS_SCHEMA_VERSION,
@@ -105,6 +109,7 @@ const createDefaultSettings = (): AppSettings => ({
   showAdvancedPresets: false,
   removeSpacesFromFilenames: false,
   recentPresetIds: [],
+  uiPanels: normalizeUiPanels(undefined),
   advancedFormatSettings: createDefaultAdvancedFormatSettings(),
 });
 
@@ -159,6 +164,7 @@ const normalizeSettings = (value: unknown): AppSettings => {
     showAdvancedPresets: incoming.showAdvancedPresets === true,
     removeSpacesFromFilenames: incoming.removeSpacesFromFilenames === true,
     recentPresetIds: normalizeRecentPresetIds(incoming.recentPresetIds),
+    uiPanels: normalizeUiPanels(incoming.uiPanels),
     advancedFormatSettings: normalizeAdvancedFormatSettings(incoming.advancedFormatSettings),
   };
 };
@@ -270,41 +276,57 @@ const buildGpuCapabilitiesPayload = async (
   const matrix: GPUCapabilityMatrix = {};
 
   for (const codec of codecsToCheck) {
+    const vendorChecks = GPU_VENDORS.map(
+      async (vendor): Promise<[GPUVendor, GPUCapabilityStatus]> => {
+        if (vendor === 'cpu') {
+          return [
+            vendor,
+            {
+              available: true,
+              reason: 'Software encoding fallback.',
+              encoder: GPU_ENCODERS[codec].cpu,
+            },
+          ];
+        }
+
+        if (vendor === 'apple' && process.platform !== 'darwin') {
+          return [
+            vendor,
+            {
+              available: false,
+              reason: 'Apple VideoToolbox available only on macOS.',
+              encoder: GPU_ENCODERS[codec].apple,
+            },
+          ];
+        }
+
+        if (vendor === 'apple' && codec === 'av1') {
+          return [
+            vendor,
+            {
+              available: false,
+              reason: 'Apple AV1 hardware encode unavailable. Use CPU for AV1.',
+              encoder: GPU_ENCODERS[codec].apple,
+            },
+          ];
+        }
+
+        const check = await checkGPUEncoderSupport(vendor, codec);
+        return [
+          vendor,
+          {
+            available: check.available,
+            reason: check.available ? 'Available' : check.error?.message || 'Unavailable',
+            encoder: check.encoder || GPU_ENCODERS[codec][vendor],
+          },
+        ];
+      }
+    );
+
+    const results = await Promise.all(vendorChecks);
     const row = {} as Record<GPUVendor, GPUCapabilityStatus>;
-    for (const vendor of GPU_VENDORS) {
-      if (vendor === 'cpu') {
-        row[vendor] = {
-          available: true,
-          reason: 'Software encoding fallback.',
-          encoder: GPU_ENCODERS[codec].cpu,
-        };
-        continue;
-      }
-
-      if (vendor === 'apple' && process.platform !== 'darwin') {
-        row[vendor] = {
-          available: false,
-          reason: 'Apple VideoToolbox available only on macOS.',
-          encoder: GPU_ENCODERS[codec].apple,
-        };
-        continue;
-      }
-
-      if (vendor === 'apple' && codec === 'av1') {
-        row[vendor] = {
-          available: false,
-          reason: 'Apple AV1 hardware encode unavailable. Use CPU for AV1.',
-          encoder: GPU_ENCODERS[codec].apple,
-        };
-        continue;
-      }
-
-      const check = await checkGPUEncoderSupport(vendor, codec);
-      row[vendor] = {
-        available: check.available,
-        reason: check.available ? 'Available' : check.error?.message || 'Unavailable',
-        encoder: check.encoder || GPU_ENCODERS[codec][vendor],
-      };
+    for (const [vendor, status] of results) {
+      row[vendor] = status;
     }
     matrix[codec] = row;
   }
@@ -380,7 +402,9 @@ const loadSettings = (): void => {
 const saveSettings = (): void => {
   try {
     const settingsPath = getSettingsPath();
-    fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2));
+    const tmpPath = settingsPath + '.tmp';
+    fs.writeFileSync(tmpPath, JSON.stringify(settings, null, 2));
+    fs.renameSync(tmpPath, settingsPath);
   } catch (err) {
     console.error('Failed to save settings:', err);
   }
@@ -412,14 +436,15 @@ const createWindow = (): void => {
   trustedRendererUrl = normalizeFileUrl(pathToFileURL(rendererEntryPath).toString());
 
   mainWindow = new BrowserWindow({
-    width: 900,
-    height: 780,
+    width: 950,
+    height: 800,
     minWidth: 600,
     minHeight: 500,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
       nodeIntegration: false,
+      sandbox: true,
     },
     icon: path.join(__dirname, '../../assets/icon.png'),
     show: false,
@@ -510,15 +535,35 @@ app.whenReady().then(() => {
   });
 });
 
+app.on('before-quit', async (e) => {
+  if (isConversionActive) {
+    e.preventDefault();
+    cancelConversion(true);
+    await waitForConversionStop(3000);
+    isConversionActive = false;
+    app.quit();
+  }
+});
+
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') {
     app.quit();
   }
 });
 
+process.on('uncaughtException', (err) => {
+  console.error('Uncaught exception:', err);
+});
+
+process.on('unhandledRejection', (reason) => {
+  console.error('Unhandled rejection:', reason);
+});
+
 ipcMain.handle('select-file', async (event: IpcMainInvokeEvent) => {
   assertTrustedIpcSender(event);
-  const result = await dialog.showOpenDialog(mainWindow!, {
+  const win = mainWindow;
+  if (!win) return [];
+  const result = await dialog.showOpenDialog(win, {
     properties: ['openFile', 'multiSelections'],
     filters: [
       {
@@ -533,7 +578,9 @@ ipcMain.handle('select-file', async (event: IpcMainInvokeEvent) => {
 
 ipcMain.handle('select-output-directory', async (event: IpcMainInvokeEvent) => {
   assertTrustedIpcSender(event);
-  const result = await dialog.showOpenDialog(mainWindow!, {
+  const win = mainWindow;
+  if (!win) return null;
+  const result = await dialog.showOpenDialog(win, {
     properties: ['openDirectory'],
   });
   return result.canceled ? null : result.filePaths[0];
@@ -717,10 +764,10 @@ ipcMain.handle('get-default-advanced-format-settings', (event: IpcMainInvokeEven
   return createDefaultAdvancedFormatSettings();
 });
 
-ipcMain.handle('save-settings', (event: IpcMainInvokeEvent, newSettings: Partial<AppSettings>) => {
+ipcMain.handle('save-settings', (event: IpcMainInvokeEvent, newSettings: SaveSettingsPayload) => {
   assertTrustedIpcSender(event);
   const safeIncomingSettings =
-    newSettings && typeof newSettings === 'object' ? newSettings : ({} as Partial<AppSettings>);
+    newSettings && typeof newSettings === 'object' ? newSettings : ({} as SaveSettingsPayload);
   const incomingSettings = safeIncomingSettings as Partial<Record<keyof AppSettings, unknown>>;
   const nextUpdateChannel =
     safeIncomingSettings.updateChannel !== undefined
@@ -733,6 +780,15 @@ ipcMain.handle('save-settings', (event: IpcMainInvokeEvent, newSettings: Partial
           settings.advancedFormatSettings,
           incomingSettings.advancedFormatSettings
         );
+  const nextUiPanels =
+    incomingSettings.uiPanels === undefined
+      ? settings.uiPanels
+      : normalizeUiPanels({
+          ...settings.uiPanels,
+          ...(incomingSettings.uiPanels && typeof incomingSettings.uiPanels === 'object'
+            ? (incomingSettings.uiPanels as Partial<UIPanelSettings>)
+            : {}),
+        });
   const nextGpuMode =
     safeIncomingSettings.gpuMode !== undefined
       ? normalizeGpuMode(safeIncomingSettings.gpuMode)
@@ -751,6 +807,7 @@ ipcMain.handle('save-settings', (event: IpcMainInvokeEvent, newSettings: Partial
     gpuMode: nextGpuMode,
     gpuManualVendor: nextGpuManualVendor,
     gpu: nextGpuManualVendor,
+    uiPanels: nextUiPanels,
     advancedFormatSettings: nextAdvancedFormatSettings,
   });
   saveSettings();

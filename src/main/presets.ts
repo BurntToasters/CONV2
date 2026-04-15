@@ -157,7 +157,7 @@ const buildAv1Args = (
     '-map',
     '0:v:0',
     '-map',
-    '0:a',
+    '0:a?',
     '-c:v',
     encoder,
     ...getQualityArgs(gpu, tierSettings.quality),
@@ -183,24 +183,24 @@ const buildH264Args = (
 ): string[] => {
   const tierSettings = getH264TierSettings(tier, context);
   const encoder = getVideoEncoder('h264', gpu);
-  return [
+  const args = [
     '-i',
     input,
     '-map',
     '0:v:0',
     '-map',
-    '0:a',
+    '0:a?',
     '-c:v',
     encoder,
     ...getQualityArgs(gpu, tierSettings.quality),
-    '-preset',
-    tierSettings.preset,
-    '-c:a',
-    'aac',
-    '-b:a',
-    toBitrateKbps(tierSettings.audioBitrateKbps),
-    output,
   ];
+
+  if (gpu === 'cpu') {
+    args.push('-preset', tierSettings.preset);
+  }
+
+  args.push('-c:a', 'aac', '-b:a', toBitrateKbps(tierSettings.audioBitrateKbps), output);
+  return args;
 };
 
 const buildH265Args = (
@@ -218,7 +218,7 @@ const buildH265Args = (
     '-map',
     '0:v:0',
     '-map',
-    '0:a',
+    '0:a?',
     '-c:v',
     encoder,
     ...getQualityArgs(gpu, tierSettings.quality),
@@ -250,17 +250,15 @@ const buildAviArgs = (
     '-map',
     '0:v:0',
     '-map',
-    '0:a',
+    '0:a?',
     '-c:v',
     encoder,
     ...getQualityArgs(gpu, tierSettings.quality),
   ];
 
-  if (tierSettings.codec === 'h264') {
+  if (gpu === 'cpu') {
     args.push('-preset', tierSettings.preset);
-  } else if (gpu === 'cpu') {
-    args.push('-preset', tierSettings.preset);
-    if (tierSettings.useAdvancedParams) {
+    if (tierSettings.codec !== 'h264' && tierSettings.useAdvancedParams) {
       args.push('-x265-params', X265_ADVANCED_PARAMS);
     }
   }

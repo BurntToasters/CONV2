@@ -1,6 +1,11 @@
 export const SETTINGS_SCHEMA_VERSION = 2;
 export const MAX_RECENT_PRESET_IDS = 8;
 
+export interface UIPanelSettings {
+  presetExpanded: boolean;
+  gpuExpanded: boolean;
+}
+
 export const normalizeRecentPresetIds = (value: unknown): string[] => {
   if (!Array.isArray(value)) {
     return [];
@@ -16,6 +21,17 @@ export const normalizeRecentPresetIds = (value: unknown): string[] => {
   );
 
   return deduped.slice(0, MAX_RECENT_PRESET_IDS);
+};
+
+export const normalizeUiPanels = (value: unknown): UIPanelSettings => {
+  const incoming =
+    value && typeof value === 'object'
+      ? (value as Partial<Record<keyof UIPanelSettings, unknown>>)
+      : {};
+  return {
+    presetExpanded: incoming.presetExpanded === true,
+    gpuExpanded: incoming.gpuExpanded === true,
+  };
 };
 
 export const shouldHardResetSettings = (value: unknown): boolean => {

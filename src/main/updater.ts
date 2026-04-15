@@ -217,7 +217,9 @@ export const checkForUpdates = (): void => {
   }
 
   applyUpdaterChannel();
-  void autoUpdater.checkForUpdates().catch(() => undefined);
+  void autoUpdater.checkForUpdates().catch((err) => {
+    console.error('Failed to check for updates:', err);
+  });
 };
 
 export const isUpdateDisabled = (): boolean => {
@@ -231,7 +233,8 @@ export const checkForUpdatesSilent = (): void => {
 
   applyUpdaterChannel();
   silentCheck = true;
-  autoUpdater.checkForUpdates().catch(() => {
+  autoUpdater.checkForUpdates().catch((err) => {
+    console.error('Silent update check failed:', err);
     silentCheck = false;
   });
 };
@@ -253,7 +256,7 @@ const sendStatusToWindow = (message: string): void => {
 const formatBytes = (bytes: number): string => {
   if (bytes === 0) return '0 B';
   const k = 1024;
-  const sizes = ['B', 'KB', 'MB', 'GB'];
-  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
+  const i = Math.min(Math.floor(Math.log(bytes) / Math.log(k)), sizes.length - 1);
   return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
 };

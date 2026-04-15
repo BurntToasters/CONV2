@@ -21,6 +21,11 @@ export type GPUVendor = 'nvidia' | 'amd' | 'intel' | 'apple' | 'cpu';
 export type GPUMode = 'auto' | 'manual';
 export type GPUCodec = 'h264' | 'h265' | 'av1';
 
+export interface UIPanelSettings {
+  presetExpanded: boolean;
+  gpuExpanded: boolean;
+}
+
 export interface AppSettings {
   settingsSchemaVersion: number;
   outputDirectory: string;
@@ -35,8 +40,13 @@ export interface AppSettings {
   showAdvancedPresets: boolean;
   removeSpacesFromFilenames: boolean;
   recentPresetIds: string[];
+  uiPanels: UIPanelSettings;
   advancedFormatSettings: AdvancedFormatSettings;
 }
+
+export type SaveSettingsPayload = Omit<Partial<AppSettings>, 'uiPanels'> & {
+  uiPanels?: Partial<UIPanelSettings>;
+};
 
 export interface VideoInfo {
   duration: number;
@@ -136,7 +146,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getSettings: (): Promise<AppSettings> => ipcRenderer.invoke('get-settings'),
   getDefaultAdvancedFormatSettings: (): Promise<AdvancedFormatSettings> =>
     ipcRenderer.invoke('get-default-advanced-format-settings'),
-  saveSettings: (settings: Partial<AppSettings>): Promise<void> =>
+  saveSettings: (settings: SaveSettingsPayload): Promise<void> =>
     ipcRenderer.invoke('save-settings', settings),
 
   // Updates
@@ -195,7 +205,7 @@ declare global {
       getGpuCapabilities: (requestedCodec?: GPUCodec | null) => Promise<GPUCapabilitiesPayload>;
       getSettings: () => Promise<AppSettings>;
       getDefaultAdvancedFormatSettings: () => Promise<AdvancedFormatSettings>;
-      saveSettings: (settings: Partial<AppSettings>) => Promise<void>;
+      saveSettings: (settings: SaveSettingsPayload) => Promise<void>;
       checkForUpdates: () => Promise<void>;
       isUpdatesDisabled: () => Promise<boolean>;
       onUpdateStatus: (callback: (message: string) => void) => () => void;

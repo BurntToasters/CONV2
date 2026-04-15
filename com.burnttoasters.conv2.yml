@@ -19,6 +19,7 @@ finish-args:
   - --filesystem=home
   - --filesystem=xdg-videos
   - --filesystem=xdg-download
+  - --filesystem=/tmp
   - --env=ELECTRON_OZONE_PLATFORM_HINT=auto
 
 modules:

@@ -75,65 +75,114 @@
         </div>
 
         <div class="options-panel options-redesign">
-          <section class="preset-panel" aria-labelledby="presetPanelTitle">
-            <div class="panel-label-row">
-              <label id="presetPanelTitle" for="presetSearch">Conversion Preset</label>
-              <span class="panel-meta" id="presetCountLabel"></span>
+          <section
+            class="panel-shell preset-panel"
+            id="presetPanelSection"
+            aria-labelledby="presetPanelTitle"
+          >
+            <button
+              class="panel-toggle"
+              id="presetPanelToggle"
+              type="button"
+              aria-expanded="false"
+              aria-controls="presetPanelBody"
+            >
+              <span class="panel-toggle-title-group">
+                <span id="presetPanelTitle" class="panel-label">Conversion Preset</span>
+                <span class="panel-meta" id="presetCountLabel"></span>
+              </span>
+              <span class="panel-summary" id="presetPanelSummary"></span>
+              <span class="panel-chevron" aria-hidden="true"></span>
+            </button>
+            <div class="panel-body" id="presetPanelBody" hidden>
+              <div class="preset-search-row">
+                <input
+                  id="presetSearch"
+                  class="preset-search"
+                  type="search"
+                  placeholder="Search preset, codec, container, or intent"
+                  autocomplete="off"
+                  spellcheck="false"
+                />
+                <label class="preset-search-scope" id="presetSearchScopeLabel">
+                  <input type="checkbox" id="presetSearchAllCheck" />
+                  <span>Search all formats</span>
+                </label>
+              </div>
+              <div class="preset-picker-layout">
+                <div class="preset-parent-list" id="presetParentList" role="listbox"></div>
+                <div class="preset-pane">
+                  <div class="preset-selection-preview" id="presetSelectionPreview"></div>
+                  <div class="preset-card-list" id="presetCardList" role="listbox"></div>
+                </div>
+              </div>
             </div>
-            <input
-              id="presetSearch"
-              class="preset-search"
-              type="search"
-              placeholder="Search preset, codec, container, or intent"
-              autocomplete="off"
-              spellcheck="false"
-            />
-            <div class="preset-chip-row" id="presetCategoryChips" role="tablist"></div>
-            <div class="preset-card-list" id="presetCardList" role="listbox"></div>
           </section>
 
-          <section class="gpu-panel" aria-labelledby="gpuPanelTitle">
-            <div class="panel-label-row">
-              <span id="gpuPanelTitle" class="panel-label">Hardware Acceleration</span>
-              <button class="btn btn-secondary btn-xs" id="refreshGpuCapsBtn" type="button">
-                Refresh
-              </button>
-            </div>
+          <section
+            class="panel-shell gpu-panel"
+            id="gpuPanelSection"
+            aria-labelledby="gpuPanelTitle"
+          >
+            <button
+              class="panel-toggle"
+              id="gpuPanelToggle"
+              type="button"
+              aria-expanded="false"
+              aria-controls="gpuPanelBody"
+            >
+              <span class="panel-toggle-title-group">
+                <span id="gpuPanelTitle" class="panel-label">Hardware Acceleration</span>
+              </span>
+              <span class="panel-summary" id="gpuPanelSummary"></span>
+              <span class="panel-chevron" aria-hidden="true"></span>
+            </button>
+            <div class="panel-body" id="gpuPanelBody" hidden>
+              <div class="gpu-panel-tools">
+                <button class="btn btn-secondary btn-xs" id="refreshGpuCapsBtn" type="button">
+                  Refresh
+                </button>
+              </div>
 
-            <div class="gpu-mode-toggle" role="radiogroup" aria-label="Hardware acceleration mode">
-              <label class="mode-chip">
-                <input type="radio" name="gpuMode" id="gpuModeAuto" value="auto" />
-                <span>Auto</span>
-              </label>
-              <label class="mode-chip">
-                <input type="radio" name="gpuMode" id="gpuModeManual" value="manual" />
-                <span>Manual</span>
-              </label>
-            </div>
+              <div
+                class="gpu-mode-toggle"
+                role="radiogroup"
+                aria-label="Hardware acceleration mode"
+              >
+                <label class="mode-chip">
+                  <input type="radio" name="gpuMode" id="gpuModeAuto" value="auto" />
+                  <span>Auto</span>
+                </label>
+                <label class="mode-chip">
+                  <input type="radio" name="gpuMode" id="gpuModeManual" value="manual" />
+                  <span>Manual</span>
+                </label>
+              </div>
 
-            <div class="gpu-manual-row" id="gpuManualRow">
-              <label for="gpuManualVendorSelect">Manual Vendor Override</label>
-              <select id="gpuManualVendorSelect">
-                <option value="cpu">CPU (Software)</option>
-                <option value="apple">Apple (VideoToolbox)</option>
-                <option value="nvidia">NVIDIA (NVENC)</option>
-                <option value="amd">AMD (AMF)</option>
-                <option value="intel">Intel (Quick Sync)</option>
-              </select>
-            </div>
+              <div class="gpu-manual-row" id="gpuManualRow">
+                <label for="gpuManualVendorSelect">Manual Vendor Override</label>
+                <select id="gpuManualVendorSelect">
+                  <option value="cpu">CPU (Software)</option>
+                  <option value="apple">Apple (VideoToolbox)</option>
+                  <option value="nvidia">NVIDIA (NVENC)</option>
+                  <option value="amd">AMD (AMF)</option>
+                  <option value="intel">Intel (Quick Sync)</option>
+                </select>
+              </div>
 
-            <div class="gpu-matrix-controls">
-              <button class="btn btn-secondary btn-xs" id="toggleGpuDetailsBtn" type="button">
-                Show details
-              </button>
-              <label class="show-all-codecs" id="showAllCodecsLabel">
-                <input type="checkbox" id="showAllGpuCodecsCheck" />
-                <span>Show all codecs</span>
-              </label>
-            </div>
+              <div class="gpu-matrix-controls">
+                <button class="btn btn-secondary btn-xs" id="toggleGpuDetailsBtn" type="button">
+                  Show details
+                </button>
+                <label class="show-all-codecs" id="showAllCodecsLabel">
+                  <input type="checkbox" id="showAllGpuCodecsCheck" />
+                  <span>Show all codecs</span>
+                </label>
+              </div>
 
-            <div class="gpu-effective-summary" id="gpuEffectiveSummary"></div>
-            <div class="gpu-capability-matrix" id="gpuCapabilityMatrix"></div>
+              <div class="gpu-effective-summary" id="gpuEffectiveSummary"></div>
+              <div class="gpu-capability-matrix" id="gpuCapabilityMatrix"></div>
+            </div>
           </section>
         </div>
 
@@ -1558,6 +1607,7 @@
     </div>
 
     <script src="exports-shim.js"></script>
+    <script src="presetPickerModel.js"></script>
     <script src="renderer.js"></script>
   </body>
 </html>
