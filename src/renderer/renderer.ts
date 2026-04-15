@@ -2520,6 +2520,7 @@ const setupEventListeners = () => {
         .filter((filePath) => filePath && filePath.length > 0);
       handleFileSelect(filePaths);
     }
+    elements.fileInput.value = '';
   });
 
   elements.presetPanelToggle.addEventListener('click', () => {

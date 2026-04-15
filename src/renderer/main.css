@@ -8,7 +8,7 @@
 
   --text-primary: #fafafa;
   --text-secondary: #a1a1aa;
-  --text-muted: #52525b;
+  --text-muted: #71717a;
 
   --accent: #8b5cf6;
   --accent-secondary: #06b6d4;
@@ -240,7 +240,7 @@ header {
   justify-content: center;
   box-shadow: 0 0 8px rgba(239, 68, 68, 0.5);
   z-index: 2;
-  animation: badgePulse 2s ease-in-out infinite;
+  animation: badgePulse 2s ease-in-out 3;
 }
 
 @keyframes badgePulse {

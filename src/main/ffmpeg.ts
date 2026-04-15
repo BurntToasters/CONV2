@@ -122,13 +122,21 @@ const canceledProcesses = new Set<ChildProcess>();
 const MAX_ERROR_OUTPUT_CHARS = 256 * 1024;
 const MAX_PROGRESS_EMIT_INTERVAL_MS = 120;
 
+const BINARY_CHECK_TIMEOUT_MS = 10000;
+
 const checkBinaryInstalled = async (binaryPath: string): Promise<boolean> => {
   return new Promise((resolve) => {
     const proc = spawn(binaryPath, ['-version']);
+    const timer = setTimeout(() => {
+      proc.kill();
+      resolve(false);
+    }, BINARY_CHECK_TIMEOUT_MS);
     proc.on('close', (code) => {
+      clearTimeout(timer);
       resolve(code === 0);
     });
     proc.on('error', () => {
+      clearTimeout(timer);
       resolve(false);
     });
   });
@@ -439,6 +447,25 @@ const canAccessVaapiDevice = (devicePath: string): boolean => {
   }
 };
 
+const findVaapiDevice = (): string | null => {
+  const driDir = '/dev/dri';
+  try {
+    const entries = fs.readdirSync(driDir);
+    const renderDevices = entries
+      .filter((e) => e.startsWith('renderD'))
+      .sort()
+      .map((e) => path.join(driDir, e));
+    for (const device of renderDevices) {
+      if (canAccessVaapiDevice(device)) {
+        return device;
+      }
+    }
+  } catch {
+    // /dev/dri doesn't exist or isn't readable
+  }
+  return null;
+};
+
 const getHardwareDecodeArgs = async (gpu: GPUVendor, codec?: string): Promise<string[]> => {
   if (gpu === 'cpu') {
     return [];
@@ -502,9 +529,9 @@ const getHardwareDecodeArgs = async (gpu: GPUVendor, codec?: string): Promise<st
     }
 
     if (gpu === 'amd') {
-      const vaapiDevice = '/dev/dri/renderD128';
+      const vaapiDevice = findVaapiDevice();
       if (
-        fs.existsSync(vaapiDevice) &&
+        vaapiDevice &&
         canAccessVaapiDevice(vaapiDevice) &&
         ['h264', 'hevc', 'av1', 'vp9'].includes(normalized)
       ) {
@@ -536,14 +563,14 @@ export const getVideoInfo = async (inputPath: string): Promise<VideoInfo> => {
       inputPath,
     ];
 
-    const process = spawn(getFFprobePath(), args);
+    const proc = spawn(getFFprobePath(), args);
     let output = '';
 
-    process.stdout.on('data', (data) => {
+    proc.stdout.on('data', (data) => {
       output += data.toString();
     });
 
-    process.on('close', (code) => {
+    proc.on('close', (code) => {
       if (code === 0) {
         try {
           const data = JSON.parse(output);
@@ -566,7 +593,7 @@ export const getVideoInfo = async (inputPath: string): Promise<VideoInfo> => {
       }
     });
 
-    process.on('error', (err) => {
+    proc.on('error', (err) => {
       reject(err);
     });
   });
@@ -585,14 +612,14 @@ export const getVideoDuration = async (inputPath: string): Promise<number> => {
       'csv=p=0',
     ];
 
-    const process = spawn(getFFprobePath(), args);
+    const proc = spawn(getFFprobePath(), args);
     let output = '';
 
-    process.stdout.on('data', (data) => {
+    proc.stdout.on('data', (data) => {
       output += data.toString();
     });
 
-    process.on('close', (code) => {
+    proc.on('close', (code) => {
       if (code === 0) {
         const duration = parseFloat(output.trim());
         resolve(isNaN(duration) ? 0 : duration);
@@ -601,7 +628,7 @@ export const getVideoDuration = async (inputPath: string): Promise<number> => {
       }
     });
 
-    process.on('error', (err) => {
+    proc.on('error', (err) => {
       reject(err);
     });
   });
@@ -667,8 +694,9 @@ export const resolveUniqueOutputPath = (
   outputBaseName: string,
   extension: string
 ): string => {
+  const MAX_SUFFIX = 10000;
   let suffix = 0;
-  while (true) {
+  while (suffix <= MAX_SUFFIX) {
     const suffixPart = suffix === 0 ? '' : `_${suffix}`;
     const candidate = path.join(outputDir, `${outputBaseName}_converted${suffixPart}.${extension}`);
     const inProgress = [...outputPathByProcess.values()].includes(candidate);
@@ -677,6 +705,7 @@ export const resolveUniqueOutputPath = (
     }
     suffix += 1;
   }
+  throw new Error(`Could not find unique output path after ${MAX_SUFFIX} attempts`);
 };
 
 export const ensureMp4PlaybackCompatibilityArgs = (
@@ -758,6 +787,7 @@ export const convertVideo = async (
     preset,
     preset.getArgs(inputPath, outputPath, gpu, presetContext)
   );
+  let conversionCanceled = false;
   const runAttempt = async (
     activeDecodeArgs: string[],
     allowRetry: boolean
@@ -809,12 +839,15 @@ export const convertVideo = async (
         }
       };
 
-      const cleanupPendingProgressTimer = (): void => {
+      const flushAndCleanupProgressTimer = (): void => {
         if (pendingProgressTimer) {
           clearTimeout(pendingProgressTimer);
           pendingProgressTimer = null;
         }
-        pendingProgress = null;
+        if (pendingProgress) {
+          onProgress(pendingProgress);
+          pendingProgress = null;
+        }
       };
 
       ffmpegProcess.stdout?.on('data', (data) => {
@@ -856,7 +889,7 @@ export const convertVideo = async (
       });
 
       ffmpegProcess.on('close', async (code) => {
-        cleanupPendingProgressTimer();
+        flushAndCleanupProgressTimer();
         if (currentProcess === ffmpegProcess) {
           currentProcess = null;
         }
@@ -865,6 +898,7 @@ export const convertVideo = async (
         const wasCanceled = canceledProcesses.has(ffmpegProcess);
         canceledProcesses.delete(ffmpegProcess);
         if (wasCanceled) {
+          conversionCanceled = true;
           if (outputToDelete && fs.existsSync(outputToDelete)) {
             try {
               fs.unlinkSync(outputToDelete);
@@ -890,6 +924,7 @@ export const convertVideo = async (
         }
 
         if (
+          !conversionCanceled &&
           allowRetry &&
           activeDecodeArgs.length > 0 &&
           shouldRetryWithSoftwareDecode(errorOutput)
@@ -906,7 +941,7 @@ export const convertVideo = async (
       });
 
       ffmpegProcess.on('error', (err) => {
-        cleanupPendingProgressTimer();
+        flushAndCleanupProgressTimer();
         if (currentProcess === ffmpegProcess) {
           currentProcess = null;
         }
@@ -915,6 +950,7 @@ export const convertVideo = async (
         const wasCanceled = canceledProcesses.has(ffmpegProcess);
         canceledProcesses.delete(ffmpegProcess);
         if (wasCanceled) {
+          conversionCanceled = true;
           if (outputToDelete && fs.existsSync(outputToDelete)) {
             try {
               fs.unlinkSync(outputToDelete);
@@ -982,6 +1018,7 @@ export const cancelConversion = (force = false): void => {
     } catch {
       if (force) {
         forceKillProcess(processToKill);
+        return;
       }
     }
 

@@ -399,7 +399,7 @@ test('video presets include -map 0:v:0 and -map 0:a for multi-track preservation
     const mapArgs = args.filter((a) => a === '-map');
     assert.ok(mapArgs.length >= 2, `${id}: expected at least 2 -map flags`);
     assert.ok(args.includes('0:v:0'), `${id}: missing -map 0:v:0`);
-    assert.ok(args.includes('0:a'), `${id}: missing -map 0:a`);
+    assert.ok(args.includes('0:a?'), `${id}: missing -map 0:a?`);
   }
 });
 
