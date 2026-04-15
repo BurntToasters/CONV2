@@ -44,7 +44,8 @@ import {
   UIPanelSettings,
   normalizeRecentPresetIds,
   normalizeUiPanels,
-  shouldHardResetSettings,
+  isSettingsCorrupted,
+  isSettingsSchemaOutdated,
 } from './settingsSchema';
 import { recommendGpuVendorFromAvailability } from './gpuRecommendation';
 import { mapPresetsForRenderer } from './presetProjection';
@@ -378,11 +379,14 @@ const loadSettings = (): void => {
     if (fs.existsSync(settingsPath)) {
       const data = fs.readFileSync(settingsPath, 'utf-8');
       const parsed = JSON.parse(data);
-      if (shouldHardResetSettings(parsed)) {
+      if (isSettingsCorrupted(parsed)) {
         settings = createDefaultSettings();
         shouldPersist = true;
       } else {
         settings = normalizeSettings(parsed);
+        if (isSettingsSchemaOutdated(parsed)) {
+          shouldPersist = true;
+        }
       }
     } else {
       settings = createDefaultSettings();

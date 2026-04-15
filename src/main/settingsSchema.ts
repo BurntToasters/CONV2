@@ -34,9 +34,13 @@ export const normalizeUiPanels = (value: unknown): UIPanelSettings => {
   };
 };
 
-export const shouldHardResetSettings = (value: unknown): boolean => {
+export const isSettingsCorrupted = (value: unknown): boolean => {
+  return !value || typeof value !== 'object';
+};
+
+export const isSettingsSchemaOutdated = (value: unknown): boolean => {
   if (!value || typeof value !== 'object') {
-    return true;
+    return false;
   }
   const incoming = value as Record<string, unknown>;
   return incoming.settingsSchemaVersion !== SETTINGS_SCHEMA_VERSION;
