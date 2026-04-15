@@ -41,7 +41,9 @@ import { setUseSystemFFmpeg } from './ffmpegPath';
 import { clearFFmpegCaches } from './ffmpeg';
 import {
   SETTINGS_SCHEMA_VERSION,
+  UIPanelSettings,
   normalizeRecentPresetIds,
+  normalizeUiPanels,
   shouldHardResetSettings,
 } from './settingsSchema';
 import { recommendGpuVendorFromAvailability } from './gpuRecommendation';
@@ -88,8 +90,13 @@ interface AppSettings {
   showAdvancedPresets: boolean;
   removeSpacesFromFilenames: boolean;
   recentPresetIds: string[];
+  uiPanels: UIPanelSettings;
   advancedFormatSettings: AdvancedFormatSettings;
 }
+
+type SaveSettingsPayload = Omit<Partial<AppSettings>, 'uiPanels'> & {
+  uiPanels?: Partial<UIPanelSettings>;
+};
 
 const createDefaultSettings = (): AppSettings => ({
   settingsSchemaVersion: SETTINGS_SCHEMA_VERSION,
@@ -105,6 +112,7 @@ const createDefaultSettings = (): AppSettings => ({
   showAdvancedPresets: false,
   removeSpacesFromFilenames: false,
   recentPresetIds: [],
+  uiPanels: normalizeUiPanels(undefined),
   advancedFormatSettings: createDefaultAdvancedFormatSettings(),
 });
 
@@ -159,6 +167,7 @@ const normalizeSettings = (value: unknown): AppSettings => {
     showAdvancedPresets: incoming.showAdvancedPresets === true,
     removeSpacesFromFilenames: incoming.removeSpacesFromFilenames === true,
     recentPresetIds: normalizeRecentPresetIds(incoming.recentPresetIds),
+    uiPanels: normalizeUiPanels(incoming.uiPanels),
     advancedFormatSettings: normalizeAdvancedFormatSettings(incoming.advancedFormatSettings),
   };
 };
@@ -717,10 +726,10 @@ ipcMain.handle('get-default-advanced-format-settings', (event: IpcMainInvokeEven
   return createDefaultAdvancedFormatSettings();
 });
 
-ipcMain.handle('save-settings', (event: IpcMainInvokeEvent, newSettings: Partial<AppSettings>) => {
+ipcMain.handle('save-settings', (event: IpcMainInvokeEvent, newSettings: SaveSettingsPayload) => {
   assertTrustedIpcSender(event);
   const safeIncomingSettings =
-    newSettings && typeof newSettings === 'object' ? newSettings : ({} as Partial<AppSettings>);
+    newSettings && typeof newSettings === 'object' ? newSettings : ({} as SaveSettingsPayload);
   const incomingSettings = safeIncomingSettings as Partial<Record<keyof AppSettings, unknown>>;
   const nextUpdateChannel =
     safeIncomingSettings.updateChannel !== undefined
@@ -733,6 +742,15 @@ ipcMain.handle('save-settings', (event: IpcMainInvokeEvent, newSettings: Partial
           settings.advancedFormatSettings,
           incomingSettings.advancedFormatSettings
         );
+  const nextUiPanels =
+    incomingSettings.uiPanels === undefined
+      ? settings.uiPanels
+      : normalizeUiPanels({
+          ...settings.uiPanels,
+          ...(incomingSettings.uiPanels && typeof incomingSettings.uiPanels === 'object'
+            ? (incomingSettings.uiPanels as Partial<UIPanelSettings>)
+            : {}),
+        });
   const nextGpuMode =
     safeIncomingSettings.gpuMode !== undefined
       ? normalizeGpuMode(safeIncomingSettings.gpuMode)
@@ -751,6 +769,7 @@ ipcMain.handle('save-settings', (event: IpcMainInvokeEvent, newSettings: Partial
     gpuMode: nextGpuMode,
     gpuManualVendor: nextGpuManualVendor,
     gpu: nextGpuManualVendor,
+    uiPanels: nextUiPanels,
     advancedFormatSettings: nextAdvancedFormatSettings,
   });
   saveSettings();

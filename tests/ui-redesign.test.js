@@ -5,6 +5,7 @@ const {
   SETTINGS_SCHEMA_VERSION,
   MAX_RECENT_PRESET_IDS,
   normalizeRecentPresetIds,
+  normalizeUiPanels,
   shouldHardResetSettings,
 } = require('../dist/main/settingsSchema.js');
 const {
@@ -46,6 +47,40 @@ test('recent preset normalization dedupes, trims, and caps size', () => {
 
   assert.equal(result.length, MAX_RECENT_PRESET_IDS);
   assert.deepEqual(result.slice(0, 4), ['av1-balanced', 'h264-fast', 'h265-quality', 'audio-mp3']);
+});
+
+test('ui panel normalization defaults to collapsed for missing values', () => {
+  assert.deepEqual(normalizeUiPanels(undefined), {
+    presetExpanded: false,
+    gpuExpanded: false,
+  });
+  assert.deepEqual(normalizeUiPanels({}), {
+    presetExpanded: false,
+    gpuExpanded: false,
+  });
+});
+
+test('ui panel normalization only accepts true values', () => {
+  assert.deepEqual(
+    normalizeUiPanels({
+      presetExpanded: true,
+      gpuExpanded: false,
+    }),
+    {
+      presetExpanded: true,
+      gpuExpanded: false,
+    }
+  );
+  assert.deepEqual(
+    normalizeUiPanels({
+      presetExpanded: 'yes',
+      gpuExpanded: 1,
+    }),
+    {
+      presetExpanded: false,
+      gpuExpanded: false,
+    }
+  );
 });
 
 test('auto priority order follows platform heuristic', () => {
