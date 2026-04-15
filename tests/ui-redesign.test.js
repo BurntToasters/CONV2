@@ -6,7 +6,8 @@ const {
   MAX_RECENT_PRESET_IDS,
   normalizeRecentPresetIds,
   normalizeUiPanels,
-  shouldHardResetSettings,
+  isSettingsCorrupted,
+  isSettingsSchemaOutdated,
 } = require('../dist/main/settingsSchema.js');
 const {
   getAutoVendorPriority,
@@ -16,11 +17,11 @@ const { presets } = require('../dist/main/presets.js');
 const { mapPresetsForRenderer } = require('../dist/main/presetProjection.js');
 
 test('settings schema hard reset check is version-gated', () => {
-  assert.equal(shouldHardResetSettings(null), true);
-  assert.equal(shouldHardResetSettings({}), true);
-  assert.equal(shouldHardResetSettings({ settingsSchemaVersion: 1 }), true);
+  assert.equal(isSettingsCorrupted(null), true);
+  assert.equal(isSettingsCorrupted({}), false);
+  assert.equal(isSettingsSchemaOutdated({ settingsSchemaVersion: 1 }), true);
   assert.equal(
-    shouldHardResetSettings({
+    isSettingsSchemaOutdated({
       settingsSchemaVersion: SETTINGS_SCHEMA_VERSION,
       outputDirectory: '/tmp',
     }),
