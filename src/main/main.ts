@@ -440,8 +440,8 @@ const createWindow = (): void => {
   trustedRendererUrl = normalizeFileUrl(pathToFileURL(rendererEntryPath).toString());
 
   mainWindow = new BrowserWindow({
-    width: 950,
-    height: 800,
+    width: 1100,
+    height: 925,
     minWidth: 600,
     minHeight: 500,
     webPreferences: {
