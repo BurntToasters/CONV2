@@ -3154,6 +3154,10 @@ const startConversion = async () => {
       );
       results.push({ inputPath, ...result });
 
+      if (result.usedCpuFallback && batchOptions.gpu !== 'cpu') {
+        batchOptions.gpu = 'cpu';
+      }
+
       if (result.success) {
         lastOutputPath = result.outputPath;
       }

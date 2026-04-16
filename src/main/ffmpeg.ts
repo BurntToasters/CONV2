@@ -774,9 +774,12 @@ export const convertVideo = async (
   let inputCodec: string | undefined;
   try {
     const info = await getVideoInfo(inputPath);
-    totalDuration = info.duration;
+    totalDuration = Number.isFinite(info.duration) ? info.duration : 0;
     inputCodec = info.codec;
   } catch {
+    // ignore
+  }
+  if (totalDuration <= 0) {
     try {
       totalDuration = await getVideoDuration(inputPath);
     } catch {
