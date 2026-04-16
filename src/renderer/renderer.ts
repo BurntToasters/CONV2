@@ -2985,11 +2985,33 @@ const shouldRetryWithCpu = (
   if (result.error === 'Conversion cancelled') {
     return false;
   }
+  const message = (result.error || '').toLowerCase();
+  const inputErrorMarkers = [
+    'error opening input',
+    'no such file or directory',
+    'invalid data found when processing input',
+    'moov atom not found',
+    'permission denied',
+  ];
+  if (inputErrorMarkers.some((marker) => message.includes(marker))) {
+    return false;
+  }
   if (result.retryWithCpuSuggested === true) {
     return true;
   }
-  const message = (result.error || '').toLowerCase();
-  const gpuMarkers = ['nvenc', 'amf', 'qsv', 'videotoolbox', 'encoder', 'hardware', 'gpu'];
+  const gpuMarkers = [
+    'nvenc',
+    'amf init',
+    'amf failed',
+    'amf error',
+    'amf encoder',
+    'qsv',
+    'videotoolbox',
+    'no capable devices found',
+    'cannot load nvencode',
+    'hardware acceleration',
+    'gpu',
+  ];
   return gpuMarkers.some((marker) => message.includes(marker));
 };
 

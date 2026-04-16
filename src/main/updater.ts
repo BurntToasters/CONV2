@@ -110,6 +110,24 @@ export const initUpdater = (window: BrowserWindow): void => {
   });
 
   autoUpdater.on('update-available', (info: UpdateInfo) => {
+    if (shouldUseBetaChannel() && !isPrereleaseVersion(info.version)) {
+      const windowRef = getMainWindow();
+      if (windowRef) {
+        windowRef.webContents.send('update-available', false);
+      }
+      if (!silentCheck && windowRef) {
+        sendStatusToWindow('You have the latest version.');
+        dialog.showMessageBox(windowRef, {
+          type: 'info',
+          title: 'No Updates',
+          message: 'You are already running the latest version of CONV2.',
+          buttons: ['OK'],
+        });
+      }
+      silentCheck = false;
+      return;
+    }
+
     updateAvailable = true;
     const windowRef = getMainWindow();
     if (windowRef) {
