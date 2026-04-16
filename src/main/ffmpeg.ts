@@ -1,8 +1,9 @@
 import { spawn, spawnSync, ChildProcess } from 'child_process';
 import * as path from 'path';
 import * as fs from 'fs';
-import { GPUVendor, Preset } from './presets';
+import { GPUVendor, Preset, getPresetGpuCodec } from './presets';
 import { getFFmpegPath, getFFprobePath } from './ffmpegPath';
+import { AdvancedFormatSettings } from './advancedFormats';
 
 export const GPU_ENCODERS: Record<string, Record<GPUVendor, string>> = {
   h264: {
@@ -98,6 +99,12 @@ export interface ConversionResult {
   success: boolean;
   outputPath: string;
   error?: string;
+  retryWithCpuSuggested?: boolean;
+}
+
+export interface ConvertVideoOptions {
+  removeSpacesFromOutputName?: boolean;
+  advancedFormatSettings?: AdvancedFormatSettings;
 }
 
 export interface VideoInfo {
@@ -112,17 +119,35 @@ export interface VideoInfo {
 let currentProcess: ChildProcess | null = null;
 const outputPathByProcess = new Map<ChildProcess, string>();
 const canceledProcesses = new Set<ChildProcess>();
+const MAX_ERROR_OUTPUT_CHARS = 256 * 1024;
+const MAX_PROGRESS_EMIT_INTERVAL_MS = 120;
 
-export const checkFFmpegInstalled = async (): Promise<boolean> => {
+const BINARY_CHECK_TIMEOUT_MS = 10000;
+
+const checkBinaryInstalled = async (binaryPath: string): Promise<boolean> => {
   return new Promise((resolve) => {
-    const proc = spawn(getFFmpegPath(), ['-version']);
+    const proc = spawn(binaryPath, ['-version']);
+    const timer = setTimeout(() => {
+      proc.kill();
+      resolve(false);
+    }, BINARY_CHECK_TIMEOUT_MS);
     proc.on('close', (code) => {
+      clearTimeout(timer);
       resolve(code === 0);
     });
     proc.on('error', () => {
+      clearTimeout(timer);
       resolve(false);
     });
   });
+};
+
+export const checkFFmpegInstalled = async (): Promise<boolean> => {
+  const [ffmpegOk, ffprobeOk] = await Promise.all([
+    checkBinaryInstalled(getFFmpegPath()),
+    checkBinaryInstalled(getFFprobePath()),
+  ]);
+  return ffmpegOk && ffprobeOk;
 };
 
 let encoderCache: Set<string> | null = null;
@@ -413,6 +438,34 @@ const normalizeCodec = (codec?: string): string | null => {
   return normalized;
 };
 
+const canAccessVaapiDevice = (devicePath: string): boolean => {
+  try {
+    fs.accessSync(devicePath, fs.constants.R_OK | fs.constants.W_OK);
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+const findVaapiDevice = (): string | null => {
+  const driDir = '/dev/dri';
+  try {
+    const entries = fs.readdirSync(driDir);
+    const renderDevices = entries
+      .filter((e) => e.startsWith('renderD'))
+      .sort()
+      .map((e) => path.join(driDir, e));
+    for (const device of renderDevices) {
+      if (canAccessVaapiDevice(device)) {
+        return device;
+      }
+    }
+  } catch {
+    // /dev/dri doesn't exist or isn't readable
+  }
+  return null;
+};
+
 const getHardwareDecodeArgs = async (gpu: GPUVendor, codec?: string): Promise<string[]> => {
   if (gpu === 'cpu') {
     return [];
@@ -429,7 +482,7 @@ const getHardwareDecodeArgs = async (gpu: GPUVendor, codec?: string): Promise<st
     if (decoder && (await checkDecoderAvailable(decoder))) {
       return ['-hwaccel', 'videotoolbox', '-c:v', decoder];
     }
-    return ['-hwaccel', 'videotoolbox'];
+    return [];
   }
 
   if (process.platform === 'win32') {
@@ -467,9 +520,21 @@ const getHardwareDecodeArgs = async (gpu: GPUVendor, codec?: string): Promise<st
       return [];
     }
 
-    if (gpu === 'amd' || gpu === 'intel') {
-      const vaapiDevice = '/dev/dri/renderD128';
-      if (fs.existsSync(vaapiDevice) && ['h264', 'hevc', 'av1', 'vp9'].includes(normalized)) {
+    if (gpu === 'intel') {
+      const decoder = INTEL_DECODERS[normalized];
+      if (decoder && (await checkDecoderAvailable(decoder))) {
+        return ['-hwaccel', 'qsv', '-hwaccel_output_format', 'qsv', '-c:v', decoder];
+      }
+      return [];
+    }
+
+    if (gpu === 'amd') {
+      const vaapiDevice = findVaapiDevice();
+      if (
+        vaapiDevice &&
+        canAccessVaapiDevice(vaapiDevice) &&
+        ['h264', 'hevc', 'av1', 'vp9'].includes(normalized)
+      ) {
         return [
           '-hwaccel',
           'vaapi',
@@ -498,14 +563,14 @@ export const getVideoInfo = async (inputPath: string): Promise<VideoInfo> => {
       inputPath,
     ];
 
-    const process = spawn(getFFprobePath(), args);
+    const proc = spawn(getFFprobePath(), args);
     let output = '';
 
-    process.stdout.on('data', (data) => {
+    proc.stdout.on('data', (data) => {
       output += data.toString();
     });
 
-    process.on('close', (code) => {
+    proc.on('close', (code) => {
       if (code === 0) {
         try {
           const data = JSON.parse(output);
@@ -528,7 +593,7 @@ export const getVideoInfo = async (inputPath: string): Promise<VideoInfo> => {
       }
     });
 
-    process.on('error', (err) => {
+    proc.on('error', (err) => {
       reject(err);
     });
   });
@@ -547,14 +612,14 @@ export const getVideoDuration = async (inputPath: string): Promise<number> => {
       'csv=p=0',
     ];
 
-    const process = spawn(getFFprobePath(), args);
+    const proc = spawn(getFFprobePath(), args);
     let output = '';
 
-    process.stdout.on('data', (data) => {
+    proc.stdout.on('data', (data) => {
       output += data.toString();
     });
 
-    process.on('close', (code) => {
+    proc.on('close', (code) => {
       if (code === 0) {
         const duration = parseFloat(output.trim());
         resolve(isNaN(duration) ? 0 : duration);
@@ -563,7 +628,7 @@ export const getVideoDuration = async (inputPath: string): Promise<number> => {
       }
     });
 
-    process.on('error', (err) => {
+    proc.on('error', (err) => {
       reject(err);
     });
   });
@@ -596,16 +661,102 @@ const parseProgress = (line: string, totalDuration: number): ConversionProgress 
   return null;
 };
 
+const appendBoundedErrorOutput = (current: string, nextChunk: string): string => {
+  if (!nextChunk) {
+    return current;
+  }
+  const combined = current + nextChunk;
+  if (combined.length <= MAX_ERROR_OUTPUT_CHARS) {
+    return combined;
+  }
+  return combined.slice(combined.length - MAX_ERROR_OUTPUT_CHARS);
+};
+
+const shouldRetryWithSoftwareDecode = (errorOutput: string): boolean => {
+  const lowered = errorOutput.toLowerCase();
+  const markers = [
+    'hwaccel',
+    'vaapi',
+    'qsv',
+    'device setup failed',
+    'failed setup for format',
+    'no device available',
+    'error while opening decoder',
+    'hardware acceleration',
+    'cannot load libmfx',
+    'failed to initialise vaapi',
+  ];
+  return markers.some((marker) => lowered.includes(marker));
+};
+
+export const resolveUniqueOutputPath = (
+  outputDir: string,
+  outputBaseName: string,
+  extension: string
+): string => {
+  const MAX_SUFFIX = 10000;
+  let suffix = 0;
+  while (suffix <= MAX_SUFFIX) {
+    const suffixPart = suffix === 0 ? '' : `_${suffix}`;
+    const candidate = path.join(outputDir, `${outputBaseName}_converted${suffixPart}.${extension}`);
+    const inProgress = [...outputPathByProcess.values()].includes(candidate);
+    if (!fs.existsSync(candidate) && !inProgress) {
+      return candidate;
+    }
+    suffix += 1;
+  }
+  throw new Error(`Could not find unique output path after ${MAX_SUFFIX} attempts`);
+};
+
+export const ensureMp4PlaybackCompatibilityArgs = (
+  preset: Preset,
+  presetArgs: string[]
+): string[] => {
+  if (preset.extension !== 'mp4' || presetArgs.length === 0) {
+    return presetArgs;
+  }
+
+  const outputArg = presetArgs[presetArgs.length - 1];
+  const argsWithoutOutput = [...presetArgs.slice(0, -1)];
+
+  const movflagsIndex = argsWithoutOutput.findIndex((arg) => arg === '-movflags');
+  if (movflagsIndex >= 0 && movflagsIndex + 1 < argsWithoutOutput.length) {
+    const currentFlags = argsWithoutOutput[movflagsIndex + 1];
+    if (!/\bfaststart\b/.test(currentFlags)) {
+      argsWithoutOutput[movflagsIndex + 1] = `${currentFlags}+faststart`;
+    }
+  } else {
+    argsWithoutOutput.push('-movflags', '+faststart');
+  }
+
+  if (preset.category === 'h265') {
+    const hasHvc1Tag = argsWithoutOutput.some(
+      (arg, index) => arg === '-tag:v' && argsWithoutOutput[index + 1] === 'hvc1'
+    );
+    if (!hasHvc1Tag) {
+      argsWithoutOutput.push('-tag:v', 'hvc1');
+    }
+  }
+
+  return [...argsWithoutOutput, outputArg];
+};
+
 export const convertVideo = async (
   inputPath: string,
   outputDir: string,
   preset: Preset,
   gpu: GPUVendor,
   onProgress: (progress: ConversionProgress) => void,
-  onLog?: (message: string) => void
+  onLog?: (message: string) => void,
+  options: ConvertVideoOptions = {}
 ): Promise<ConversionResult> => {
   const inputBasename = path.basename(inputPath, path.extname(inputPath));
-  const outputPath = path.join(outputDir, `${inputBasename}_converted.${preset.extension}`);
+  const basenameWithoutSpaces = inputBasename.replace(/\s+/g, '');
+  const outputBaseName =
+    options.removeSpacesFromOutputName && basenameWithoutSpaces.length > 0
+      ? basenameWithoutSpaces
+      : inputBasename;
+  const outputPath = resolveUniqueOutputPath(outputDir, outputBaseName, preset.extension);
 
   let totalDuration = 0;
   let inputCodec: string | undefined;
@@ -621,38 +772,101 @@ export const convertVideo = async (
     }
   }
 
-  const isVideoPreset = ['av1', 'h264', 'h265'].includes(preset.category);
+  const isVideoPreset =
+    getPresetGpuCodec(
+      preset,
+      options.advancedFormatSettings
+        ? { advancedFormatSettings: options.advancedFormatSettings }
+        : undefined
+    ) !== null;
   const decodeArgs = isVideoPreset ? await getHardwareDecodeArgs(gpu, inputCodec) : [];
-  const args = [
-    '-y',
-    '-progress',
-    'pipe:1',
-    ...decodeArgs,
-    ...preset.getArgs(inputPath, outputPath, gpu),
-  ];
+  const presetContext = options.advancedFormatSettings
+    ? { advancedFormatSettings: options.advancedFormatSettings }
+    : undefined;
+  const presetArgs = ensureMp4PlaybackCompatibilityArgs(
+    preset,
+    preset.getArgs(inputPath, outputPath, gpu, presetContext)
+  );
+  let conversionCanceled = false;
+  const runAttempt = async (
+    activeDecodeArgs: string[],
+    allowRetry: boolean
+  ): Promise<ConversionResult> => {
+    const args = ['-y', '-progress', 'pipe:1', ...activeDecodeArgs, ...presetArgs];
 
-  if (onLog) {
-    onLog(`Running command: ffmpeg ${args.join(' ')}\n`);
-  }
+    if (onLog) {
+      onLog(`Running command: ffmpeg ${args.join(' ')}\n`);
+    }
 
-  return new Promise((resolve) => {
-    const ffmpegProcess = spawn(getFFmpegPath(), args);
-    currentProcess = ffmpegProcess;
-    outputPathByProcess.set(ffmpegProcess, outputPath);
+    return new Promise((resolve) => {
+      const ffmpegProcess = spawn(getFFmpegPath(), args);
+      currentProcess = ffmpegProcess;
+      outputPathByProcess.set(ffmpegProcess, outputPath);
 
-    let errorOutput = '';
+      let errorOutput = '';
+      let lastProgressEmitAt = 0;
+      let pendingProgress: ConversionProgress | null = null;
+      let pendingProgressTimer: NodeJS.Timeout | null = null;
 
-    ffmpegProcess.stdout?.on('data', (data) => {
-      const output = data.toString();
-      if (onLog) onLog(output);
+      const emitProgressThrottled = (progress: ConversionProgress): void => {
+        const now = Date.now();
+        const elapsed = now - lastProgressEmitAt;
+        if (
+          lastProgressEmitAt === 0 ||
+          elapsed >= MAX_PROGRESS_EMIT_INTERVAL_MS ||
+          progress.percent >= 100
+        ) {
+          if (pendingProgressTimer) {
+            clearTimeout(pendingProgressTimer);
+            pendingProgressTimer = null;
+          }
+          pendingProgress = null;
+          lastProgressEmitAt = now;
+          onProgress(progress);
+          return;
+        }
 
-      const lines = output.split('\n');
-      for (const line of lines) {
-        if (line.includes('out_time_ms=')) {
-          const timeMs = parseInt(line.split('=')[1]);
+        pendingProgress = progress;
+        if (!pendingProgressTimer) {
+          pendingProgressTimer = setTimeout(() => {
+            pendingProgressTimer = null;
+            if (pendingProgress) {
+              lastProgressEmitAt = Date.now();
+              onProgress(pendingProgress);
+              pendingProgress = null;
+            }
+          }, MAX_PROGRESS_EMIT_INTERVAL_MS - elapsed);
+        }
+      };
+
+      const flushAndCleanupProgressTimer = (): void => {
+        if (pendingProgressTimer) {
+          clearTimeout(pendingProgressTimer);
+          pendingProgressTimer = null;
+        }
+        if (pendingProgress) {
+          onProgress(pendingProgress);
+          pendingProgress = null;
+        }
+      };
+
+      ffmpegProcess.stdout?.on('data', (data) => {
+        const output = data.toString();
+        if (onLog) onLog(output);
+
+        const lines = output.split('\n');
+        for (const line of lines) {
+          if (!line.includes('out_time_ms=')) {
+            continue;
+          }
+          const rawTimeMs = line.split('=')[1];
+          const timeMs = parseInt(rawTimeMs, 10);
+          if (!Number.isFinite(timeMs) || timeMs < 0) {
+            continue;
+          }
           const seconds = timeMs / 1000000;
           const percent = totalDuration > 0 ? Math.min(100, (seconds / totalDuration) * 100) : 0;
-          onProgress({
+          emitProgressThrottled({
             percent,
             frame: 0,
             fps: 0,
@@ -661,68 +875,105 @@ export const convertVideo = async (
             speed: 'N/A',
           });
         }
-      }
-    });
+      });
 
-    ffmpegProcess.stderr?.on('data', (data) => {
-      const line = data.toString();
-      if (onLog) onLog(line);
-      errorOutput += line;
+      ffmpegProcess.stderr?.on('data', (data) => {
+        const line = data.toString();
+        if (onLog) onLog(line);
+        errorOutput = appendBoundedErrorOutput(errorOutput, line);
 
-      const progress = parseProgress(line, totalDuration);
-      if (progress) {
-        onProgress(progress);
-      }
-    });
+        const progress = parseProgress(line, totalDuration);
+        if (progress) {
+          emitProgressThrottled(progress);
+        }
+      });
 
-    ffmpegProcess.on('close', (code) => {
-      if (currentProcess === ffmpegProcess) {
-        currentProcess = null;
-      }
-      const outputToDelete = outputPathByProcess.get(ffmpegProcess);
-      outputPathByProcess.delete(ffmpegProcess);
-      const wasCanceled = canceledProcesses.has(ffmpegProcess);
-      canceledProcesses.delete(ffmpegProcess);
-      if (wasCanceled) {
+      ffmpegProcess.on('close', async (code) => {
+        flushAndCleanupProgressTimer();
+        if (currentProcess === ffmpegProcess) {
+          currentProcess = null;
+        }
+        const outputToDelete = outputPathByProcess.get(ffmpegProcess);
+        outputPathByProcess.delete(ffmpegProcess);
+        const wasCanceled = canceledProcesses.has(ffmpegProcess);
+        canceledProcesses.delete(ffmpegProcess);
+        if (wasCanceled) {
+          conversionCanceled = true;
+          if (outputToDelete && fs.existsSync(outputToDelete)) {
+            try {
+              fs.unlinkSync(outputToDelete);
+            } catch (err) {
+              console.error('Failed to delete partial file:', err);
+            }
+          }
+          resolve({ success: false, outputPath, error: 'Conversion cancelled' });
+          return;
+        }
+
+        if (code === 0) {
+          resolve({ success: true, outputPath });
+          return;
+        }
+
         if (outputToDelete && fs.existsSync(outputToDelete)) {
           try {
             fs.unlinkSync(outputToDelete);
           } catch (err) {
-            console.error('Failed to delete partial file:', err);
+            console.error('Failed to delete failed output file:', err);
           }
         }
-        resolve({ success: false, outputPath, error: 'Conversion cancelled' });
-        return;
-      }
-      if (code === 0) {
-        resolve({ success: true, outputPath });
-      } else {
-        resolve({ success: false, outputPath, error: errorOutput });
-      }
-    });
 
-    ffmpegProcess.on('error', (err) => {
-      if (currentProcess === ffmpegProcess) {
-        currentProcess = null;
-      }
-      const outputToDelete = outputPathByProcess.get(ffmpegProcess);
-      outputPathByProcess.delete(ffmpegProcess);
-      const wasCanceled = canceledProcesses.has(ffmpegProcess);
-      canceledProcesses.delete(ffmpegProcess);
-      if (wasCanceled) {
+        if (
+          !conversionCanceled &&
+          allowRetry &&
+          activeDecodeArgs.length > 0 &&
+          shouldRetryWithSoftwareDecode(errorOutput)
+        ) {
+          if (onLog) {
+            onLog('Hardware decode failed; retrying with software decode.\n');
+          }
+          const retried = await runAttempt([], false);
+          resolve(retried);
+          return;
+        }
+
+        resolve({ success: false, outputPath, error: errorOutput });
+      });
+
+      ffmpegProcess.on('error', (err) => {
+        flushAndCleanupProgressTimer();
+        if (currentProcess === ffmpegProcess) {
+          currentProcess = null;
+        }
+        const outputToDelete = outputPathByProcess.get(ffmpegProcess);
+        outputPathByProcess.delete(ffmpegProcess);
+        const wasCanceled = canceledProcesses.has(ffmpegProcess);
+        canceledProcesses.delete(ffmpegProcess);
+        if (wasCanceled) {
+          conversionCanceled = true;
+          if (outputToDelete && fs.existsSync(outputToDelete)) {
+            try {
+              fs.unlinkSync(outputToDelete);
+            } catch (deleteErr) {
+              console.error('Failed to delete partial file:', deleteErr);
+            }
+          }
+          resolve({ success: false, outputPath, error: 'Conversion cancelled' });
+          return;
+        }
         if (outputToDelete && fs.existsSync(outputToDelete)) {
           try {
             fs.unlinkSync(outputToDelete);
           } catch (deleteErr) {
-            console.error('Failed to delete partial file:', deleteErr);
+            console.error('Failed to delete failed output file:', deleteErr);
           }
         }
-        resolve({ success: false, outputPath, error: 'Conversion cancelled' });
-        return;
-      }
-      resolve({ success: false, outputPath, error: err.message });
+        resolve({ success: false, outputPath, error: err.message });
+      });
     });
-  });
+  };
+
+  return runAttempt(decodeArgs, true);
 };
 
 const forceKillProcess = (processToKill: ChildProcess): void => {
@@ -767,6 +1018,7 @@ export const cancelConversion = (force = false): void => {
     } catch {
       if (force) {
         forceKillProcess(processToKill);
+        return;
       }
     }
 
@@ -781,6 +1033,14 @@ export const cancelConversion = (force = false): void => {
       }
     }, 1500);
   }
+};
+
+export const waitForConversionStop = async (timeoutMs = 3000): Promise<boolean> => {
+  const deadline = Date.now() + Math.max(0, timeoutMs);
+  while (currentProcess && Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  return currentProcess === null;
 };
 
 const formatTime = (seconds: number): string => {

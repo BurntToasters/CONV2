@@ -1,4 +1,5 @@
-import { contextBridge, ipcRenderer, webUtils } from 'electron';
+import { contextBridge, ipcRenderer, webUtils, IpcRendererEvent } from 'electron';
+import type { AdvancedFormatSettings } from './advancedFormats';
 
 export interface ConversionProgress {
   percent: number;
@@ -9,16 +10,43 @@ export interface ConversionProgress {
   speed: string;
 }
 
+export interface ConversionResult {
+  success: boolean;
+  outputPath: string;
+  error?: string;
+  retryWithCpuSuggested?: boolean;
+}
+
+export type GPUVendor = 'nvidia' | 'amd' | 'intel' | 'apple' | 'cpu';
+export type GPUMode = 'auto' | 'manual';
+export type GPUCodec = 'h264' | 'h265' | 'av1';
+
+export interface UIPanelSettings {
+  presetExpanded: boolean;
+  gpuExpanded: boolean;
+}
+
 export interface AppSettings {
+  settingsSchemaVersion: number;
   outputDirectory: string;
-  gpu: 'nvidia' | 'amd' | 'intel' | 'apple' | 'cpu';
+  gpu: GPUVendor;
+  gpuMode: GPUMode;
+  gpuManualVendor: GPUVendor;
   theme: 'system' | 'dark' | 'light';
   showDebugOutput: boolean;
   autoCheckUpdates: boolean;
   useSystemFFmpeg: boolean;
   updateChannel: 'auto' | 'stable' | 'beta';
   showAdvancedPresets: boolean;
+  removeSpacesFromFilenames: boolean;
+  recentPresetIds: string[];
+  uiPanels: UIPanelSettings;
+  advancedFormatSettings: AdvancedFormatSettings;
 }
+
+export type SaveSettingsPayload = Omit<Partial<AppSettings>, 'uiPanels'> & {
+  uiPanels?: Partial<UIPanelSettings>;
+};
 
 export interface VideoInfo {
   duration: number;
@@ -36,60 +64,100 @@ export interface GPUEncoderError {
   suggestion: string;
   canRetryWithCPU: boolean;
   codec?: string;
-  gpu?: 'nvidia' | 'amd' | 'intel' | 'apple' | 'cpu';
+  gpu?: GPUVendor;
 }
+
+export interface StartConversionOptions {
+  suppressGpuErrorEvent?: boolean;
+  removeSpacesFromFilenames?: boolean;
+  outputDirectory?: string;
+  showDebugOutput?: boolean;
+}
+
+export interface RendererPreset {
+  id: string;
+  name: string;
+  description: string;
+  category: string;
+  categoryLabel: string;
+  categoryOrder: number;
+  isAdvanced: boolean;
+  extension: string;
+  aviTier: string | null;
+}
+
+export interface GPUCapabilityStatus {
+  available: boolean;
+  reason: string;
+  encoder: string;
+}
+
+export interface GPUCapabilitiesPayload {
+  platform: string;
+  requestedCodec: GPUCodec | null;
+  checkedCodecs: GPUCodec[];
+  matrix: Partial<Record<GPUCodec, Record<GPUVendor, GPUCapabilityStatus>>>;
+  recommendedVendor: GPUVendor;
+  recommendationReason: string;
+}
+
+const subscribe = <T>(channel: string, callback: (payload: T) => void): (() => void) => {
+  const listener = (_event: IpcRendererEvent, payload: T) => callback(payload);
+  ipcRenderer.on(channel, listener);
+  return () => {
+    ipcRenderer.removeListener(channel, listener);
+  };
+};
 
 contextBridge.exposeInMainWorld('electronAPI', {
   // File operations
   getPathForFile: (file: File): string => webUtils.getPathForFile(file),
-  selectFile: (): Promise<string | null> => ipcRenderer.invoke('select-file'),
+  selectFile: (): Promise<string[]> => ipcRenderer.invoke('select-file'),
   selectOutputDirectory: (): Promise<string | null> =>
     ipcRenderer.invoke('select-output-directory'),
   getFileInfo: (filePath: string): Promise<VideoInfo | null> =>
     ipcRenderer.invoke('get-file-info', filePath),
 
   // Conversion
-  startConversion: (inputPath: string, presetId: string, gpu: AppSettings['gpu']): Promise<void> =>
-    ipcRenderer.invoke('start-conversion', inputPath, presetId, gpu),
+  startConversion: (
+    inputPath: string,
+    presetId: string,
+    gpu: GPUVendor,
+    options?: StartConversionOptions
+  ): Promise<ConversionResult> =>
+    ipcRenderer.invoke('start-conversion', inputPath, presetId, gpu, options),
   cancelConversion: (force?: boolean): Promise<void> =>
     ipcRenderer.invoke('cancel-conversion', force),
-  onConversionProgress: (callback: (progress: ConversionProgress) => void): void => {
-    ipcRenderer.on('conversion-progress', (_, progress) => callback(progress));
-  },
-  onConversionLog: (callback: (message: string) => void): void => {
-    ipcRenderer.on('conversion-log', (_, message) => callback(message));
-  },
-  onConversionComplete: (
-    callback: (result: { success: boolean; outputPath: string; error?: string }) => void
-  ): void => {
-    ipcRenderer.on('conversion-complete', (_, result) => callback(result));
-  },
-  onGPUEncoderError: (callback: (error: GPUEncoderError) => void): void => {
-    ipcRenderer.on('gpu-encoder-error', (_, error) => callback(error));
-  },
+  onConversionProgress: (callback: (progress: ConversionProgress) => void): (() => void) =>
+    subscribe('conversion-progress', callback),
+  onConversionLog: (callback: (message: string) => void): (() => void) =>
+    subscribe('conversion-log', callback),
+  onConversionComplete: (callback: (result: ConversionResult) => void): (() => void) =>
+    subscribe('conversion-complete', callback),
+  onGPUEncoderError: (callback: (error: GPUEncoderError) => void): (() => void) =>
+    subscribe('gpu-encoder-error', callback),
 
   // Presets
-  getPresets: (): Promise<
-    Array<{ id: string; name: string; description: string; category: string }>
-  > => ipcRenderer.invoke('get-presets'),
+  getPresets: (): Promise<RendererPreset[]> => ipcRenderer.invoke('get-presets'),
+  getGpuCapabilities: (requestedCodec?: GPUCodec | null): Promise<GPUCapabilitiesPayload> =>
+    ipcRenderer.invoke('get-gpu-capabilities', requestedCodec ?? null),
 
   // Settings
   getSettings: (): Promise<AppSettings> => ipcRenderer.invoke('get-settings'),
-  saveSettings: (settings: Partial<AppSettings>): Promise<void> =>
+  getDefaultAdvancedFormatSettings: (): Promise<AdvancedFormatSettings> =>
+    ipcRenderer.invoke('get-default-advanced-format-settings'),
+  saveSettings: (settings: SaveSettingsPayload): Promise<void> =>
     ipcRenderer.invoke('save-settings', settings),
 
   // Updates
   checkForUpdates: (): Promise<void> => ipcRenderer.invoke('check-for-updates'),
   isUpdatesDisabled: (): Promise<boolean> => ipcRenderer.invoke('is-updates-disabled'),
-  onUpdateStatus: (callback: (message: string) => void): void => {
-    ipcRenderer.on('update-status', (_, message) => callback(message));
-  },
-  onUpdateProgress: (callback: (percent: number) => void): void => {
-    ipcRenderer.on('update-download-progress', (_, percent) => callback(percent));
-  },
-  onUpdateAvailable: (callback: (available: boolean) => void): void => {
-    ipcRenderer.on('update-available', (_, available) => callback(available));
-  },
+  onUpdateStatus: (callback: (message: string) => void): (() => void) =>
+    subscribe('update-status', callback),
+  onUpdateProgress: (callback: (percent: number) => void): (() => void) =>
+    subscribe('update-download-progress', callback),
+  onUpdateAvailable: (callback: (available: boolean) => void): (() => void) =>
+    subscribe('update-available', callback),
 
   // FFmpeg check
   checkFFmpeg: (): Promise<boolean> => ipcRenderer.invoke('check-ffmpeg'),
@@ -104,9 +172,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   // Theme
   getSystemTheme: (): Promise<'dark' | 'light'> => ipcRenderer.invoke('get-system-theme'),
-  onThemeChange: (callback: (theme: 'dark' | 'light') => void): void => {
-    ipcRenderer.on('theme-changed', (_, theme) => callback(theme));
-  },
+  onThemeChange: (callback: (theme: 'dark' | 'light') => void): (() => void) =>
+    subscribe('theme-changed', callback),
 
   // Reset & Restart
   resetSettings: (): Promise<AppSettings> => ipcRenderer.invoke('reset-settings'),
@@ -120,38 +187,37 @@ declare global {
   interface Window {
     electronAPI: {
       getPathForFile: (file: File) => string;
-      selectFile: () => Promise<string | null>;
+      selectFile: () => Promise<string[]>;
       selectOutputDirectory: () => Promise<string | null>;
       getFileInfo: (filePath: string) => Promise<VideoInfo | null>;
       startConversion: (
         inputPath: string,
         presetId: string,
-        gpu: AppSettings['gpu']
-      ) => Promise<void>;
+        gpu: GPUVendor,
+        options?: StartConversionOptions
+      ) => Promise<ConversionResult>;
       cancelConversion: (force?: boolean) => Promise<void>;
-      onConversionProgress: (callback: (progress: ConversionProgress) => void) => void;
-      onConversionLog: (callback: (message: string) => void) => void;
-      onConversionComplete: (
-        callback: (result: { success: boolean; outputPath: string; error?: string }) => void
-      ) => void;
-      onGPUEncoderError: (callback: (error: GPUEncoderError) => void) => void;
-      getPresets: () => Promise<
-        Array<{ id: string; name: string; description: string; category: string }>
-      >;
+      onConversionProgress: (callback: (progress: ConversionProgress) => void) => () => void;
+      onConversionLog: (callback: (message: string) => void) => () => void;
+      onConversionComplete: (callback: (result: ConversionResult) => void) => () => void;
+      onGPUEncoderError: (callback: (error: GPUEncoderError) => void) => () => void;
+      getPresets: () => Promise<RendererPreset[]>;
+      getGpuCapabilities: (requestedCodec?: GPUCodec | null) => Promise<GPUCapabilitiesPayload>;
       getSettings: () => Promise<AppSettings>;
-      saveSettings: (settings: Partial<AppSettings>) => Promise<void>;
+      getDefaultAdvancedFormatSettings: () => Promise<AdvancedFormatSettings>;
+      saveSettings: (settings: SaveSettingsPayload) => Promise<void>;
       checkForUpdates: () => Promise<void>;
       isUpdatesDisabled: () => Promise<boolean>;
-      onUpdateStatus: (callback: (message: string) => void) => void;
-      onUpdateProgress: (callback: (percent: number) => void) => void;
-      onUpdateAvailable: (callback: (available: boolean) => void) => void;
+      onUpdateStatus: (callback: (message: string) => void) => () => void;
+      onUpdateProgress: (callback: (percent: number) => void) => () => void;
+      onUpdateAvailable: (callback: (available: boolean) => void) => () => void;
       checkFFmpeg: () => Promise<boolean>;
       getVersion: () => Promise<string>;
       getPlatform: () => Promise<string>;
       openPath: (path: string) => Promise<void>;
       openExternal: (url: string) => Promise<void>;
       getSystemTheme: () => Promise<'dark' | 'light'>;
-      onThemeChange: (callback: (theme: 'dark' | 'light') => void) => void;
+      onThemeChange: (callback: (theme: 'dark' | 'light') => void) => () => void;
       resetSettings: () => Promise<AppSettings>;
       restartApp: () => Promise<void>;
       getLicenses: () => Promise<Record<string, unknown> | null>;
