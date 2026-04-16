@@ -672,12 +672,20 @@ const appendBoundedErrorOutput = (current: string, nextChunk: string): string =>
   return combined.slice(combined.length - MAX_ERROR_OUTPUT_CHARS);
 };
 
-const shouldRetryWithSoftwareDecode = (errorOutput: string): boolean => {
+export const shouldRetryWithSoftwareDecode = (errorOutput: string): boolean => {
   const lowered = errorOutput.toLowerCase();
+  const inputErrorMarkers = [
+    'error opening input',
+    'no such file or directory',
+    'invalid data found when processing input',
+    'moov atom not found',
+    'permission denied',
+  ];
+  if (inputErrorMarkers.some((marker) => lowered.includes(marker))) {
+    return false;
+  }
   const markers = [
     'hwaccel',
-    'vaapi',
-    'qsv',
     'device setup failed',
     'failed setup for format',
     'no device available',
@@ -685,6 +693,10 @@ const shouldRetryWithSoftwareDecode = (errorOutput: string): boolean => {
     'hardware acceleration',
     'cannot load libmfx',
     'failed to initialise vaapi',
+    'vaapi init',
+    'vaapi device',
+    'qsv init',
+    'qsv session',
   ];
   return markers.some((marker) => lowered.includes(marker));
 };
@@ -762,9 +774,12 @@ export const convertVideo = async (
   let inputCodec: string | undefined;
   try {
     const info = await getVideoInfo(inputPath);
-    totalDuration = info.duration;
+    totalDuration = Number.isFinite(info.duration) ? info.duration : 0;
     inputCodec = info.codec;
   } catch {
+    // ignore
+  }
+  if (totalDuration <= 0) {
     try {
       totalDuration = await getVideoDuration(inputPath);
     } catch {

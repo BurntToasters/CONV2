@@ -15,6 +15,24 @@ const isPrereleaseVersion = (version: string): boolean => {
   return /-(beta|alpha|rc)/i.test(version);
 };
 
+const getBaseVersion = (version: string): number[] => {
+  return version
+    .replace(/-(beta|alpha|rc).*/i, '')
+    .split('.')
+    .map(Number)
+    .slice(0, 3);
+};
+
+const isNewerBaseVersion = (offered: string, current: string): boolean => {
+  const o = getBaseVersion(offered);
+  const c = getBaseVersion(current);
+  for (let i = 0; i < 3; i++) {
+    if ((o[i] || 0) > (c[i] || 0)) return true;
+    if ((o[i] || 0) < (c[i] || 0)) return false;
+  }
+  return false;
+};
+
 const shouldUseBetaChannel = (): boolean => {
   if (updateChannel === 'beta') {
     return true;
@@ -110,6 +128,19 @@ export const initUpdater = (window: BrowserWindow): void => {
   });
 
   autoUpdater.on('update-available', (info: UpdateInfo) => {
+    if (
+      shouldUseBetaChannel() &&
+      !isPrereleaseVersion(info.version) &&
+      !isNewerBaseVersion(info.version, app.getVersion())
+    ) {
+      const windowRef = getMainWindow();
+      if (windowRef) {
+        windowRef.webContents.send('update-available', false);
+      }
+      silentCheck = false;
+      return;
+    }
+
     updateAvailable = true;
     const windowRef = getMainWindow();
     if (windowRef) {
@@ -216,6 +247,7 @@ export const checkForUpdates = (): void => {
     return;
   }
 
+  silentCheck = false;
   applyUpdaterChannel();
   void autoUpdater.checkForUpdates().catch((err) => {
     console.error('Failed to check for updates:', err);
