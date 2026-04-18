@@ -145,9 +145,12 @@ interface AppSettings {
   showDebugOutput: boolean;
   autoCheckUpdates: boolean;
   useSystemFFmpeg: boolean;
+  useCpuDecodingWhenGpu: boolean;
+  moveOriginalToTrashOnSuccess: boolean;
   updateChannel: 'auto' | 'stable' | 'beta';
   showAdvancedPresets: boolean;
   removeSpacesFromFilenames: boolean;
+  showAllGpuVendors: boolean;
   recentPresetIds: string[];
   uiPanels: UIPanelSettings;
   advancedFormatSettings: AdvancedFormatSettings;
@@ -314,10 +317,16 @@ let selectedPresetId = '';
 let activePresetParentKey: PresetParentKey | '' = '';
 let presetSearchAllFormats = false;
 let currentPlatform = '';
-let showAllGpuCodecs = false;
-let showGpuDetails = false;
+let lastGpuPayload: GPUCapabilitiesPayload | null = null;
 const gpuCapabilitiesCache = new Map<string, GPUCapabilitiesPayload>();
 let gpuPanelRenderToken = 0;
+
+const getAvailableVendors = (payload: GPUCapabilitiesPayload): GPUVendor[] => {
+  return GPU_VENDORS.filter((vendor) => {
+    if (vendor === 'cpu') return true;
+    return GPU_CODECS.some((codec) => payload.matrix[codec]?.[vendor]?.available === true);
+  });
+};
 
 const normalizeUiPanels = (value: unknown): UIPanelSettings => {
   const incoming =
@@ -358,16 +367,11 @@ const elements = {
   gpuPanelSection: getRequiredElement<HTMLElement>('gpuPanelSection'),
   gpuPanelToggle: getRequiredElement<HTMLButtonElement>('gpuPanelToggle'),
   gpuPanelBody: getRequiredElement<HTMLDivElement>('gpuPanelBody'),
-  gpuPanelSummary: getRequiredElement<HTMLSpanElement>('gpuPanelSummary'),
   refreshGpuCapsBtn: getRequiredElement<HTMLButtonElement>('refreshGpuCapsBtn'),
   gpuModeAuto: getRequiredElement<HTMLInputElement>('gpuModeAuto'),
   gpuModeManual: getRequiredElement<HTMLInputElement>('gpuModeManual'),
   gpuManualRow: getRequiredElement<HTMLDivElement>('gpuManualRow'),
   gpuManualVendorSelect: getRequiredElement<HTMLSelectElement>('gpuManualVendorSelect'),
-  toggleGpuDetailsBtn: getRequiredElement<HTMLButtonElement>('toggleGpuDetailsBtn'),
-  showAllGpuCodecsCheck: getRequiredElement<HTMLInputElement>('showAllGpuCodecsCheck'),
-  showAllCodecsLabel: getRequiredElement<HTMLLabelElement>('showAllCodecsLabel'),
-  gpuEffectiveSummary: getRequiredElement<HTMLDivElement>('gpuEffectiveSummary'),
   gpuCapabilityMatrix: getRequiredElement<HTMLDivElement>('gpuCapabilityMatrix'),
   convertBtn: document.getElementById('convertBtn') as HTMLButtonElement,
   cancelBtn: document.getElementById('cancelBtn') as HTMLButtonElement,
@@ -384,8 +388,11 @@ const elements = {
   settingsModal: document.getElementById('settingsModal') as HTMLDivElement,
   settingsGeneralTab: getRequiredElement<HTMLButtonElement>('settingsGeneralTab'),
   settingsAdvancedFormatsTab: getRequiredElement<HTMLButtonElement>('settingsAdvancedFormatsTab'),
+  settingsDebugTab: getRequiredElement<HTMLButtonElement>('settingsDebugTab'),
   settingsGeneralPanel: getRequiredElement<HTMLDivElement>('settingsGeneralPanel'),
   settingsAdvancedFormatsPanel: getRequiredElement<HTMLDivElement>('settingsAdvancedFormatsPanel'),
+  settingsDebugPanel: getRequiredElement<HTMLDivElement>('settingsDebugPanel'),
+  showAllGpuVendorsCheck: getRequiredElement<HTMLInputElement>('showAllGpuVendorsCheck'),
   formatTabGif: getRequiredElement<HTMLButtonElement>('formatTabGif'),
   formatTabAv1: getRequiredElement<HTMLButtonElement>('formatTabAv1'),
   formatTabH264: getRequiredElement<HTMLButtonElement>('formatTabH264'),
@@ -422,6 +429,7 @@ const elements = {
   gifBestCompressionDither: getRequiredElement<HTMLSelectElement>('gifBestCompressionDither'),
   closeSettings: document.getElementById('closeSettings') as HTMLButtonElement,
   outputDirBtn: document.getElementById('outputDirBtn') as HTMLButtonElement,
+  outputDirResetBtn: document.getElementById('outputDirResetBtn') as HTMLButtonElement,
   outputPath: document.getElementById('outputPath') as HTMLSpanElement,
   themeSelect: document.getElementById('themeSelect') as HTMLSelectElement,
   themeSwitcher: document.getElementById('themeSwitcher') as HTMLDivElement,
@@ -442,6 +450,12 @@ const elements = {
   advancedPresetsCheck: document.getElementById('advancedPresetsCheck') as HTMLInputElement,
   removeSpacesCheck: document.getElementById('removeSpacesCheck') as HTMLInputElement,
   useSystemFFmpegCheck: document.getElementById('useSystemFFmpegCheck') as HTMLInputElement,
+  useCpuDecodingWhenGpuCheck: document.getElementById(
+    'useCpuDecodingWhenGpuCheck'
+  ) as HTMLInputElement,
+  moveOriginalToTrashOnSuccessCheck: document.getElementById(
+    'moveOriginalToTrashOnSuccessCheck'
+  ) as HTMLInputElement,
   showLogsBtn: document.getElementById('showLogsBtn') as HTMLButtonElement,
   logsModal: document.getElementById('logsModal') as HTMLDivElement,
   closeLogs: document.getElementById('closeLogs') as HTMLButtonElement,
@@ -827,7 +841,16 @@ const renderPresetPaneGroups = (
       card.className = `preset-card${pickerPreset.id === selectedPresetId ? ' is-selected' : ''}`;
       card.setAttribute('role', 'option');
       card.setAttribute('aria-selected', pickerPreset.id === selectedPresetId ? 'true' : 'false');
-      card.textContent = pickerPreset.displayName;
+      const nameSpan = document.createElement('span');
+      nameSpan.className = 'preset-card-name';
+      nameSpan.textContent = pickerPreset.displayName;
+      card.appendChild(nameSpan);
+      if (group.key === 'recent' && pickerPreset.categoryLabel) {
+        const codecSpan = document.createElement('span');
+        codecSpan.className = 'preset-card-codec';
+        codecSpan.textContent = pickerPreset.categoryLabel;
+        card.appendChild(codecSpan);
+      }
       const fullPreset = visiblePresetById.get(pickerPreset.id);
       if (fullPreset) {
         card.title = fullPreset.description;
@@ -999,8 +1022,20 @@ const renderGpuCapabilityMatrix = (
   table.appendChild(thead);
 
   const tbody = document.createElement('tbody');
-  GPU_VENDORS.forEach((vendor) => {
+  const vendorSource = lastGpuPayload || payload;
+  const vendorsToRender = settings.showAllGpuVendors
+    ? GPU_VENDORS
+    : getAvailableVendors(vendorSource);
+  vendorsToRender.forEach((vendor) => {
     const row = document.createElement('tr');
+
+    if (codecsToRender.length === 1) {
+      const entry = payload.matrix[codecsToRender[0]]?.[vendor];
+      if (!entry?.available && vendor !== 'cpu') {
+        row.classList.add('gpu-vendor-dimmed');
+      }
+    }
+
     const vendorCell = document.createElement('td');
     vendorCell.className = 'vendor';
     vendorCell.textContent = getGpuVendorLabel(vendor);
@@ -1035,8 +1070,64 @@ const renderGpuCapabilityMatrix = (
   elements.gpuCapabilityMatrix.appendChild(table);
 };
 
-const setGpuPanelSummary = (summary: string): void => {
-  elements.gpuPanelSummary.textContent = summary;
+const GPU_VENDOR_DROPDOWN_LABELS: Record<GPUVendor, string> = {
+  cpu: 'CPU (Software)',
+  apple: 'Apple (VideoToolbox)',
+  nvidia: 'NVIDIA (NVENC)',
+  amd: 'AMD (AMF)',
+  intel: 'Intel (Quick Sync)',
+};
+
+const updateManualVendorDropdown = (
+  payload: GPUCapabilitiesPayload,
+  currentCodec: GPUCodec | null
+): void => {
+  const select = elements.gpuManualVendorSelect;
+  const previousValue = select.value as GPUVendor;
+  select.innerHTML = '';
+
+  const availableVendors = getAvailableVendors(payload);
+  const vendorsToShow = settings.showAllGpuVendors ? GPU_VENDORS : availableVendors;
+
+  vendorsToShow.forEach((vendor) => {
+    const option = document.createElement('option');
+    option.value = vendor;
+    const label = GPU_VENDOR_DROPDOWN_LABELS[vendor] || getGpuVendorLabel(vendor);
+    const isAvailableOverall = availableVendors.includes(vendor);
+    const supportsCurrentCodec =
+      vendor === 'cpu' ||
+      currentCodec === null ||
+      payload.matrix[currentCodec]?.[vendor]?.available === true;
+
+    if (settings.showAllGpuVendors && !isAvailableOverall) {
+      option.textContent = `${label} (Unavailable)`;
+    } else if (!supportsCurrentCodec) {
+      option.textContent = `${label} (Not supported for this format)`;
+      option.disabled = true;
+    } else {
+      option.textContent = label;
+    }
+    select.appendChild(option);
+  });
+
+  if (
+    vendorsToShow.includes(previousValue) &&
+    !select.querySelector<HTMLOptionElement>(`option[value="${previousValue}"]`)?.disabled
+  ) {
+    select.value = previousValue;
+  } else {
+    // Fall back to the first enabled option
+    const firstEnabled =
+      vendorsToShow.find(
+        (v) => !select.querySelector<HTMLOptionElement>(`option[value="${v}"]`)?.disabled
+      ) ?? 'cpu';
+    select.value = firstEnabled;
+    if (firstEnabled !== settings.gpuManualVendor) {
+      settings.gpuManualVendor = firstEnabled;
+      settings.gpu = firstEnabled;
+      void window.electronAPI.saveSettings({ gpuManualVendor: firstEnabled });
+    }
+  }
 };
 
 const applyPanelCollapseUi = (): void => {
@@ -1075,31 +1166,16 @@ const persistUiPanelState = async (panel: UIPanelKey, expanded: boolean): Promis
   }
 };
 
-const isGpuDetailsVisible = (): boolean => {
-  return settings.gpuMode === 'manual' || showGpuDetails;
-};
-
-const applyGpuDetailsUi = (): void => {
-  const detailsVisible = isGpuDetailsVisible();
-  elements.toggleGpuDetailsBtn.hidden = settings.gpuMode === 'manual';
-  elements.showAllCodecsLabel.hidden = !detailsVisible;
-  elements.gpuCapabilityMatrix.hidden = !detailsVisible;
-  elements.toggleGpuDetailsBtn.textContent = detailsVisible ? 'Hide details' : 'Show details';
-  elements.toggleGpuDetailsBtn.setAttribute('aria-expanded', detailsVisible ? 'true' : 'false');
-};
-
 const applyGpuModeUi = (): void => {
   elements.gpuManualRow.hidden = settings.gpuMode !== 'manual';
   elements.gpuModeAuto.checked = settings.gpuMode !== 'manual';
   elements.gpuModeManual.checked = settings.gpuMode === 'manual';
-  applyGpuDetailsUi();
 };
 
 const refreshGpuPanel = async (forceRefresh: boolean): Promise<void> => {
   const token = ++gpuPanelRenderToken;
   const selectedPreset = getSelectedPreset();
   const selectedCodec = getSelectedPresetCodec();
-  const detailsVisible = isGpuDetailsVisible();
 
   try {
     const summaryPayload = await getGpuCapabilities(selectedCodec, forceRefresh);
@@ -1107,62 +1183,28 @@ const refreshGpuPanel = async (forceRefresh: boolean): Promise<void> => {
       return;
     }
 
-    const matrixPayload =
-      detailsVisible && showAllGpuCodecs
-        ? await getGpuCapabilities(null, forceRefresh)
-        : summaryPayload;
+    const allCodecsPayload = await getGpuCapabilities(null, forceRefresh);
     if (token !== gpuPanelRenderToken) {
       return;
     }
 
-    if (!selectedPreset) {
-      elements.gpuEffectiveSummary.textContent =
-        'Select a preset to evaluate hardware acceleration.';
-      setGpuPanelSummary('Select preset');
-      if (detailsVisible) {
-        renderGpuCapabilityMatrix(matrixPayload, showAllGpuCodecs ? GPU_CODECS : []);
-      }
+    lastGpuPayload = allCodecsPayload;
+    updateManualVendorDropdown(allCodecsPayload, selectedCodec);
+
+    if (token !== gpuPanelRenderToken) {
       return;
     }
 
-    if (!selectedCodec) {
-      elements.gpuEffectiveSummary.textContent =
-        'Selected preset does not use video encoding. GPU selection is ignored for this preset.';
-      setGpuPanelSummary('CPU only preset');
-      if (detailsVisible) {
-        renderGpuCapabilityMatrix(matrixPayload, showAllGpuCodecs ? GPU_CODECS : []);
-      }
+    if (!selectedPreset || !selectedCodec) {
+      renderGpuCapabilityMatrix(summaryPayload, []);
       return;
     }
 
-    if (settings.gpuMode === 'auto') {
-      const autoVendor = summaryPayload.recommendedVendor;
-      elements.gpuEffectiveSummary.textContent = `Auto: ${getGpuVendorLabel(autoVendor)} for ${getCodecLabel(selectedCodec)}. ${summaryPayload.recommendationReason}`;
-      setGpuPanelSummary(
-        `Auto · ${getGpuVendorLabel(autoVendor)} · ${getCodecLabel(selectedCodec)}`
-      );
-    } else {
-      const manualVendor = settings.gpuManualVendor;
-      const manualEntry = summaryPayload.matrix[selectedCodec]?.[manualVendor];
-      if (manualEntry?.available) {
-        elements.gpuEffectiveSummary.textContent = `Manual: ${getGpuVendorLabel(manualVendor)} selected for ${getCodecLabel(selectedCodec)}. Encoder is available.`;
-      } else {
-        elements.gpuEffectiveSummary.textContent = `Manual: ${getGpuVendorLabel(manualVendor)} selected for ${getCodecLabel(selectedCodec)}. ${manualEntry?.reason || 'Availability unknown.'}`;
-      }
-      setGpuPanelSummary(
-        `Manual · ${getGpuVendorLabel(manualVendor)} · ${getCodecLabel(selectedCodec)}`
-      );
-    }
-
-    if (detailsVisible) {
-      renderGpuCapabilityMatrix(matrixPayload, showAllGpuCodecs ? GPU_CODECS : [selectedCodec]);
-    }
+    renderGpuCapabilityMatrix(summaryPayload, [selectedCodec]);
   } catch (err) {
     if (token !== gpuPanelRenderToken) {
       return;
     }
-    elements.gpuEffectiveSummary.textContent = 'Unable to load GPU capability data.';
-    setGpuPanelSummary('Status unavailable');
     elements.gpuCapabilityMatrix.innerHTML = '';
     const empty = document.createElement('div');
     empty.className = 'preset-empty';
@@ -1329,8 +1371,16 @@ const aviTierInputs: Record<
   },
 };
 
-const settingsTabButtons = [elements.settingsGeneralTab, elements.settingsAdvancedFormatsTab];
-const settingsPanels = [elements.settingsGeneralPanel, elements.settingsAdvancedFormatsPanel];
+const settingsTabButtons = [
+  elements.settingsGeneralTab,
+  elements.settingsAdvancedFormatsTab,
+  elements.settingsDebugTab,
+];
+const settingsPanels = [
+  elements.settingsGeneralPanel,
+  elements.settingsAdvancedFormatsPanel,
+  elements.settingsDebugPanel,
+];
 
 const formatTabs = [
   elements.formatTabGif,
@@ -1365,7 +1415,7 @@ const formatDuration = (seconds: number): string => {
 };
 
 const setSettingsPanel = (
-  panelId: 'settingsGeneralPanel' | 'settingsAdvancedFormatsPanel'
+  panelId: 'settingsGeneralPanel' | 'settingsAdvancedFormatsPanel' | 'settingsDebugPanel'
 ): void => {
   settingsPanels.forEach((panel) => {
     const isActive = panel.id === panelId;
@@ -2165,23 +2215,22 @@ const loadSettings = async () => {
     settings.gpuManualVendor = 'cpu';
   }
   settings.uiPanels = normalizeUiPanels(settings.uiPanels);
-  showGpuDetails = settings.gpuMode === 'manual';
   settings.gpu = settings.gpuManualVendor;
   applyGpuModeUi();
   applyPanelCollapseUi();
   elements.gpuManualVendorSelect.value = settings.gpuManualVendor;
   elements.presetPanelSummary.textContent = 'No preset selected';
-  setGpuPanelSummary('Select preset');
   presetSearchAllFormats = false;
   elements.presetSearchAllCheck.checked = false;
-  showAllGpuCodecs = false;
-  elements.showAllGpuCodecsCheck.checked = false;
   elements.themeSelect.value = settings.theme;
   elements.debugOutputCheck.checked = settings.showDebugOutput;
   elements.advancedPresetsCheck.checked = settings.showAdvancedPresets;
   elements.removeSpacesCheck.checked = settings.removeSpacesFromFilenames;
   elements.autoCheckUpdatesCheck.checked = settings.autoCheckUpdates;
   elements.useSystemFFmpegCheck.checked = settings.useSystemFFmpeg;
+  elements.useCpuDecodingWhenGpuCheck.checked = settings.useCpuDecodingWhenGpu;
+  elements.moveOriginalToTrashOnSuccessCheck.checked = settings.moveOriginalToTrashOnSuccess;
+  elements.showAllGpuVendorsCheck.checked = settings.showAllGpuVendors;
   elements.updateChannelSelect.value = settings.updateChannel;
   setSettingsPanel('settingsGeneralPanel');
   setFormatPanel('formatPanelGif');
@@ -2195,8 +2244,10 @@ const loadSettings = async () => {
 
   if (settings.outputDirectory) {
     elements.outputPath.textContent = settings.outputDirectory;
+    elements.outputDirResetBtn.hidden = false;
   } else {
     elements.outputPath.textContent = 'Same as input file';
+    elements.outputDirResetBtn.hidden = true;
   }
 };
 
@@ -2359,14 +2410,22 @@ const setupEventListeners = () => {
   settingsTabButtons.forEach((tab) => {
     tab.addEventListener('click', () => {
       const panelId = tab.dataset.settingsPanel;
-      if (panelId === 'settingsGeneralPanel' || panelId === 'settingsAdvancedFormatsPanel') {
+      if (
+        panelId === 'settingsGeneralPanel' ||
+        panelId === 'settingsAdvancedFormatsPanel' ||
+        panelId === 'settingsDebugPanel'
+      ) {
         setSettingsPanel(panelId);
       }
     });
     tab.addEventListener('keydown', (event) => {
       handleTabKeyboardNavigation(event, settingsTabButtons, (nextTab) => {
         const panelId = nextTab.dataset.settingsPanel;
-        if (panelId === 'settingsGeneralPanel' || panelId === 'settingsAdvancedFormatsPanel') {
+        if (
+          panelId === 'settingsGeneralPanel' ||
+          panelId === 'settingsAdvancedFormatsPanel' ||
+          panelId === 'settingsDebugPanel'
+        ) {
           setSettingsPanel(panelId);
         }
       });
@@ -2545,21 +2604,9 @@ const setupEventListeners = () => {
     void refreshGpuPanel(true);
   });
 
-  elements.showAllGpuCodecsCheck.addEventListener('change', () => {
-    showAllGpuCodecs = elements.showAllGpuCodecsCheck.checked;
-    void refreshGpuPanel(false);
-  });
-
-  elements.toggleGpuDetailsBtn.addEventListener('click', () => {
-    showGpuDetails = !showGpuDetails;
-    applyGpuDetailsUi();
-    void refreshGpuPanel(false);
-  });
-
   const persistGpuMode = async (nextMode: GPUMode): Promise<void> => {
     try {
       settings.gpuMode = nextMode;
-      showGpuDetails = nextMode === 'manual';
       settings.gpu = settings.gpuManualVendor;
       applyGpuModeUi();
       await window.electronAPI.saveSettings({
@@ -2662,6 +2709,26 @@ const setupEventListeners = () => {
     void refreshGpuPanel(true);
   });
 
+  elements.useCpuDecodingWhenGpuCheck.addEventListener('change', async () => {
+    settings.useCpuDecodingWhenGpu = elements.useCpuDecodingWhenGpuCheck.checked;
+    await window.electronAPI.saveSettings({
+      useCpuDecodingWhenGpu: settings.useCpuDecodingWhenGpu,
+    });
+  });
+
+  elements.moveOriginalToTrashOnSuccessCheck.addEventListener('change', async () => {
+    settings.moveOriginalToTrashOnSuccess = elements.moveOriginalToTrashOnSuccessCheck.checked;
+    await window.electronAPI.saveSettings({
+      moveOriginalToTrashOnSuccess: settings.moveOriginalToTrashOnSuccess,
+    });
+  });
+
+  elements.showAllGpuVendorsCheck.addEventListener('change', async () => {
+    settings.showAllGpuVendors = elements.showAllGpuVendorsCheck.checked;
+    await window.electronAPI.saveSettings({ showAllGpuVendors: settings.showAllGpuVendors });
+    void refreshGpuPanel(false);
+  });
+
   elements.convertBtn.addEventListener('click', () => {
     if (isConverting) {
       showModal({
@@ -2755,8 +2822,16 @@ const setupEventListeners = () => {
     if (dir) {
       settings.outputDirectory = dir;
       elements.outputPath.textContent = dir;
+      elements.outputDirResetBtn.hidden = false;
       await window.electronAPI.saveSettings({ outputDirectory: dir });
     }
+  });
+
+  elements.outputDirResetBtn.addEventListener('click', async () => {
+    settings.outputDirectory = '';
+    elements.outputPath.textContent = 'Same as input file';
+    elements.outputDirResetBtn.hidden = true;
+    await window.electronAPI.saveSettings({ outputDirectory: '' });
   });
 
   elements.resetSettingsBtn.addEventListener('click', () => {
