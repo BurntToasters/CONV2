@@ -145,6 +145,8 @@ interface AppSettings {
   showDebugOutput: boolean;
   autoCheckUpdates: boolean;
   useSystemFFmpeg: boolean;
+  useCpuDecodingWhenGpu: boolean;
+  moveOriginalToTrashOnSuccess: boolean;
   updateChannel: 'auto' | 'stable' | 'beta';
   showAdvancedPresets: boolean;
   removeSpacesFromFilenames: boolean;
@@ -442,6 +444,12 @@ const elements = {
   advancedPresetsCheck: document.getElementById('advancedPresetsCheck') as HTMLInputElement,
   removeSpacesCheck: document.getElementById('removeSpacesCheck') as HTMLInputElement,
   useSystemFFmpegCheck: document.getElementById('useSystemFFmpegCheck') as HTMLInputElement,
+  useCpuDecodingWhenGpuCheck: document.getElementById(
+    'useCpuDecodingWhenGpuCheck'
+  ) as HTMLInputElement,
+  moveOriginalToTrashOnSuccessCheck: document.getElementById(
+    'moveOriginalToTrashOnSuccessCheck'
+  ) as HTMLInputElement,
   showLogsBtn: document.getElementById('showLogsBtn') as HTMLButtonElement,
   logsModal: document.getElementById('logsModal') as HTMLDivElement,
   closeLogs: document.getElementById('closeLogs') as HTMLButtonElement,
@@ -2182,6 +2190,8 @@ const loadSettings = async () => {
   elements.removeSpacesCheck.checked = settings.removeSpacesFromFilenames;
   elements.autoCheckUpdatesCheck.checked = settings.autoCheckUpdates;
   elements.useSystemFFmpegCheck.checked = settings.useSystemFFmpeg;
+  elements.useCpuDecodingWhenGpuCheck.checked = settings.useCpuDecodingWhenGpu;
+  elements.moveOriginalToTrashOnSuccessCheck.checked = settings.moveOriginalToTrashOnSuccess;
   elements.updateChannelSelect.value = settings.updateChannel;
   setSettingsPanel('settingsGeneralPanel');
   setFormatPanel('formatPanelGif');
@@ -2660,6 +2670,20 @@ const setupEventListeners = () => {
     clearGpuCapabilitiesCache();
     await checkFFmpeg();
     void refreshGpuPanel(true);
+  });
+
+  elements.useCpuDecodingWhenGpuCheck.addEventListener('change', async () => {
+    settings.useCpuDecodingWhenGpu = elements.useCpuDecodingWhenGpuCheck.checked;
+    await window.electronAPI.saveSettings({
+      useCpuDecodingWhenGpu: settings.useCpuDecodingWhenGpu,
+    });
+  });
+
+  elements.moveOriginalToTrashOnSuccessCheck.addEventListener('change', async () => {
+    settings.moveOriginalToTrashOnSuccess = elements.moveOriginalToTrashOnSuccessCheck.checked;
+    await window.electronAPI.saveSettings({
+      moveOriginalToTrashOnSuccess: settings.moveOriginalToTrashOnSuccess,
+    });
   });
 
   elements.convertBtn.addEventListener('click', () => {

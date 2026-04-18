@@ -84,6 +84,8 @@ interface AppSettings {
   showDebugOutput: boolean;
   autoCheckUpdates: boolean;
   useSystemFFmpeg: boolean;
+  useCpuDecodingWhenGpu: boolean;
+  moveOriginalToTrashOnSuccess: boolean;
   updateChannel: 'auto' | 'stable' | 'beta';
   showAdvancedPresets: boolean;
   removeSpacesFromFilenames: boolean;
@@ -106,6 +108,8 @@ const createDefaultSettings = (): AppSettings => ({
   showDebugOutput: false,
   autoCheckUpdates: true,
   useSystemFFmpeg: false,
+  useCpuDecodingWhenGpu: false,
+  moveOriginalToTrashOnSuccess: false,
   updateChannel: 'auto',
   showAdvancedPresets: false,
   removeSpacesFromFilenames: false,
@@ -161,6 +165,8 @@ const normalizeSettings = (value: unknown): AppSettings => {
     showDebugOutput: incoming.showDebugOutput === true,
     autoCheckUpdates: incoming.autoCheckUpdates !== false,
     useSystemFFmpeg: incoming.useSystemFFmpeg === true,
+    useCpuDecodingWhenGpu: incoming.useCpuDecodingWhenGpu === true,
+    moveOriginalToTrashOnSuccess: incoming.moveOriginalToTrashOnSuccess === true,
     updateChannel: normalizeUpdateChannel(incoming.updateChannel ?? defaults.updateChannel),
     showAdvancedPresets: incoming.showAdvancedPresets === true,
     removeSpacesFromFilenames: incoming.removeSpacesFromFilenames === true,
@@ -688,6 +694,7 @@ ipcMain.handle(
         {
           removeSpacesFromOutputName:
             options?.removeSpacesFromFilenames ?? settings.removeSpacesFromFilenames,
+          useCpuDecodingWhenGpu: settings.useCpuDecodingWhenGpu,
           advancedFormatSettings: settings.advancedFormatSettings,
         }
       );
@@ -709,6 +716,26 @@ ipcMain.handle(
         result.retryWithCpuSuggested = gpuError.canRetryWithCPU;
         if (!suppressGpuErrorEvent) {
           mainWindow?.webContents.send('gpu-encoder-error', gpuError);
+        }
+      }
+    }
+
+    if (result.success && settings.moveOriginalToTrashOnSuccess) {
+      try {
+        await shell.trashItem(resolvedInputPath);
+        if (showDebugOutput) {
+          mainWindow?.webContents.send(
+            'conversion-log',
+            `Moved original file to trash: ${resolvedInputPath}\n`
+          );
+        }
+      } catch (trashError) {
+        if (showDebugOutput) {
+          const errorMessage = trashError instanceof Error ? trashError.message : String(trashError);
+          mainWindow?.webContents.send(
+            'conversion-log',
+            `Failed to move original file to trash: ${errorMessage}\n`
+          );
         }
       }
     }

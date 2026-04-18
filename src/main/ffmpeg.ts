@@ -104,6 +104,7 @@ export interface ConversionResult {
 
 export interface ConvertVideoOptions {
   removeSpacesFromOutputName?: boolean;
+  useCpuDecodingWhenGpu?: boolean;
   advancedFormatSettings?: AdvancedFormatSettings;
 }
 
@@ -794,7 +795,9 @@ export const convertVideo = async (
         ? { advancedFormatSettings: options.advancedFormatSettings }
         : undefined
     ) !== null;
-  const decodeArgs = isVideoPreset ? await getHardwareDecodeArgs(gpu, inputCodec) : [];
+  const shouldUseHardwareDecode =
+    isVideoPreset && !(options.useCpuDecodingWhenGpu === true && gpu !== 'cpu');
+  const decodeArgs = shouldUseHardwareDecode ? await getHardwareDecodeArgs(gpu, inputCodec) : [];
   const presetContext = options.advancedFormatSettings
     ? { advancedFormatSettings: options.advancedFormatSettings }
     : undefined;

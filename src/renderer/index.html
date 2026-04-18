@@ -418,6 +418,20 @@
             </div>
 
             <div class="settings-row">
+              <span class="settings-label" id="useCpuDecodingWhenGpuLabel"
+                >CPU Decoding with GPU Encode</span
+              >
+              <label class="toggle-switch">
+                <input
+                  type="checkbox"
+                  id="useCpuDecodingWhenGpuCheck"
+                  aria-labelledby="useCpuDecodingWhenGpuLabel"
+                />
+                <span class="toggle-slider"></span>
+              </label>
+            </div>
+
+            <div class="settings-row">
               <span class="settings-label" id="debugOutputLabel">Debug Logs</span>
               <label class="toggle-switch">
                 <input type="checkbox" id="debugOutputCheck" aria-labelledby="debugOutputLabel" />
@@ -443,6 +457,20 @@
               >
               <label class="toggle-switch">
                 <input type="checkbox" id="removeSpacesCheck" aria-labelledby="removeSpacesLabel" />
+                <span class="toggle-slider"></span>
+              </label>
+            </div>
+
+            <div class="settings-row settings-row-last-in-group">
+              <span class="settings-label" id="moveOriginalToTrashOnSuccessLabel"
+                >Trash Original on Success</span
+              >
+              <label class="toggle-switch">
+                <input
+                  type="checkbox"
+                  id="moveOriginalToTrashOnSuccessCheck"
+                  aria-labelledby="moveOriginalToTrashOnSuccessLabel"
+                />
                 <span class="toggle-slider"></span>
               </label>
             </div>
