@@ -62,6 +62,13 @@
   border-bottom: 1px solid var(--border-subtle);
 }
 
+.settings-hint {
+  font-size: 11px;
+  color: var(--text-secondary);
+  margin-top: 2px;
+  line-height: 1.35;
+}
+
 .settings-row-last-in-group {
   border-bottom-color: var(--border);
   margin-bottom: 2px;

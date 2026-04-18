@@ -128,6 +128,111 @@ test('recommendation selects first available vendor by platform priority', () =>
   assert.equal(nonVideoPick.vendor, 'cpu');
 });
 
+// --- GPU vendor filtering tests (mirrors renderer getAvailableVendors logic) ---
+
+const GPU_VENDORS = ['nvidia', 'amd', 'intel', 'apple', 'cpu'];
+const GPU_CODECS = ['h264', 'h265', 'av1'];
+
+const getAvailableVendors = (payload) => {
+  return GPU_VENDORS.filter((vendor) => {
+    if (vendor === 'cpu') return true;
+    return GPU_CODECS.some((codec) => payload.matrix[codec]?.[vendor]?.available === true);
+  });
+};
+
+test('getAvailableVendors returns all vendors when all are available', () => {
+  const payload = {
+    matrix: {
+      h264: {
+        nvidia: { available: true },
+        amd: { available: true },
+        intel: { available: true },
+        apple: { available: true },
+        cpu: { available: true },
+      },
+    },
+  };
+  assert.deepEqual(getAvailableVendors(payload), ['nvidia', 'amd', 'intel', 'apple', 'cpu']);
+});
+
+test('getAvailableVendors filters to nvidia + cpu on typical Windows NVIDIA-only system', () => {
+  const payload = {
+    matrix: {
+      h264: {
+        nvidia: { available: true },
+        amd: { available: false },
+        intel: { available: false },
+        apple: { available: false },
+        cpu: { available: true },
+      },
+      h265: {
+        nvidia: { available: true },
+        amd: { available: false },
+        intel: { available: false },
+        apple: { available: false },
+        cpu: { available: true },
+      },
+      av1: {
+        nvidia: { available: true },
+        amd: { available: false },
+        intel: { available: false },
+        apple: { available: false },
+        cpu: { available: true },
+      },
+    },
+  };
+  assert.deepEqual(getAvailableVendors(payload), ['nvidia', 'cpu']);
+});
+
+test('getAvailableVendors includes vendor if available for any codec', () => {
+  const payload = {
+    matrix: {
+      h264: {
+        nvidia: { available: true },
+        amd: { available: false },
+        intel: { available: true },
+        apple: { available: false },
+        cpu: { available: true },
+      },
+      h265: {
+        nvidia: { available: true },
+        amd: { available: false },
+        intel: { available: false },
+        apple: { available: false },
+        cpu: { available: true },
+      },
+      av1: {
+        nvidia: { available: false },
+        amd: { available: true },
+        intel: { available: false },
+        apple: { available: false },
+        cpu: { available: true },
+      },
+    },
+  };
+  assert.deepEqual(getAvailableVendors(payload), ['nvidia', 'amd', 'intel', 'cpu']);
+});
+
+test('getAvailableVendors returns only cpu when no hardware encoders available', () => {
+  const payload = {
+    matrix: {
+      h264: {
+        nvidia: { available: false },
+        amd: { available: false },
+        intel: { available: false },
+        apple: { available: false },
+        cpu: { available: true },
+      },
+    },
+  };
+  assert.deepEqual(getAvailableVendors(payload), ['cpu']);
+});
+
+test('getAvailableVendors handles empty matrix gracefully', () => {
+  const payload = { matrix: {} };
+  assert.deepEqual(getAvailableVendors(payload), ['cpu']);
+});
+
 test('renderer preset projection includes extension and aviTier with stable ids', () => {
   const projected = mapPresetsForRenderer(presets);
 

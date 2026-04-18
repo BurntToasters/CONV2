@@ -41,6 +41,7 @@ export interface AppSettings {
   updateChannel: 'auto' | 'stable' | 'beta';
   showAdvancedPresets: boolean;
   removeSpacesFromFilenames: boolean;
+  showAllGpuVendors: boolean;
   recentPresetIds: string[];
   uiPanels: UIPanelSettings;
   advancedFormatSettings: AdvancedFormatSettings;

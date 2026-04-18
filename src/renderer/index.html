@@ -134,7 +134,6 @@
               <span class="panel-toggle-title-group">
                 <span id="gpuPanelTitle" class="panel-label">Hardware Acceleration</span>
               </span>
-              <span class="panel-summary" id="gpuPanelSummary"></span>
               <span class="panel-chevron" aria-hidden="true"></span>
             </button>
             <div class="panel-body" id="gpuPanelBody" hidden>
@@ -170,17 +169,6 @@
                 </select>
               </div>
 
-              <div class="gpu-matrix-controls">
-                <button class="btn btn-secondary btn-xs" id="toggleGpuDetailsBtn" type="button">
-                  Show details
-                </button>
-                <label class="show-all-codecs" id="showAllCodecsLabel">
-                  <input type="checkbox" id="showAllGpuCodecsCheck" />
-                  <span>Show all codecs</span>
-                </label>
-              </div>
-
-              <div class="gpu-effective-summary" id="gpuEffectiveSummary"></div>
               <div class="gpu-capability-matrix" id="gpuCapabilityMatrix"></div>
             </div>
           </section>
@@ -351,6 +339,17 @@
             >
               Advanced Formats
             </button>
+            <button
+              class="settings-tab"
+              id="settingsDebugTab"
+              data-settings-panel="settingsDebugPanel"
+              role="tab"
+              aria-selected="false"
+              aria-controls="settingsDebugPanel"
+              tabindex="-1"
+            >
+              Debug
+            </button>
           </div>
 
           <div
@@ -401,20 +400,11 @@
               <span class="settings-label">Output</span>
               <div class="settings-inline">
                 <span class="output-path" id="outputPath">Same as input file</span>
+                <button class="btn btn-secondary btn-xs" id="outputDirResetBtn" hidden>
+                  Reset
+                </button>
                 <button class="btn btn-secondary btn-xs" id="outputDirBtn">Change</button>
               </div>
-            </div>
-
-            <div class="settings-row">
-              <span class="settings-label" id="useSystemFFmpegLabel">System FFmpeg</span>
-              <label class="toggle-switch">
-                <input
-                  type="checkbox"
-                  id="useSystemFFmpegCheck"
-                  aria-labelledby="useSystemFFmpegLabel"
-                />
-                <span class="toggle-slider"></span>
-              </label>
             </div>
 
             <div class="settings-row">
@@ -427,14 +417,6 @@
                   id="useCpuDecodingWhenGpuCheck"
                   aria-labelledby="useCpuDecodingWhenGpuLabel"
                 />
-                <span class="toggle-slider"></span>
-              </label>
-            </div>
-
-            <div class="settings-row">
-              <span class="settings-label" id="debugOutputLabel">Debug Logs</span>
-              <label class="toggle-switch">
-                <input type="checkbox" id="debugOutputCheck" aria-labelledby="debugOutputLabel" />
                 <span class="toggle-slider"></span>
               </label>
             </div>
@@ -1530,6 +1512,52 @@
                   </div>
                 </div>
               </div>
+            </div>
+          </div>
+
+          <div
+            class="settings-panel"
+            id="settingsDebugPanel"
+            role="tabpanel"
+            aria-labelledby="settingsDebugTab"
+            hidden
+          >
+            <div class="settings-row">
+              <span class="settings-label" id="useSystemFFmpegLabel">System FFmpeg</span>
+              <label class="toggle-switch">
+                <input
+                  type="checkbox"
+                  id="useSystemFFmpegCheck"
+                  aria-labelledby="useSystemFFmpegLabel"
+                />
+                <span class="toggle-slider"></span>
+              </label>
+            </div>
+
+            <div class="settings-row">
+              <span class="settings-label" id="debugOutputLabel">Debug Logs</span>
+              <label class="toggle-switch">
+                <input type="checkbox" id="debugOutputCheck" aria-labelledby="debugOutputLabel" />
+                <span class="toggle-slider"></span>
+              </label>
+            </div>
+
+            <div class="settings-row">
+              <div>
+                <span class="settings-label" id="showAllGpuVendorsLabel">Show All GPU Vendors</span>
+                <div class="settings-hint">
+                  Shows all GPU vendors in the capability matrix and manual dropdown, including
+                  those unavailable on this system.
+                </div>
+              </div>
+              <label class="toggle-switch">
+                <input
+                  type="checkbox"
+                  id="showAllGpuVendorsCheck"
+                  aria-labelledby="showAllGpuVendorsLabel"
+                />
+                <span class="toggle-slider"></span>
+              </label>
             </div>
           </div>
         </div>

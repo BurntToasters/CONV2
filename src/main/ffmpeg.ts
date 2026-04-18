@@ -153,10 +153,12 @@ export const checkFFmpegInstalled = async (): Promise<boolean> => {
 
 let encoderCache: Set<string> | null = null;
 let decoderCache: Set<string> | null = null;
+const hwEncoderProbeCache = new Map<string, boolean>();
 
 export const clearFFmpegCaches = (): void => {
   encoderCache = null;
   decoderCache = null;
+  hwEncoderProbeCache.clear();
 };
 
 export const getAvailableEncoders = async (): Promise<Set<string>> => {
@@ -194,6 +196,57 @@ export const getAvailableEncoders = async (): Promise<Set<string>> => {
 export const checkEncoderAvailable = async (encoder: string): Promise<boolean> => {
   const encoders = await getAvailableEncoders();
   return encoders.has(encoder);
+};
+
+const HW_PROBE_TIMEOUT_MS = 8000;
+
+const probeHwEncoderAvailable = async (encoder: string): Promise<boolean> => {
+  const cached = hwEncoderProbeCache.get(encoder);
+  if (cached !== undefined) return cached;
+
+  const listed = await checkEncoderAvailable(encoder);
+  if (!listed) {
+    hwEncoderProbeCache.set(encoder, false);
+    return false;
+  }
+
+  return new Promise((resolve) => {
+    const args = [
+      '-hide_banner',
+      '-loglevel',
+      'error',
+      '-f',
+      'lavfi',
+      '-i',
+      'color=black:s=256x256:d=0.04:r=25,format=yuv420p',
+      '-frames:v',
+      '1',
+      '-c:v',
+      encoder,
+      '-f',
+      'null',
+      process.platform === 'win32' ? 'NUL' : '/dev/null',
+    ];
+    const proc = spawn(getFFmpegPath(), args);
+    const timer = setTimeout(() => {
+      proc.kill();
+      hwEncoderProbeCache.set(encoder, false);
+      resolve(false);
+    }, HW_PROBE_TIMEOUT_MS);
+
+    proc.on('close', (code) => {
+      clearTimeout(timer);
+      const available = code === 0;
+      hwEncoderProbeCache.set(encoder, available);
+      resolve(available);
+    });
+
+    proc.on('error', () => {
+      clearTimeout(timer);
+      hwEncoderProbeCache.set(encoder, false);
+      resolve(false);
+    });
+  });
 };
 
 export const getAvailableDecoders = async (): Promise<Set<string>> => {
@@ -258,7 +311,7 @@ export const checkGPUEncoderSupport = async (
     };
   }
 
-  const available = await checkEncoderAvailable(encoder);
+  const available = await probeHwEncoderAvailable(encoder);
   if (!available) {
     return {
       available: false,
@@ -266,7 +319,7 @@ export const checkGPUEncoderSupport = async (
       error: {
         type: 'encoder_unavailable',
         message: `${GPU_NAMES[gpu]} ${CODEC_NAMES[codec]} encoder not available`,
-        details: `The encoder "${encoder}" was not found in your FFmpeg installation. This could mean:\n• Your GPU drivers don't support this codec\n• FFmpeg wasn't compiled with ${GPU_NAMES[gpu]} support\n• The required libraries are missing`,
+        details: `The encoder "${encoder}" could not initialise on this system. This could mean:\n• No compatible ${GPU_NAMES[gpu]} hardware was detected\n• Your GPU drivers don't support this codec\n• FFmpeg wasn't compiled with ${GPU_NAMES[gpu]} support\n• The required libraries are missing`,
         suggestion:
           gpu === 'nvidia' && codec === 'av1'
             ? 'AV1 encoding requires an RTX 40-series GPU or newer. Try H.264 or H.265 instead, or use CPU encoding.'

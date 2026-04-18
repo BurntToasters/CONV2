@@ -89,6 +89,7 @@ interface AppSettings {
   updateChannel: 'auto' | 'stable' | 'beta';
   showAdvancedPresets: boolean;
   removeSpacesFromFilenames: boolean;
+  showAllGpuVendors: boolean;
   recentPresetIds: string[];
   uiPanels: UIPanelSettings;
   advancedFormatSettings: AdvancedFormatSettings;
@@ -113,6 +114,7 @@ const createDefaultSettings = (): AppSettings => ({
   updateChannel: 'auto',
   showAdvancedPresets: false,
   removeSpacesFromFilenames: false,
+  showAllGpuVendors: false,
   recentPresetIds: [],
   uiPanels: normalizeUiPanels(undefined),
   advancedFormatSettings: createDefaultAdvancedFormatSettings(),
@@ -170,6 +172,7 @@ const normalizeSettings = (value: unknown): AppSettings => {
     updateChannel: normalizeUpdateChannel(incoming.updateChannel ?? defaults.updateChannel),
     showAdvancedPresets: incoming.showAdvancedPresets === true,
     removeSpacesFromFilenames: incoming.removeSpacesFromFilenames === true,
+    showAllGpuVendors: incoming.showAllGpuVendors === true,
     recentPresetIds: normalizeRecentPresetIds(incoming.recentPresetIds),
     uiPanels: normalizeUiPanels(incoming.uiPanels),
     advancedFormatSettings: normalizeAdvancedFormatSettings(incoming.advancedFormatSettings),
@@ -446,8 +449,8 @@ const createWindow = (): void => {
   trustedRendererUrl = normalizeFileUrl(pathToFileURL(rendererEntryPath).toString());
 
   mainWindow = new BrowserWindow({
-    width: 1100,
-    height: 925,
+    width: 1080,
+    height: 880,
     minWidth: 600,
     minHeight: 500,
     webPreferences: {
@@ -731,7 +734,8 @@ ipcMain.handle(
         }
       } catch (trashError) {
         if (showDebugOutput) {
-          const errorMessage = trashError instanceof Error ? trashError.message : String(trashError);
+          const errorMessage =
+            trashError instanceof Error ? trashError.message : String(trashError);
           mainWindow?.webContents.send(
             'conversion-log',
             `Failed to move original file to trash: ${errorMessage}\n`
