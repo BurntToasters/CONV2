@@ -104,6 +104,21 @@ export interface GPUCapabilitiesPayload {
   recommendationReason: string;
 }
 
+export interface UpdateStatePayload {
+  phase:
+    | 'checking'
+    | 'available'
+    | 'not-available'
+    | 'downloading'
+    | 'downloaded'
+    | 'error'
+    | 'disabled'
+    | 'already-checking';
+  manual: boolean;
+  message?: string;
+  percent?: number;
+}
+
 const subscribe = <T>(channel: string, callback: (payload: T) => void): (() => void) => {
   const listener = (_event: IpcRendererEvent, payload: T) => callback(payload);
   ipcRenderer.on(channel, listener);
@@ -157,6 +172,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   isUpdatesDisabled: (): Promise<boolean> => ipcRenderer.invoke('is-updates-disabled'),
   onUpdateStatus: (callback: (message: string) => void): (() => void) =>
     subscribe('update-status', callback),
+  onUpdateState: (callback: (payload: UpdateStatePayload) => void): (() => void) =>
+    subscribe('update-state', callback),
   onUpdateProgress: (callback: (percent: number) => void): (() => void) =>
     subscribe('update-download-progress', callback),
   onUpdateAvailable: (callback: (available: boolean) => void): (() => void) =>
@@ -212,6 +229,7 @@ declare global {
       checkForUpdates: () => Promise<void>;
       isUpdatesDisabled: () => Promise<boolean>;
       onUpdateStatus: (callback: (message: string) => void) => () => void;
+      onUpdateState: (callback: (payload: UpdateStatePayload) => void) => () => void;
       onUpdateProgress: (callback: (percent: number) => void) => () => void;
       onUpdateAvailable: (callback: (available: boolean) => void) => () => void;
       checkFFmpeg: () => Promise<boolean>;

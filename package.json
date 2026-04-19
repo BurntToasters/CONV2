@@ -79,7 +79,7 @@
     "release:beta:mac": "node build-scripts/release-beta.js release:mac",
     "release:beta:linux": "node build-scripts/release-beta.js release:linux",
     "sign:gpg": "dotenv -- node build-scripts/gpg-sign.js",
-    "licenses": "npx npm-license-crawler --production --json licenses.json",
+    "licenses": "npm exec -- npm-license-crawler --production --json licenses.json",
     "format": "prettier --write \"src/**/*.{ts,js,html,css}\" \"build/**/*.js\" \"tests/**/*.js\" \"*.{json,md,yml,yaml}\"",
     "format:check": "prettier --check \"src/**/*.{ts,js,html,css}\" \"build/**/*.js\" \"tests/**/*.js\" \"*.{json,md,yml,yaml}\"",
     "test": "npm run tests:node",
@@ -95,6 +95,7 @@
     "npm": "11.x"
   },
   "devDependencies": {
+    "@xmldom/xmldom": "^0.8.11",
     "@electron/notarize": "^3.0.0",
     "@types/node": "^25.3.0",
     "cross-env": "^7.0.3",
@@ -103,6 +104,7 @@
     "electron": "^41.0.2",
     "electron-builder": "^26.8.1",
     "js-yaml": "^4.1.1",
+    "npm-license-crawler": "^0.2.1",
     "prettier": "^3.8.1",
     "typescript": "^6.0.2"
   },

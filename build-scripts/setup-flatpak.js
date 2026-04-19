@@ -104,9 +104,7 @@ function installSystemPackages(distro) {
 
 function setupFlathub() {
   console.log('\nConfiguring Flathub repository...\n');
-  run('flatpak remote-add --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo', {
-    allowFail: true,
-  });
+  run('flatpak remote-add --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo');
 }
 
 function installFlatpakRuntimes() {
@@ -117,16 +115,12 @@ function installFlatpakRuntimes() {
 
     for (const runtime of FLATPAK_RUNTIMES) {
       console.log(`Installing ${runtime}//${RUNTIME_VERSION} (${arch})...`);
-      run(`flatpak install -y --arch=${arch} flathub ${runtime}//${RUNTIME_VERSION}`, {
-        allowFail: true,
-      });
+      run(`flatpak install -y --arch=${arch} flathub ${runtime}//${RUNTIME_VERSION}`);
     }
 
     for (const ext of SDK_EXTENSIONS) {
       console.log(`Installing ${ext}//${RUNTIME_VERSION} (${arch})...`);
-      run(`flatpak install -y --arch=${arch} flathub ${ext}//${RUNTIME_VERSION}`, {
-        allowFail: true,
-      });
+      run(`flatpak install -y --arch=${arch} flathub ${ext}//${RUNTIME_VERSION}`);
     }
   }
 }
@@ -141,6 +135,14 @@ function verifyInstallation() {
   console.log(`flatpak: ${flatpakVersion || 'NOT FOUND'}`);
   console.log(`flatpak-builder: ${builderVersion || 'NOT FOUND'}`);
   console.log(`qemu-user-static: ${qemuCheck ? 'installed' : 'NOT FOUND'}`);
+  if (!flatpakVersion || !builderVersion) {
+    console.error('\nFlatpak tooling verification failed.');
+    process.exit(1);
+  }
+  if (!qemuCheck) {
+    console.error('\nqemu-user-static is required for cross-architecture builds.');
+    process.exit(1);
+  }
 
   const hostArch = os.arch() === 'x64' ? 'x86_64' : 'aarch64';
   const crossArch = hostArch === 'x86_64' ? 'aarch64' : 'x86_64';
@@ -149,9 +151,35 @@ function verifyInstallation() {
   console.log(`Cross-build architecture: ${crossArch}`);
 
   console.log('\nInstalled Flatpak runtimes:\n');
-  run('flatpak list --runtime --columns=application,arch,branch', {
-    allowFail: true,
-  });
+  run('flatpak list --runtime --columns=application,arch,branch');
+
+  const installedOutput = runSilent('flatpak list --runtime --columns=application,arch,branch');
+  const installed = new Set(
+    installedOutput
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0)
+      .map((line) => line.split(/\s+/))
+      .filter((parts) => parts.length >= 3)
+      .map((parts) => `${parts[0]}|${parts[1]}|${parts[2]}`)
+  );
+  const requiredIds = [...FLATPAK_RUNTIMES, ...SDK_EXTENSIONS];
+  const missing = [];
+  for (const arch of ARCHS) {
+    for (const id of requiredIds) {
+      const key = `${id}|${arch}|${RUNTIME_VERSION}`;
+      if (!installed.has(key)) {
+        missing.push(`${id}//${RUNTIME_VERSION} (${arch})`);
+      }
+    }
+  }
+  if (missing.length > 0) {
+    console.error('\nMissing Flatpak runtimes/extensions after setup:');
+    for (const entry of missing) {
+      console.error(`- ${entry}`);
+    }
+    process.exit(1);
+  }
 }
 
 function main() {

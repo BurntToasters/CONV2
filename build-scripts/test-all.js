@@ -2,6 +2,7 @@ const { execSync, execFileSync } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 const yaml = require('js-yaml');
+const { DOMParser } = require('@xmldom/xmldom');
 const scriptVersion = '1.0.0';
 const testVersion = require('../package.json').version;
 
@@ -150,6 +151,22 @@ function loadYaml(filePath) {
   return yaml.load(raw);
 }
 
+function parseXmlStrict(xmlRaw) {
+  const parseErrors = [];
+  const parser = new DOMParser({
+    errorHandler: {
+      warning: () => {},
+      error: (message) => parseErrors.push(message),
+      fatalError: (message) => parseErrors.push(message),
+    },
+  });
+  const doc = parser.parseFromString(xmlRaw, 'text/xml');
+  if (parseErrors.length > 0 || doc.getElementsByTagName('parsererror').length > 0) {
+    throw new Error(parseErrors.join('; ') || 'invalid XML');
+  }
+  return doc;
+}
+
 function runConfigChecks() {
   console.log(`${colors.blue}${colors.bold}Running config checks...${colors.reset}`);
 
@@ -170,6 +187,21 @@ function runConfigChecks() {
       Boolean(pkg.build && pkg.build.win && pkg.build.mac && pkg.build.linux),
       'package.json: build must have win/mac/linux sections'
     );
+    const ffmpegCheckScripts = [
+      'ffmpeg:check',
+      'ffmpeg:check:win',
+      'ffmpeg:check:win:x64',
+      'ffmpeg:check:win:arm64',
+      'ffmpeg:check:mac',
+      'ffmpeg:check:linux',
+    ];
+    for (const scriptName of ffmpegCheckScripts) {
+      const scriptValue = pkg.scripts?.[scriptName] || '';
+      assertConfig(
+        scriptValue.includes('build-scripts/check-ffmpeg.js'),
+        `package.json: ${scriptName} must run build-scripts/check-ffmpeg.js`
+      );
+    }
     assertConfig(
       Array.isArray(pkg.build.win?.extraResources),
       'package.json: build.win.extraResources missing for ffmpeg binaries'
@@ -205,6 +237,14 @@ function runConfigChecks() {
         `missing required file: ${relativePath}`
       );
     }
+
+    const metainfoPath = path.join(process.cwd(), 'com.burnttoasters.conv2.metainfo.xml');
+    const metainfoRaw = fs.readFileSync(metainfoPath, 'utf8');
+    const metainfoDoc = parseXmlStrict(metainfoRaw);
+    const releases = metainfoDoc.getElementsByTagName('releases');
+    assertConfig(releases.length === 1, 'metainfo.xml: must contain exactly one <releases> element');
+    const releaseNodes = releases[0].getElementsByTagName('release');
+    assertConfig(releaseNodes.length >= 1, 'metainfo.xml: <releases> must contain a <release>');
   } catch (error) {
     assertConfig(false, `config parsing failed: ${error.message}`);
   }

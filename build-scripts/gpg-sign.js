@@ -316,8 +316,13 @@ function uploadToRelease(uploadUrl, filePath) {
         if (res.statusCode >= 200 && res.statusCode < 300) {
           resolve(JSON.parse(data));
         } else if (res.statusCode === 422) {
-          console.log('   ⚠ ' + fileName + ' already exists, skipping');
-          resolve(null);
+          reject(
+            new Error(
+              'Upload failed 422: asset already exists on release for ' +
+                fileName +
+                '. Remove existing asset before re-uploading.'
+            )
+          );
         } else {
           reject(new Error('Upload failed ' + res.statusCode + ': ' + data));
         }

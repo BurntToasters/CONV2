@@ -71,6 +71,9 @@ if (process.platform === 'darwin') {
 let isConversionActive = false;
 let lastOutputPath = '';
 let trustedRendererUrl: string | null = null;
+const handleNativeThemeUpdated = (): void => {
+  mainWindow?.webContents.send('theme-changed', nativeTheme.shouldUseDarkColors ? 'dark' : 'light');
+};
 
 type GPUMode = 'auto' | 'manual';
 
@@ -528,17 +531,11 @@ const createWindow = (): void => {
   });
 
   initUpdater(mainWindow);
-
-  nativeTheme.on('updated', () => {
-    mainWindow?.webContents.send(
-      'theme-changed',
-      nativeTheme.shouldUseDarkColors ? 'dark' : 'light'
-    );
-  });
 };
 
 app.whenReady().then(() => {
   loadSettings();
+  nativeTheme.on('updated', handleNativeThemeUpdated);
   createWindow();
 
   app.on('activate', () => {
@@ -549,6 +546,7 @@ app.whenReady().then(() => {
 });
 
 app.on('before-quit', async (e) => {
+  nativeTheme.removeListener('updated', handleNativeThemeUpdated);
   if (isConversionActive) {
     e.preventDefault();
     cancelConversion(true);
@@ -655,97 +653,98 @@ ipcMain.handle(
     });
     const effectiveGpu = requestedGpu === 'apple' && codec === 'av1' ? 'cpu' : requestedGpu;
 
-    if (codec !== null && effectiveGpu !== 'cpu') {
-      const encoderCheck = await checkGPUEncoderSupport(effectiveGpu, codec);
-      if (!encoderCheck.available && encoderCheck.error) {
-        if (!suppressGpuErrorEvent) {
-          mainWindow?.webContents.send('gpu-encoder-error', encoderCheck.error);
+    isConversionActive = true;
+    try {
+      if (codec !== null && effectiveGpu !== 'cpu') {
+        const encoderCheck = await checkGPUEncoderSupport(effectiveGpu, codec);
+        if (!encoderCheck.available && encoderCheck.error) {
+          if (!suppressGpuErrorEvent) {
+            mainWindow?.webContents.send('gpu-encoder-error', encoderCheck.error);
+          }
+          const unsupportedEncoderResult: ConversionResult = {
+            success: false,
+            outputPath: '',
+            error: encoderCheck.error.message,
+            retryWithCpuSuggested: encoderCheck.error.canRetryWithCPU,
+          };
+          mainWindow?.webContents.send('conversion-complete', unsupportedEncoderResult);
+          return unsupportedEncoderResult;
         }
-        const unsupportedEncoderResult: ConversionResult = {
+      }
+
+      const requestedOutputDir =
+        resolveExistingDirectoryPath(options?.outputDirectory) ??
+        resolveExistingDirectoryPath(settings.outputDirectory) ??
+        path.dirname(resolvedInputPath);
+      const outputDir = requestedOutputDir;
+      let result: ConversionResult;
+      try {
+        result = await convertVideo(
+          resolvedInputPath,
+          outputDir,
+          preset,
+          effectiveGpu,
+          (progress) => {
+            mainWindow?.webContents.send('conversion-progress', progress);
+          },
+          showDebugOutput
+            ? (message) => {
+                mainWindow?.webContents.send('conversion-log', message);
+              }
+            : undefined,
+          {
+            removeSpacesFromOutputName:
+              options?.removeSpacesFromFilenames ?? settings.removeSpacesFromFilenames,
+            useCpuDecodingWhenGpu: settings.useCpuDecodingWhenGpu,
+            advancedFormatSettings: settings.advancedFormatSettings,
+          }
+        );
+      } catch (err) {
+        result = {
           success: false,
           outputPath: '',
-          error: encoderCheck.error.message,
-          retryWithCpuSuggested: encoderCheck.error.canRetryWithCPU,
+          error: err instanceof Error ? err.message : String(err),
         };
-        mainWindow?.webContents.send('conversion-complete', unsupportedEncoderResult);
-        return unsupportedEncoderResult;
       }
-    }
 
-    const requestedOutputDir =
-      resolveExistingDirectoryPath(options?.outputDirectory) ??
-      resolveExistingDirectoryPath(settings.outputDirectory) ??
-      path.dirname(resolvedInputPath);
-    const outputDir = requestedOutputDir;
-    isConversionActive = true;
+      lastOutputPath = result.outputPath;
 
-    let result: ConversionResult;
-    try {
-      result = await convertVideo(
-        resolvedInputPath,
-        outputDir,
-        preset,
-        effectiveGpu,
-        (progress) => {
-          mainWindow?.webContents.send('conversion-progress', progress);
-        },
-        showDebugOutput
-          ? (message) => {
-              mainWindow?.webContents.send('conversion-log', message);
-            }
-          : undefined,
-        {
-          removeSpacesFromOutputName:
-            options?.removeSpacesFromFilenames ?? settings.removeSpacesFromFilenames,
-          useCpuDecodingWhenGpu: settings.useCpuDecodingWhenGpu,
-          advancedFormatSettings: settings.advancedFormatSettings,
+      if (!result.success && result.error && effectiveGpu !== 'cpu' && codec !== null) {
+        const gpuError = parseGPUError(result.error, effectiveGpu, codec);
+        if (gpuError) {
+          result.retryWithCpuSuggested = gpuError.canRetryWithCPU;
+          if (!suppressGpuErrorEvent) {
+            mainWindow?.webContents.send('gpu-encoder-error', gpuError);
+          }
         }
-      );
-    } catch (err) {
-      result = {
-        success: false,
-        outputPath: '',
-        error: err instanceof Error ? err.message : String(err),
-      };
+      }
+
+      if (result.success && settings.moveOriginalToTrashOnSuccess) {
+        try {
+          await shell.trashItem(resolvedInputPath);
+          if (showDebugOutput) {
+            mainWindow?.webContents.send(
+              'conversion-log',
+              `Moved original file to trash: ${resolvedInputPath}\n`
+            );
+          }
+        } catch (trashError) {
+          if (showDebugOutput) {
+            const errorMessage =
+              trashError instanceof Error ? trashError.message : String(trashError);
+            mainWindow?.webContents.send(
+              'conversion-log',
+              `Failed to move original file to trash: ${errorMessage}\n`
+            );
+          }
+        }
+      }
+
+      mainWindow?.webContents.send('conversion-complete', result);
+      return result;
     } finally {
       isConversionActive = false;
     }
-
-    lastOutputPath = result.outputPath;
-
-    if (!result.success && result.error && effectiveGpu !== 'cpu' && codec !== null) {
-      const gpuError = parseGPUError(result.error, effectiveGpu, codec);
-      if (gpuError) {
-        result.retryWithCpuSuggested = gpuError.canRetryWithCPU;
-        if (!suppressGpuErrorEvent) {
-          mainWindow?.webContents.send('gpu-encoder-error', gpuError);
-        }
-      }
-    }
-
-    if (result.success && settings.moveOriginalToTrashOnSuccess) {
-      try {
-        await shell.trashItem(resolvedInputPath);
-        if (showDebugOutput) {
-          mainWindow?.webContents.send(
-            'conversion-log',
-            `Moved original file to trash: ${resolvedInputPath}\n`
-          );
-        }
-      } catch (trashError) {
-        if (showDebugOutput) {
-          const errorMessage =
-            trashError instanceof Error ? trashError.message : String(trashError);
-          mainWindow?.webContents.send(
-            'conversion-log',
-            `Failed to move original file to trash: ${errorMessage}\n`
-          );
-        }
-      }
-    }
-
-    mainWindow?.webContents.send('conversion-complete', result);
-    return result;
   }
 );
 

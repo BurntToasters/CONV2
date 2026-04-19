@@ -1,15 +1,40 @@
 import { autoUpdater, UpdateInfo } from 'electron-updater';
 import { app, BrowserWindow, dialog } from 'electron';
 import { execFileSync } from 'child_process';
+import * as path from 'path';
 
 type UpdateChannel = 'auto' | 'stable' | 'beta';
+type UpdateCheckMode = 'manual' | 'silent';
+type UpdateStatePhase =
+  | 'checking'
+  | 'available'
+  | 'not-available'
+  | 'downloading'
+  | 'downloaded'
+  | 'error'
+  | 'disabled'
+  | 'already-checking';
+
+interface UpdateStatePayload {
+  phase: UpdateStatePhase;
+  manual: boolean;
+  message?: string;
+  percent?: number;
+}
 
 let mainWindow: BrowserWindow | null = null;
 let updatesDisabled = false;
-let updateAvailable = false;
-let silentCheck = false;
 let updateChannel: UpdateChannel = 'auto';
 let listenersRegistered = false;
+let updateCheckInFlight = false;
+let activeCheckMode: UpdateCheckMode | null = null;
+
+const getWindowsSystemBinaryPath = (binaryName: string): string => {
+  const root = process.env.SystemRoot || process.env.WINDIR || 'C:\\Windows';
+  return path.join(root, 'System32', binaryName);
+};
+
+const WINDOWS_REG_PATH = getWindowsSystemBinaryPath('reg.exe');
 
 const isPrereleaseVersion = (version: string): boolean => {
   return /-(beta|alpha|rc)/i.test(version);
@@ -58,7 +83,7 @@ const checkMsiInstallation = (): boolean => {
 
   for (const key of registryKeys) {
     try {
-      const result = execFileSync('reg', ['query', key], {
+      const result = execFileSync(WINDOWS_REG_PATH, ['query', key], {
         encoding: 'utf8',
         windowsHide: true,
         stdio: ['pipe', 'pipe', 'pipe'],
@@ -95,6 +120,24 @@ const hasRegistryDwordValue = (output: string, names: string[]): boolean => {
   return false;
 };
 
+const isManualCheckActive = (): boolean => {
+  return activeCheckMode === 'manual';
+};
+
+const beginUpdateCheck = (mode: UpdateCheckMode): boolean => {
+  if (updateCheckInFlight) {
+    return false;
+  }
+  activeCheckMode = mode;
+  updateCheckInFlight = true;
+  return true;
+};
+
+const endUpdateCheck = (): void => {
+  activeCheckMode = null;
+  updateCheckInFlight = false;
+};
+
 const getMainWindow = (): BrowserWindow | null => {
   if (!mainWindow || mainWindow.isDestroyed()) {
     return null;
@@ -106,12 +149,24 @@ export const setUpdaterWindow = (window: BrowserWindow | null): void => {
   mainWindow = window;
 };
 
+const sendUpdateStateToWindow = (payload: UpdateStatePayload): void => {
+  const windowRef = getMainWindow();
+  if (windowRef) {
+    windowRef.webContents.send('update-state', payload);
+  }
+};
+
 export const initUpdater = (window: BrowserWindow): void => {
   mainWindow = window;
   updatesDisabled = checkMsiInstallation();
 
   if (updatesDisabled) {
     console.log('Auto-updates disabled: MSI/Enterprise installation detected');
+    sendUpdateStateToWindow({
+      phase: 'disabled',
+      manual: false,
+      message: 'Auto-updates are disabled for this installation.',
+    });
     return;
   }
 
@@ -125,9 +180,15 @@ export const initUpdater = (window: BrowserWindow): void => {
 
   autoUpdater.on('checking-for-update', () => {
     sendStatusToWindow('Checking for updates...');
+    sendUpdateStateToWindow({
+      phase: 'checking',
+      manual: isManualCheckActive(),
+      message: 'Checking for updates...',
+    });
   });
 
   autoUpdater.on('update-available', (info: UpdateInfo) => {
+    const manual = isManualCheckActive();
     if (
       shouldUseBetaChannel() &&
       !isPrereleaseVersion(info.version) &&
@@ -137,17 +198,27 @@ export const initUpdater = (window: BrowserWindow): void => {
       if (windowRef) {
         windowRef.webContents.send('update-available', false);
       }
-      silentCheck = false;
+      sendUpdateStateToWindow({
+        phase: 'not-available',
+        manual,
+        message: 'No newer version is available for this channel.',
+      });
+      endUpdateCheck();
       return;
     }
 
-    updateAvailable = true;
     const windowRef = getMainWindow();
     if (windowRef) {
       windowRef.webContents.send('update-available', true);
     }
+    sendUpdateStateToWindow({
+      phase: 'available',
+      manual,
+      message: `Update available: ${info.version}`,
+    });
+    endUpdateCheck();
 
-    if (!silentCheck && windowRef) {
+    if (manual && windowRef) {
       dialog
         .showMessageBox(windowRef, {
           type: 'info',
@@ -160,19 +231,30 @@ export const initUpdater = (window: BrowserWindow): void => {
           if (result.response === 0) {
             autoUpdater.downloadUpdate();
             sendStatusToWindow('Downloading update...');
+            sendUpdateStateToWindow({
+              phase: 'downloading',
+              manual: true,
+              message: 'Downloading update...',
+            });
           }
         });
     }
-    silentCheck = false;
   });
 
   autoUpdater.on('update-not-available', () => {
+    const manual = isManualCheckActive();
     const windowRef = getMainWindow();
     if (windowRef) {
       windowRef.webContents.send('update-available', false);
     }
+    sendUpdateStateToWindow({
+      phase: 'not-available',
+      manual,
+      message: 'You have the latest version.',
+    });
+    endUpdateCheck();
 
-    if (!silentCheck && windowRef) {
+    if (manual && windowRef) {
       sendStatusToWindow('You have the latest version.');
       dialog.showMessageBox(windowRef, {
         type: 'info',
@@ -181,15 +263,19 @@ export const initUpdater = (window: BrowserWindow): void => {
         buttons: ['OK'],
       });
     }
-    silentCheck = false;
   });
 
   autoUpdater.on('error', (err) => {
-    const wasSilent = silentCheck;
-    silentCheck = false;
+    const manual = isManualCheckActive();
+    endUpdateCheck();
     sendStatusToWindow(`Update error: ${err.message}`);
+    sendUpdateStateToWindow({
+      phase: 'error',
+      manual,
+      message: `Update error: ${err.message}`,
+    });
     const windowRef = getMainWindow();
-    if (!wasSilent && windowRef) {
+    if (manual && windowRef) {
       dialog.showMessageBox(windowRef, {
         type: 'error',
         title: 'Update Error',
@@ -202,6 +288,12 @@ export const initUpdater = (window: BrowserWindow): void => {
   autoUpdater.on('download-progress', (progressObj) => {
     const message = `Download speed: ${formatBytes(progressObj.bytesPerSecond)}/s - ${Math.round(progressObj.percent)}% (${formatBytes(progressObj.transferred)}/${formatBytes(progressObj.total)})`;
     sendStatusToWindow(message);
+    sendUpdateStateToWindow({
+      phase: 'downloading',
+      manual: false,
+      message,
+      percent: progressObj.percent,
+    });
 
     const windowRef = getMainWindow();
     if (windowRef) {
@@ -214,6 +306,11 @@ export const initUpdater = (window: BrowserWindow): void => {
     if (!windowRef) {
       return;
     }
+    sendUpdateStateToWindow({
+      phase: 'downloaded',
+      manual: false,
+      message: `Version ${info.version} downloaded.`,
+    });
     dialog
       .showMessageBox(windowRef, {
         type: 'info',
@@ -234,6 +331,11 @@ export const initUpdater = (window: BrowserWindow): void => {
 
 export const checkForUpdates = (): void => {
   if (updatesDisabled) {
+    sendUpdateStateToWindow({
+      phase: 'disabled',
+      manual: true,
+      message: 'Auto-updates are disabled for this installation.',
+    });
     const windowRef = getMainWindow();
     if (windowRef) {
       dialog.showMessageBox(windowRef, {
@@ -247,10 +349,34 @@ export const checkForUpdates = (): void => {
     return;
   }
 
-  silentCheck = false;
+  if (!beginUpdateCheck('manual')) {
+    sendStatusToWindow('Update check already in progress.');
+    sendUpdateStateToWindow({
+      phase: 'already-checking',
+      manual: true,
+      message: 'Update check already in progress.',
+    });
+    return;
+  }
+
   applyUpdaterChannel();
+  sendUpdateStateToWindow({
+    phase: 'checking',
+    manual: true,
+    message: 'Checking for updates...',
+  });
   void autoUpdater.checkForUpdates().catch((err) => {
+    if (!updateCheckInFlight) {
+      return;
+    }
+    endUpdateCheck();
     console.error('Failed to check for updates:', err);
+    sendStatusToWindow(`Update error: ${err.message}`);
+    sendUpdateStateToWindow({
+      phase: 'error',
+      manual: true,
+      message: `Update error: ${err.message}`,
+    });
   });
 };
 
@@ -263,11 +389,28 @@ export const checkForUpdatesSilent = (): void => {
     return;
   }
 
+  if (!beginUpdateCheck('silent')) {
+    return;
+  }
+
   applyUpdaterChannel();
-  silentCheck = true;
+  sendUpdateStateToWindow({
+    phase: 'checking',
+    manual: false,
+    message: 'Checking for updates...',
+  });
   autoUpdater.checkForUpdates().catch((err) => {
+    if (!updateCheckInFlight) {
+      return;
+    }
+    endUpdateCheck();
     console.error('Silent update check failed:', err);
-    silentCheck = false;
+    sendStatusToWindow(`Update error: ${err.message}`);
+    sendUpdateStateToWindow({
+      phase: 'error',
+      manual: false,
+      message: `Update error: ${err.message}`,
+    });
   });
 };
 

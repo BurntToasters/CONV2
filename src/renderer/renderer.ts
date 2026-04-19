@@ -223,6 +223,21 @@ interface GPUCapabilitiesPayload {
   recommendationReason: string;
 }
 
+interface UpdateStatePayload {
+  phase:
+    | 'checking'
+    | 'available'
+    | 'not-available'
+    | 'downloading'
+    | 'downloaded'
+    | 'error'
+    | 'disabled'
+    | 'already-checking';
+  manual: boolean;
+  message?: string;
+  percent?: number;
+}
+
 interface PresetPickerModelPreset {
   id: string;
   category: string;
@@ -769,8 +784,6 @@ const renderPresetParentList = (buckets: PresetParentBucket[]): void => {
     const button = document.createElement('button');
     button.type = 'button';
     button.className = `preset-parent-btn${bucket.key === activePresetParentKey ? ' is-active' : ''}`;
-    button.setAttribute('role', 'option');
-    button.setAttribute('aria-selected', bucket.key === activePresetParentKey ? 'true' : 'false');
 
     const label = document.createElement('span');
     label.className = 'preset-parent-label';
@@ -839,8 +852,6 @@ const renderPresetPaneGroups = (
       const card = document.createElement('button');
       card.type = 'button';
       card.className = `preset-card${pickerPreset.id === selectedPresetId ? ' is-selected' : ''}`;
-      card.setAttribute('role', 'option');
-      card.setAttribute('aria-selected', pickerPreset.id === selectedPresetId ? 'true' : 'false');
       const nameSpan = document.createElement('span');
       nameSpan.className = 'preset-card-name';
       nameSpan.textContent = pickerPreset.displayName;
@@ -1163,6 +1174,29 @@ const persistUiPanelState = async (panel: UIPanelKey, expanded: boolean): Promis
       'error',
       `Failed to save panel layout: ${err instanceof Error ? err.message : String(err)}`
     );
+  }
+};
+
+const getErrorMessage = (err: unknown): string => {
+  return err instanceof Error ? err.message : String(err);
+};
+
+const persistSettingsChange = async (
+  apply: () => void,
+  rollback: () => void,
+  payload: Record<string, unknown>,
+  failurePrefix: string,
+  onSuccess?: () => Promise<void> | void
+): Promise<void> => {
+  apply();
+  try {
+    await window.electronAPI.saveSettings(payload as Partial<AppSettings>);
+    if (onSuccess) {
+      await onSuccess();
+    }
+  } catch (err) {
+    rollback();
+    showStatus('error', `${failurePrefix}: ${getErrorMessage(err)}`);
   }
 };
 
@@ -2605,6 +2639,8 @@ const setupEventListeners = () => {
   });
 
   const persistGpuMode = async (nextMode: GPUMode): Promise<void> => {
+    const previousMode = settings.gpuMode;
+    const previousGpu = settings.gpu;
     try {
       settings.gpuMode = nextMode;
       settings.gpu = settings.gpuManualVendor;
@@ -2616,10 +2652,10 @@ const setupEventListeners = () => {
       });
       void refreshGpuPanel(false);
     } catch (err) {
-      showStatus(
-        'error',
-        `Failed to save GPU mode: ${err instanceof Error ? err.message : String(err)}`
-      );
+      settings.gpuMode = previousMode;
+      settings.gpu = previousGpu;
+      applyGpuModeUi();
+      showStatus('error', `Failed to save GPU mode: ${getErrorMessage(err)}`);
     }
   };
 
@@ -2636,6 +2672,8 @@ const setupEventListeners = () => {
   });
 
   elements.gpuManualVendorSelect.addEventListener('change', async () => {
+    const previousGpuManualVendor = settings.gpuManualVendor;
+    const previousGpu = settings.gpu;
     try {
       settings.gpuManualVendor = elements.gpuManualVendorSelect.value as GPUVendor;
       settings.gpu = settings.gpuManualVendor;
@@ -2645,88 +2683,214 @@ const setupEventListeners = () => {
       });
       void refreshGpuPanel(false);
     } catch (err) {
-      showStatus(
-        'error',
-        `Failed to save GPU vendor: ${err instanceof Error ? err.message : String(err)}`
-      );
+      settings.gpuManualVendor = previousGpuManualVendor;
+      settings.gpu = previousGpu;
+      elements.gpuManualVendorSelect.value = previousGpuManualVendor;
+      showStatus('error', `Failed to save GPU vendor: ${getErrorMessage(err)}`);
     }
   });
 
   elements.themeSelect.addEventListener('change', async () => {
-    settings.theme = elements.themeSelect.value as AppSettings['theme'];
-    await window.electronAPI.saveSettings({ theme: settings.theme });
-    await applyTheme();
-    updateThemeSwitcher();
+    const nextTheme = elements.themeSelect.value as AppSettings['theme'];
+    const previousTheme = settings.theme;
+    await persistSettingsChange(
+      () => {
+        settings.theme = nextTheme;
+      },
+      () => {
+        settings.theme = previousTheme;
+        elements.themeSelect.value = previousTheme;
+      },
+      { theme: nextTheme },
+      'Failed to save theme',
+      async () => {
+        await applyTheme();
+        updateThemeSwitcher();
+      }
+    );
   });
 
   elements.themeSwitcher?.querySelectorAll('.theme-option').forEach((btn) => {
     btn.addEventListener('click', async () => {
       const theme = (btn as HTMLElement).dataset.theme as AppSettings['theme'];
       if (theme) {
-        settings.theme = theme;
-        elements.themeSelect.value = theme;
-        await window.electronAPI.saveSettings({ theme });
-        await applyTheme();
-        updateThemeSwitcher();
+        const previousTheme = settings.theme;
+        await persistSettingsChange(
+          () => {
+            settings.theme = theme;
+            elements.themeSelect.value = theme;
+          },
+          () => {
+            settings.theme = previousTheme;
+            elements.themeSelect.value = previousTheme;
+          },
+          { theme },
+          'Failed to save theme',
+          async () => {
+            await applyTheme();
+            updateThemeSwitcher();
+          }
+        );
       }
     });
   });
 
   elements.debugOutputCheck.addEventListener('change', async () => {
-    settings.showDebugOutput = elements.debugOutputCheck.checked;
-    await window.electronAPI.saveSettings({ showDebugOutput: settings.showDebugOutput });
-    elements.showLogsBtn.style.display = settings.showDebugOutput ? 'inline-block' : 'none';
+    const nextValue = elements.debugOutputCheck.checked;
+    const previousValue = settings.showDebugOutput;
+    await persistSettingsChange(
+      () => {
+        settings.showDebugOutput = nextValue;
+      },
+      () => {
+        settings.showDebugOutput = previousValue;
+        elements.debugOutputCheck.checked = previousValue;
+      },
+      { showDebugOutput: nextValue },
+      'Failed to save debug output setting',
+      () => {
+        elements.showLogsBtn.style.display = settings.showDebugOutput ? 'inline-block' : 'none';
+      }
+    );
   });
 
   elements.advancedPresetsCheck.addEventListener('change', async () => {
-    settings.showAdvancedPresets = elements.advancedPresetsCheck.checked;
-    await window.electronAPI.saveSettings({ showAdvancedPresets: settings.showAdvancedPresets });
-    await loadPresets();
+    const nextValue = elements.advancedPresetsCheck.checked;
+    const previousValue = settings.showAdvancedPresets;
+    await persistSettingsChange(
+      () => {
+        settings.showAdvancedPresets = nextValue;
+      },
+      () => {
+        settings.showAdvancedPresets = previousValue;
+        elements.advancedPresetsCheck.checked = previousValue;
+      },
+      { showAdvancedPresets: nextValue },
+      'Failed to save advanced presets setting',
+      async () => {
+        await loadPresets();
+      }
+    );
   });
 
   elements.removeSpacesCheck.addEventListener('change', async () => {
-    settings.removeSpacesFromFilenames = elements.removeSpacesCheck.checked;
-    await window.electronAPI.saveSettings({
-      removeSpacesFromFilenames: settings.removeSpacesFromFilenames,
-    });
+    const nextValue = elements.removeSpacesCheck.checked;
+    const previousValue = settings.removeSpacesFromFilenames;
+    await persistSettingsChange(
+      () => {
+        settings.removeSpacesFromFilenames = nextValue;
+      },
+      () => {
+        settings.removeSpacesFromFilenames = previousValue;
+        elements.removeSpacesCheck.checked = previousValue;
+      },
+      { removeSpacesFromFilenames: nextValue },
+      'Failed to save filename spacing setting'
+    );
   });
 
   elements.autoCheckUpdatesCheck.addEventListener('change', async () => {
-    settings.autoCheckUpdates = elements.autoCheckUpdatesCheck.checked;
-    await window.electronAPI.saveSettings({ autoCheckUpdates: settings.autoCheckUpdates });
+    const nextValue = elements.autoCheckUpdatesCheck.checked;
+    const previousValue = settings.autoCheckUpdates;
+    await persistSettingsChange(
+      () => {
+        settings.autoCheckUpdates = nextValue;
+      },
+      () => {
+        settings.autoCheckUpdates = previousValue;
+        elements.autoCheckUpdatesCheck.checked = previousValue;
+      },
+      { autoCheckUpdates: nextValue },
+      'Failed to save auto-update setting'
+    );
   });
 
   elements.updateChannelSelect.addEventListener('change', async () => {
-    settings.updateChannel = elements.updateChannelSelect.value as AppSettings['updateChannel'];
-    await window.electronAPI.saveSettings({ updateChannel: settings.updateChannel });
+    const nextValue = elements.updateChannelSelect.value as AppSettings['updateChannel'];
+    const previousValue = settings.updateChannel;
+    await persistSettingsChange(
+      () => {
+        settings.updateChannel = nextValue;
+      },
+      () => {
+        settings.updateChannel = previousValue;
+        elements.updateChannelSelect.value = previousValue;
+      },
+      { updateChannel: nextValue },
+      'Failed to save update channel'
+    );
   });
 
   elements.useSystemFFmpegCheck.addEventListener('change', async () => {
-    settings.useSystemFFmpeg = elements.useSystemFFmpegCheck.checked;
-    await window.electronAPI.saveSettings({ useSystemFFmpeg: settings.useSystemFFmpeg });
-    clearGpuCapabilitiesCache();
-    await checkFFmpeg();
-    void refreshGpuPanel(true);
+    const nextValue = elements.useSystemFFmpegCheck.checked;
+    const previousValue = settings.useSystemFFmpeg;
+    await persistSettingsChange(
+      () => {
+        settings.useSystemFFmpeg = nextValue;
+      },
+      () => {
+        settings.useSystemFFmpeg = previousValue;
+        elements.useSystemFFmpegCheck.checked = previousValue;
+      },
+      { useSystemFFmpeg: nextValue },
+      'Failed to save FFmpeg source setting',
+      async () => {
+        clearGpuCapabilitiesCache();
+        await checkFFmpeg();
+        void refreshGpuPanel(true);
+      }
+    );
   });
 
   elements.useCpuDecodingWhenGpuCheck.addEventListener('change', async () => {
-    settings.useCpuDecodingWhenGpu = elements.useCpuDecodingWhenGpuCheck.checked;
-    await window.electronAPI.saveSettings({
-      useCpuDecodingWhenGpu: settings.useCpuDecodingWhenGpu,
-    });
+    const nextValue = elements.useCpuDecodingWhenGpuCheck.checked;
+    const previousValue = settings.useCpuDecodingWhenGpu;
+    await persistSettingsChange(
+      () => {
+        settings.useCpuDecodingWhenGpu = nextValue;
+      },
+      () => {
+        settings.useCpuDecodingWhenGpu = previousValue;
+        elements.useCpuDecodingWhenGpuCheck.checked = previousValue;
+      },
+      { useCpuDecodingWhenGpu: nextValue },
+      'Failed to save CPU decoding setting'
+    );
   });
 
   elements.moveOriginalToTrashOnSuccessCheck.addEventListener('change', async () => {
-    settings.moveOriginalToTrashOnSuccess = elements.moveOriginalToTrashOnSuccessCheck.checked;
-    await window.electronAPI.saveSettings({
-      moveOriginalToTrashOnSuccess: settings.moveOriginalToTrashOnSuccess,
-    });
+    const nextValue = elements.moveOriginalToTrashOnSuccessCheck.checked;
+    const previousValue = settings.moveOriginalToTrashOnSuccess;
+    await persistSettingsChange(
+      () => {
+        settings.moveOriginalToTrashOnSuccess = nextValue;
+      },
+      () => {
+        settings.moveOriginalToTrashOnSuccess = previousValue;
+        elements.moveOriginalToTrashOnSuccessCheck.checked = previousValue;
+      },
+      { moveOriginalToTrashOnSuccess: nextValue },
+      'Failed to save trash-on-success setting'
+    );
   });
 
   elements.showAllGpuVendorsCheck.addEventListener('change', async () => {
-    settings.showAllGpuVendors = elements.showAllGpuVendorsCheck.checked;
-    await window.electronAPI.saveSettings({ showAllGpuVendors: settings.showAllGpuVendors });
-    void refreshGpuPanel(false);
+    const nextValue = elements.showAllGpuVendorsCheck.checked;
+    const previousValue = settings.showAllGpuVendors;
+    await persistSettingsChange(
+      () => {
+        settings.showAllGpuVendors = nextValue;
+      },
+      () => {
+        settings.showAllGpuVendors = previousValue;
+        elements.showAllGpuVendorsCheck.checked = previousValue;
+      },
+      { showAllGpuVendors: nextValue },
+      'Failed to save GPU vendor visibility setting',
+      () => {
+        void refreshGpuPanel(false);
+      }
+    );
   });
 
   elements.convertBtn.addEventListener('click', () => {
@@ -2794,13 +2958,19 @@ const setupEventListeners = () => {
 
   elements.copyLogsBtn.addEventListener('click', () => {
     flushLogBuffer();
-    navigator.clipboard.writeText(elements.logsContent.textContent || '');
     const originalHTML = elements.copyLogsBtn.innerHTML;
-    elements.copyLogsBtn.innerHTML =
-      '<svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>Copied!';
-    setTimeout(() => {
-      elements.copyLogsBtn.innerHTML = originalHTML;
-    }, 2000);
+    void navigator.clipboard
+      .writeText(elements.logsContent.textContent || '')
+      .then(() => {
+        elements.copyLogsBtn.innerHTML =
+          '<svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>Copied!';
+        setTimeout(() => {
+          elements.copyLogsBtn.innerHTML = originalHTML;
+        }, 2000);
+      })
+      .catch((err) => {
+        showStatus('error', `Failed to copy logs: ${getErrorMessage(err)}`);
+      });
   });
 
   elements.viewCreditsBtn.addEventListener('click', () => {
@@ -2820,18 +2990,44 @@ const setupEventListeners = () => {
   elements.outputDirBtn.addEventListener('click', async () => {
     const dir = await window.electronAPI.selectOutputDirectory();
     if (dir) {
-      settings.outputDirectory = dir;
-      elements.outputPath.textContent = dir;
-      elements.outputDirResetBtn.hidden = false;
-      await window.electronAPI.saveSettings({ outputDirectory: dir });
+      const previousDirectory = settings.outputDirectory;
+      const previousOutputPathLabel = elements.outputPath.textContent || 'Same as input file';
+      const previousResetHidden = elements.outputDirResetBtn.hidden;
+      await persistSettingsChange(
+        () => {
+          settings.outputDirectory = dir;
+          elements.outputPath.textContent = dir;
+          elements.outputDirResetBtn.hidden = false;
+        },
+        () => {
+          settings.outputDirectory = previousDirectory;
+          elements.outputPath.textContent = previousOutputPathLabel;
+          elements.outputDirResetBtn.hidden = previousResetHidden;
+        },
+        { outputDirectory: dir },
+        'Failed to save output directory'
+      );
     }
   });
 
   elements.outputDirResetBtn.addEventListener('click', async () => {
-    settings.outputDirectory = '';
-    elements.outputPath.textContent = 'Same as input file';
-    elements.outputDirResetBtn.hidden = true;
-    await window.electronAPI.saveSettings({ outputDirectory: '' });
+    const previousDirectory = settings.outputDirectory;
+    const previousOutputPathLabel = elements.outputPath.textContent || 'Same as input file';
+    const previousResetHidden = elements.outputDirResetBtn.hidden;
+    await persistSettingsChange(
+      () => {
+        settings.outputDirectory = '';
+        elements.outputPath.textContent = 'Same as input file';
+        elements.outputDirResetBtn.hidden = true;
+      },
+      () => {
+        settings.outputDirectory = previousDirectory;
+        elements.outputPath.textContent = previousOutputPathLabel;
+        elements.outputDirResetBtn.hidden = previousResetHidden;
+      },
+      { outputDirectory: '' },
+      'Failed to reset output directory'
+    );
   });
 
   elements.resetSettingsBtn.addEventListener('click', () => {
@@ -2855,44 +3051,49 @@ const setupEventListeners = () => {
     window.electronAPI.checkForUpdates();
   });
 
-  window.electronAPI.onUpdateStatus((message) => {
-    const isDownloadStartMessage = message === 'Downloading update...';
-    if (!manualUpdateCheckInProgress && !updateDownloadInProgress && !isDownloadStartMessage) {
-      return;
-    }
-
-    if (message === 'Checking for updates...') {
+  window.electronAPI.onUpdateState((payload: UpdateStatePayload) => {
+    const phase = payload.phase;
+    const percent = typeof payload.percent === 'number' ? payload.percent : undefined;
+    if (phase === 'checking') {
+      manualUpdateCheckInProgress = payload.manual;
+      updateDownloadInProgress = false;
       setCheckUpdateButtonState(getCheckingUpdateButtonHTML(), true);
       return;
     }
 
-    if (message === 'Downloading update...') {
+    if (phase === 'downloading') {
       updateDownloadInProgress = true;
-      setCheckUpdateButtonState(getDownloadingUpdateButtonHTML(), true);
+      setCheckUpdateButtonState(getDownloadingUpdateButtonHTML(percent), true);
       return;
     }
 
-    if (message.startsWith('Update error:')) {
+    if (phase === 'available') {
+      elements.updateBadge.style.display = 'flex';
+      setCheckUpdateButtonState(getUpdateAvailableButtonHTML(), false, true);
+      manualUpdateCheckInProgress = false;
+      updateDownloadInProgress = false;
+      return;
+    }
+
+    if (phase === 'not-available' || phase === 'downloaded' || phase === 'disabled') {
+      elements.updateBadge.style.display = 'none';
+      setCheckUpdateButtonState(checkUpdateDefaultHTML, false);
+      manualUpdateCheckInProgress = false;
+      updateDownloadInProgress = false;
+      return;
+    }
+
+    if (phase === 'already-checking') {
+      setCheckUpdateButtonState(getCheckingUpdateButtonHTML(), true);
+      return;
+    }
+
+    if (phase === 'error') {
       manualUpdateCheckInProgress = false;
       updateDownloadInProgress = false;
       setCheckUpdateButtonState(checkUpdateDefaultHTML, false);
-      return;
+      elements.updateBadge.style.display = 'none';
     }
-
-    if (message === 'You have the latest version.') {
-      manualUpdateCheckInProgress = false;
-      updateDownloadInProgress = false;
-      setCheckUpdateButtonState(checkUpdateDefaultHTML, false);
-    }
-  });
-
-  window.electronAPI.onUpdateProgress((percent) => {
-    if (!Number.isFinite(percent)) {
-      return;
-    }
-
-    updateDownloadInProgress = true;
-    setCheckUpdateButtonState(getDownloadingUpdateButtonHTML(percent), true);
   });
 
   window.electronAPI.onConversionProgress((progress) => {
@@ -2910,17 +3111,17 @@ const setupEventListeners = () => {
         return;
       }
 
-      elements.progressFill.style.width = `${latestProgress.percent}%`;
-      elements.progressFill.setAttribute(
-        'aria-valuenow',
-        String(Math.floor(latestProgress.percent))
-      );
-      elements.progressPercent.textContent = `${Math.floor(latestProgress.percent)}%`;
+      const clampedPercent = Number.isFinite(latestProgress.percent)
+        ? Math.max(0, Math.min(100, latestProgress.percent))
+        : 0;
+      elements.progressFill.style.width = `${clampedPercent}%`;
+      elements.progressFill.setAttribute('aria-valuenow', String(Math.floor(clampedPercent)));
+      elements.progressPercent.textContent = `${Math.floor(clampedPercent)}%`;
       elements.progressTime.textContent = latestProgress.time;
 
-      if (latestProgress.percent > 0 && conversionStartTime > 0) {
+      if (clampedPercent > 0 && conversionStartTime > 0) {
         const elapsed = (Date.now() - conversionStartTime) / 1000;
-        const estimatedTotal = elapsed / (latestProgress.percent / 100);
+        const estimatedTotal = elapsed / (clampedPercent / 100);
         const remaining = estimatedTotal - elapsed;
         if (remaining > 0 && remaining < 86400) {
           elements.progressEta.textContent = `ETA: ${formatDuration(remaining)}`;
@@ -2941,19 +3142,6 @@ const setupEventListeners = () => {
 
   window.electronAPI.onGPUEncoderError((error: GPUEncoderError) => {
     showGPUErrorStatus(error);
-  });
-
-  window.electronAPI.onUpdateAvailable((available: boolean) => {
-    if (available) {
-      elements.updateBadge.style.display = 'flex';
-      setCheckUpdateButtonState(getUpdateAvailableButtonHTML(), false, true);
-    } else {
-      elements.updateBadge.style.display = 'none';
-      setCheckUpdateButtonState(checkUpdateDefaultHTML, false);
-    }
-
-    manualUpdateCheckInProgress = false;
-    updateDownloadInProgress = false;
   });
 };
 

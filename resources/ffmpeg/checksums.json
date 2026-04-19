@@ -1,0 +1,26 @@
+{
+  "win:x64": {
+    "binaries": {
+      "ffmpeg": {
+        "path": "resources/ffmpeg/win/x64/ffmpeg.exe",
+        "sha256": "e99f014728e8e98f7f1136488d5ff05ff66cf97b0b7f15d0afb36da969c46f11"
+      },
+      "ffprobe": {
+        "path": "resources/ffmpeg/win/x64/ffprobe.exe",
+        "sha256": "52553dc008c5b050b205ddc596c309c50fc3f710e4228c5640e22054c68b5fdc"
+      }
+    }
+  },
+  "win:arm64": {
+    "binaries": {
+      "ffmpeg": {
+        "path": "resources/ffmpeg/win/arm64/ffmpeg.exe",
+        "sha256": "f56e97d6d5270fe555a55ffb8699b5ecda36bd07ee632757f9087bceeeaa2aa5"
+      },
+      "ffprobe": {
+        "path": "resources/ffmpeg/win/arm64/ffprobe.exe",
+        "sha256": "e63b948c9255f34a0895150a82bff3ab1233bdb3ac9a60011e11c4acb1a81c0b"
+      }
+    }
+  }
+}

@@ -1,5 +1,6 @@
 const fs = require('fs');
 const path = require('path');
+const { DOMParser } = require('@xmldom/xmldom');
 
 const repoRoot = path.join(__dirname, '..');
 const pkgPath = path.join(repoRoot, 'package.json');
@@ -10,6 +11,22 @@ function formatDate(date) {
   const month = String(date.getMonth() + 1).padStart(2, '0');
   const day = String(date.getDate()).padStart(2, '0');
   return `${year}-${month}-${day}`;
+}
+
+function parseXmlStrict(xml) {
+  const parseErrors = [];
+  const parser = new DOMParser({
+    errorHandler: {
+      warning: () => {},
+      error: (message) => parseErrors.push(message),
+      fatalError: (message) => parseErrors.push(message),
+    },
+  });
+  const doc = parser.parseFromString(xml, 'text/xml');
+  if (parseErrors.length > 0 || doc.getElementsByTagName('parsererror').length > 0) {
+    throw new Error(parseErrors.join('\n') || 'Invalid XML');
+  }
+  return doc;
 }
 
 if (!fs.existsSync(pkgPath)) {
@@ -39,61 +56,54 @@ if (!version) {
 const dateStr = formatDate(new Date());
 const xml = fs.readFileSync(xmlPath, 'utf8');
 
-const releasesLineMatch = xml.match(/^(\s*)<releases>\s*$/m);
-if (!releasesLineMatch) {
-  console.error('✗ Could not find <releases> block in AppStream metadata');
-  process.exit(1);
-}
-
-const baseIndent = releasesLineMatch[1] || '';
-const releaseIndent = `${baseIndent}  `;
-const newReleaseTag = `${releaseIndent}<release version="${version}" date="${dateStr}"/>`;
-
-const releasesSectionRegex = /<releases>[\s\S]*?<\/releases>/;
-const releasesSectionMatch = xml.match(releasesSectionRegex);
-if (!releasesSectionMatch) {
-  console.error('✗ Could not locate releases section');
-  process.exit(1);
-}
-
-const releaseSelfClosingRegex = /<release\b[^>]*\/>/;
-const releasePairedRegex = /<release\b[^>]*>[\s\S]*?<\/release>/;
-
-const currentReleaseMatch =
-  releasesSectionMatch[0].match(releaseSelfClosingRegex) ||
-  releasesSectionMatch[0].match(/<release\b[^>]*>/);
-
-if (currentReleaseMatch) {
-  const currentReleaseTag = currentReleaseMatch[0];
-  const currentVersionMatch = currentReleaseTag.match(/version="([^"]+)"/);
-  const currentDateMatch = currentReleaseTag.match(/date="([^"]+)"/);
-  const currentVersion = currentVersionMatch ? currentVersionMatch[1] : null;
-  const currentDate = currentDateMatch ? currentDateMatch[1] : null;
-
-  if (currentVersion === version && currentDate === dateStr) {
-    console.log('✓ AppStream metadata already up to date');
-    process.exit(0);
-  }
-}
-
-let updatedSection = releasesSectionMatch[0];
-if (releaseSelfClosingRegex.test(updatedSection)) {
-  updatedSection = updatedSection.replace(releaseSelfClosingRegex, newReleaseTag);
-} else if (releasePairedRegex.test(updatedSection)) {
-  updatedSection = updatedSection.replace(releasePairedRegex, newReleaseTag);
-} else {
-  updatedSection = updatedSection.replace(
-    /<releases>\s*/,
-    `<releases>\n${newReleaseTag}\n${baseIndent}`
+let doc;
+try {
+  doc = parseXmlStrict(xml);
+} catch (err) {
+  console.error(
+    `✗ Invalid AppStream metadata XML: ${err instanceof Error ? err.message : String(err)}`
   );
+  process.exit(1);
 }
 
-if (updatedSection === releasesSectionMatch[0]) {
+const releases = doc.getElementsByTagName('releases');
+if (releases.length !== 1) {
+  console.error('✗ AppStream metadata must contain exactly one <releases> section');
+  process.exit(1);
+}
+
+const firstRelease = releases[0].getElementsByTagName('release')[0] || null;
+const currentVersion = firstRelease ? firstRelease.getAttribute('version') : null;
+const currentDate = firstRelease ? firstRelease.getAttribute('date') : null;
+if (currentVersion === version && currentDate === dateStr) {
   console.log('✓ AppStream metadata already up to date');
   process.exit(0);
 }
 
-const updatedXml = xml.replace(releasesSectionRegex, updatedSection);
-fs.writeFileSync(xmlPath, updatedXml, 'utf8');
+const releasesLineMatch = xml.match(/^(\s*)<releases>\s*$/m);
+if (!releasesLineMatch) {
+  console.error('✗ Could not find <releases> line in AppStream metadata');
+  process.exit(1);
+}
+const baseIndent = releasesLineMatch[1] || '';
+const releaseIndent = `${baseIndent}  `;
+const replacementSection = `<releases>\n${releaseIndent}<release version="${version}" date="${dateStr}"/>\n${baseIndent}</releases>`;
 
+const releasesSectionRegex = /<releases>[\s\S]*?<\/releases>/;
+if (!releasesSectionRegex.test(xml)) {
+  console.error('✗ Could not locate releases section in AppStream metadata');
+  process.exit(1);
+}
+
+const updatedXml = xml.replace(releasesSectionRegex, replacementSection);
+try {
+  parseXmlStrict(updatedXml);
+} catch (err) {
+  console.error(
+    `✗ Refusing to write invalid AppStream metadata: ${err instanceof Error ? err.message : String(err)}`
+  );
+  process.exit(1);
+}
+
+fs.writeFileSync(xmlPath, updatedXml, 'utf8');
 console.log(`✓ Updated AppStream release to ${version} (${dateStr})`);

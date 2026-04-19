@@ -800,6 +800,11 @@ header {
   font-weight: 700;
 }
 
+.mode-chip input:focus-visible + span {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
 .gpu-manual-row label {
   display: block;
   margin-bottom: 4px;

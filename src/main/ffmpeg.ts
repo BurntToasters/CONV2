@@ -5,6 +5,13 @@ import { GPUVendor, Preset, getPresetGpuCodec } from './presets';
 import { getFFmpegPath, getFFprobePath } from './ffmpegPath';
 import { AdvancedFormatSettings } from './advancedFormats';
 
+const getWindowsSystemBinaryPath = (binaryName: string): string => {
+  const root = process.env.SystemRoot || process.env.WINDIR || 'C:\\Windows';
+  return path.join(root, 'System32', binaryName);
+};
+
+const WINDOWS_TASKKILL_PATH = getWindowsSystemBinaryPath('taskkill.exe');
+
 export const GPU_ENCODERS: Record<string, Record<GPUVendor, string>> = {
   h264: {
     nvidia: 'h264_nvenc',
@@ -1054,7 +1061,7 @@ const forceKillProcess = (processToKill: ChildProcess): void => {
 
   if (process.platform === 'win32' && processToKill.pid) {
     try {
-      spawnSync('taskkill', ['/pid', processToKill.pid.toString(), '/t', '/f'], {
+      spawnSync(WINDOWS_TASKKILL_PATH, ['/pid', processToKill.pid.toString(), '/t', '/f'], {
         windowsHide: true,
       });
     } catch {
