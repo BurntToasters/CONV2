@@ -39,6 +39,7 @@ import {
 } from './updater';
 import { setUseSystemFFmpeg } from './ffmpegPath';
 import { clearFFmpegCaches } from './ffmpeg';
+import { normalizeFileUrl, isFrameUrlTrusted } from './ipcTrust';
 import {
   SETTINGS_SCHEMA_VERSION,
   UIPanelSettings,
@@ -180,20 +181,6 @@ const normalizeSettings = (value: unknown): AppSettings => {
     uiPanels: normalizeUiPanels(incoming.uiPanels),
     advancedFormatSettings: normalizeAdvancedFormatSettings(incoming.advancedFormatSettings),
   };
-};
-
-const normalizeFileUrl = (value: string): string | null => {
-  try {
-    const parsed = new URL(value);
-    if (parsed.protocol !== 'file:') {
-      return null;
-    }
-    parsed.search = '';
-    parsed.hash = '';
-    return parsed.toString();
-  } catch {
-    return null;
-  }
 };
 
 const resolveAbsolutePath = (value: unknown): string | null => {
@@ -365,9 +352,7 @@ const isTrustedIpcSender = (event: IpcMainInvokeEvent): boolean => {
     return false;
   }
 
-  const senderUrl = normalizeFileUrl(event.senderFrame?.url || '');
-  const expectedUrl = trustedRendererUrl;
-  return senderUrl !== null && expectedUrl !== null && senderUrl === expectedUrl;
+  return isFrameUrlTrusted(event.senderFrame?.url, trustedRendererUrl);
 };
 
 const assertTrustedIpcSender = (event: IpcMainInvokeEvent): void => {

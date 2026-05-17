@@ -695,7 +695,7 @@ export const getVideoDuration = async (inputPath: string): Promise<number> => {
   });
 };
 
-const parseProgress = (line: string, totalDuration: number): ConversionProgress | null => {
+export const parseProgress = (line: string, totalDuration: number): ConversionProgress | null => {
   const frameMatch = line.match(/frame=\s*(\d+)/);
   const fpsMatch = line.match(/fps=\s*([\d.]+)/);
   const timeMatch = line.match(/time=\s*([\d:.]+)/);
