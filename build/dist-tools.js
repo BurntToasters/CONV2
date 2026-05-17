@@ -1,29 +1,68 @@
-/**
- * dist-tools.js — Build helper for CONV2
- *
- * Usage:
- *   node build/dist-tools.js clean       — Remove /dist and /release directories
- *   node build/dist-tools.js copy        — Copy renderer assets (HTML/CSS) to dist/renderer
- *   node build/dist-tools.js compile     — Clean, run tsc, then copy assets (full rebuild)
- */
-
 const fs = require('fs');
 const path = require('path');
 const { execSync } = require('child_process');
 
 const ROOT = path.resolve(__dirname, '..');
+const FLATPAK_BUILD_DIR_PREFIX = 'build-dir';
+const RENDERER_MODULES_DIR = path.join(ROOT, 'src', 'renderer', 'modules');
+
+function listFlatpakBuildDirs() {
+  try {
+    return fs
+      .readdirSync(ROOT, { withFileTypes: true })
+      .filter(
+        (entry) =>
+          entry.isDirectory() &&
+          (entry.name === FLATPAK_BUILD_DIR_PREFIX ||
+            entry.name.startsWith(`${FLATPAK_BUILD_DIR_PREFIX}-`))
+      )
+      .map((entry) => path.join(ROOT, entry.name));
+  } catch {
+    return [];
+  }
+}
+
+function rmDir(fullPath, label) {
+  try {
+    fs.rmSync(fullPath, { recursive: true, force: true, maxRetries: 8, retryDelay: 100 });
+    console.log(`  Removed ${label}`);
+  } catch (error) {
+    if (error && error.code === 'ENOENT') return;
+    console.warn(`  Warning: failed to remove ${label}: ${error.message}`);
+  }
+}
+
+function cleanRendererModuleArtifacts() {
+  let entries;
+  try {
+    entries = fs.readdirSync(RENDERER_MODULES_DIR, { withFileTypes: true });
+  } catch (error) {
+    if (error && error.code === 'ENOENT') return;
+    throw error;
+  }
+  for (const entry of entries) {
+    if (!entry.isFile() || !entry.name.endsWith('.ts')) continue;
+    const stem = entry.name.slice(0, -3);
+    for (const target of [`${stem}.js`, `${stem}.js.map`]) {
+      const artifactPath = path.join(RENDERER_MODULES_DIR, target);
+      try {
+        fs.rmSync(artifactPath, { force: true, maxRetries: 8, retryDelay: 100 });
+      } catch (error) {
+        if (error && error.code !== 'ENOENT') {
+          console.warn(`  Warning: failed to remove ${target}: ${error.message}`);
+        }
+      }
+    }
+  }
+}
 
 function cleanBuildArtifacts() {
   console.log('[dist-tools] Cleaning build artifacts...');
-  for (const dir of ['release', 'dist']) {
-    const fullPath = path.join(ROOT, dir);
-    try {
-      fs.rmSync(fullPath, { recursive: true, force: true });
-      console.log(`  Removed ${dir}/`);
-    } catch {
-      // Ignore cleanup errors — locked files from a previous build are harmless.
-    }
+  const dirs = [path.join(ROOT, 'release'), path.join(ROOT, 'dist'), ...listFlatpakBuildDirs()];
+  for (const dir of dirs) {
+    rmDir(dir, path.relative(ROOT, dir) + '/');
   }
+  cleanRendererModuleArtifacts();
   console.log('[dist-tools] Clean complete.');
 }
 
@@ -31,9 +70,7 @@ function copyRendererAssets() {
   console.log('[dist-tools] Copying renderer assets...');
   const srcDir = path.join(ROOT, 'src', 'renderer');
   const destDir = path.join(ROOT, 'dist', 'renderer');
-
   fs.mkdirSync(destDir, { recursive: true });
-
   const assets = ['index.html', 'main.css', 'settings.css', 'exports-shim.js'];
   for (const file of assets) {
     const src = path.join(srcDir, file);

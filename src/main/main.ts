@@ -550,7 +550,11 @@ app.on('before-quit', async (e) => {
   if (isConversionActive) {
     e.preventDefault();
     cancelConversion(true);
-    await waitForConversionStop(3000);
+    const stopped = await waitForConversionStop(3000);
+    if (!stopped) {
+      cancelConversion(true);
+      await waitForConversionStop(1500);
+    }
     isConversionActive = false;
     app.quit();
   }

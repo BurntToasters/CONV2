@@ -16,10 +16,9 @@ function formatDate(date) {
 function parseXmlStrict(xml) {
   const parseErrors = [];
   const parser = new DOMParser({
-    errorHandler: {
-      warning: () => {},
-      error: (message) => parseErrors.push(message),
-      fatalError: (message) => parseErrors.push(message),
+    onError: (level, message) => {
+      if (level === 'warning') return;
+      parseErrors.push(typeof message === 'string' ? message : String(message));
     },
   });
   const doc = parser.parseFromString(xml, 'text/xml');
