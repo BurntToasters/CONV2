@@ -101,15 +101,44 @@ const getGifLoopArg = (context?: PresetContext): string => {
 
 const toBitrateKbps = (value: number): string => `${value}k`;
 
-const getQualityArgs = (gpu: GPUVendor, quality: number): string[] => {
+export const getQualityArgs = (
+  gpu: GPUVendor,
+  quality: number,
+  codec: 'h264' | 'h265' | 'av1' = 'h264'
+): string[] => {
   switch (gpu) {
-    case 'nvidia':
-      // -b:v 0 required to enable proper CQ mode; without it, NVENC uses unconstrained VBR
-      return ['-cq', String(quality), '-b:v', '0'];
+    case 'nvidia': {
+      // -b:v 0 enables true CQ mode; p7 = highest quality preset; multipass = two-pass encode
+      const args = ['-cq', String(quality), '-b:v', '0', '-preset', 'p7', '-multipass', 'fullres'];
+      if (codec !== 'av1') {
+        // -tune hq, spatial/temporal AQ not supported on av1_nvenc
+        args.push('-tune', 'hq', '-spatial_aq', '1', '-temporal_aq', '1');
+      }
+      return args;
+    }
     case 'amd':
-      return ['-rc', 'cqp', '-qp_i', String(quality), '-qp_p', String(quality)];
-    case 'intel':
-      return ['-global_quality', String(quality)];
+      // -quality quality = highest quality preset for AMF
+      return [
+        '-rc',
+        'cqp',
+        '-qp_i',
+        String(quality),
+        '-qp_p',
+        String(quality),
+        '-quality',
+        'quality',
+      ];
+    case 'intel': {
+      // look_ahead + extbrc improve quality for H.264/H.265; not supported on QSV AV1
+      const args = ['-global_quality', String(quality)];
+      if (codec !== 'av1') {
+        args.push('-look_ahead', '1', '-look_ahead_depth', '60', '-extbrc', '1');
+      }
+      return args;
+    }
+    case 'apple':
+      // VideoToolbox quality mode; allow_sw allows CPU fallback; realtime 0 = best quality
+      return ['-q:v', String(quality), '-allow_sw', '1', '-realtime', '0'];
     default:
       return ['-crf', String(quality)];
   }
@@ -123,7 +152,8 @@ const getGifPaletteArgs = (
 ): string[] => {
   const tierSettings = getGifTierSettings(tier, context);
   const loop = getGifLoopArg(context);
-  const filter = `[0:v]fps=${tierSettings.fps},scale=${tierSettings.maxDimension}:${tierSettings.maxDimension}:flags=lanczos:force_original_aspect_ratio=decrease,split[v0][v1];[v0]palettegen=max_colors=${tierSettings.maxColors}[palette];[v1][palette]paletteuse=dither=${tierSettings.dither}[gifout]`;
+  const bscale = tierSettings.dither === 'bayer' ? ':bayer_scale=5' : '';
+  const filter = `[0:v]fps=${tierSettings.fps},scale=${tierSettings.maxDimension}:${tierSettings.maxDimension}:flags=lanczos:force_original_aspect_ratio=decrease,split[v0][v1];[v0]palettegen=max_colors=${tierSettings.maxColors}:stats_mode=full[palette];[v1][palette]paletteuse=dither=${tierSettings.dither}${bscale}:diff_mode=rectangle[gifout]`;
 
   return [
     '-i',
@@ -160,7 +190,7 @@ const buildAv1Args = (
     '0:a?',
     '-c:v',
     encoder,
-    ...getQualityArgs(gpu, tierSettings.quality),
+    ...getQualityArgs(gpu, tierSettings.quality, 'av1'),
   ];
 
   if (gpu === 'cpu') {
@@ -192,11 +222,13 @@ const buildH264Args = (
     '0:a?',
     '-c:v',
     encoder,
-    ...getQualityArgs(gpu, tierSettings.quality),
+    ...getQualityArgs(gpu, tierSettings.quality, 'h264'),
   ];
 
   if (gpu === 'cpu') {
     args.push('-preset', tierSettings.preset);
+    // Force 4:2:0 8-bit output for maximum player/device compatibility
+    args.push('-pix_fmt', 'yuv420p');
   }
 
   args.push('-c:a', 'aac', '-b:a', toBitrateKbps(tierSettings.audioBitrateKbps), output);
@@ -221,7 +253,7 @@ const buildH265Args = (
     '0:a?',
     '-c:v',
     encoder,
-    ...getQualityArgs(gpu, tierSettings.quality),
+    ...getQualityArgs(gpu, tierSettings.quality, 'h265'),
   ];
 
   if (gpu === 'cpu') {
@@ -253,12 +285,15 @@ const buildAviArgs = (
     '0:a?',
     '-c:v',
     encoder,
-    ...getQualityArgs(gpu, tierSettings.quality),
+    ...getQualityArgs(gpu, tierSettings.quality, tierSettings.codec),
   ];
 
   if (gpu === 'cpu') {
     args.push('-preset', tierSettings.preset);
-    if (tierSettings.codec !== 'h264' && tierSettings.useAdvancedParams) {
+    if (tierSettings.codec === 'h264') {
+      // Force 4:2:0 8-bit for maximum player/device compatibility (matches buildH264Args)
+      args.push('-pix_fmt', 'yuv420p');
+    } else if (tierSettings.useAdvancedParams) {
       args.push('-x265-params', X265_ADVANCED_PARAMS);
     }
   }
@@ -495,7 +530,17 @@ export const presets: Preset[] = [
     description: 'Copy streams to MP4 container (no re-encoding)',
     category: 'remux',
     extension: 'mp4',
-    getArgs: (input, output) => ['-i', input, '-map', '0', '-c', 'copy', output],
+    getArgs: (input, output) => [
+      '-i',
+      input,
+      '-map',
+      '0',
+      '-map_metadata',
+      '0',
+      '-c',
+      'copy',
+      output,
+    ],
   },
   {
     id: 'remux-mkv',
@@ -503,7 +548,17 @@ export const presets: Preset[] = [
     description: 'Copy streams to MKV container (no re-encoding)',
     category: 'remux',
     extension: 'mkv',
-    getArgs: (input, output) => ['-i', input, '-map', '0', '-c', 'copy', output],
+    getArgs: (input, output) => [
+      '-i',
+      input,
+      '-map',
+      '0',
+      '-map_metadata',
+      '0',
+      '-c',
+      'copy',
+      output,
+    ],
   },
   {
     id: 'remux-webm',
@@ -511,7 +566,17 @@ export const presets: Preset[] = [
     description: 'Copy streams to WebM container (no re-encoding)',
     category: 'remux',
     extension: 'webm',
-    getArgs: (input, output) => ['-i', input, '-map', '0', '-c', 'copy', output],
+    getArgs: (input, output) => [
+      '-i',
+      input,
+      '-map',
+      '0',
+      '-map_metadata',
+      '0',
+      '-c',
+      'copy',
+      output,
+    ],
   },
   {
     id: 'audio-mp3',
@@ -519,7 +584,18 @@ export const presets: Preset[] = [
     description: 'Extract audio track as MP3',
     category: 'audio',
     extension: 'mp3',
-    getArgs: (input, output) => ['-i', input, '-vn', '-c:a', 'libmp3lame', '-b:a', '192k', output],
+    getArgs: (input, output) => [
+      '-i',
+      input,
+      '-vn',
+      '-map_metadata',
+      '0',
+      '-c:a',
+      'libmp3lame',
+      '-q:a',
+      '2',
+      output,
+    ],
   },
   {
     id: 'audio-aac',
@@ -527,7 +603,18 @@ export const presets: Preset[] = [
     description: 'Extract audio track as AAC',
     category: 'audio',
     extension: 'aac',
-    getArgs: (input, output) => ['-i', input, '-vn', '-c:a', 'aac', '-b:a', '192k', output],
+    getArgs: (input, output) => [
+      '-i',
+      input,
+      '-vn',
+      '-map_metadata',
+      '0',
+      '-c:a',
+      'aac',
+      '-b:a',
+      '192k',
+      output,
+    ],
   },
   {
     id: 'audio-flac',
@@ -535,7 +622,7 @@ export const presets: Preset[] = [
     description: 'Extract audio track as lossless FLAC',
     category: 'audio',
     extension: 'flac',
-    getArgs: (input, output) => ['-i', input, '-vn', '-c:a', 'flac', output],
+    getArgs: (input, output) => ['-i', input, '-vn', '-map_metadata', '0', '-c:a', 'flac', output],
   },
 ];
 

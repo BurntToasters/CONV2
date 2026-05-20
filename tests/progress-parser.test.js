@@ -74,3 +74,18 @@ test('does not crash on malformed time field', () => {
   const result = parseProgress(line, 10);
   assert.ok(result === null || Number.isNaN(result.percent) || typeof result.percent === 'number');
 });
+
+test('parses MM:SS two-part time format', () => {
+  const line = 'frame=1 fps=1.0 time=01:30.50 bitrate=1.0kbits/s speed=1.0x';
+  const result = parseProgress(line, 120);
+  assert.ok(result);
+  const expectedSeconds = 1 * 60 + 30.5;
+  assert.ok(Math.abs(result.percent - (expectedSeconds / 120) * 100) < 0.001);
+});
+
+test('parses bare-seconds single-part time format', () => {
+  const line = 'frame=1 fps=1.0 time=45.5 bitrate=1.0kbits/s speed=1.0x';
+  const result = parseProgress(line, 100);
+  assert.ok(result);
+  assert.ok(Math.abs(result.percent - 45.5) < 0.001);
+});

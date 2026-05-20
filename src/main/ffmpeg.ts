@@ -1,6 +1,7 @@
 import { spawn, spawnSync, ChildProcess } from 'child_process';
 import * as path from 'path';
 import * as fs from 'fs';
+import * as os from 'os';
 import { GPUVendor, Preset, getPresetGpuCodec } from './presets';
 import { getFFmpegPath, getFFprobePath } from './ffmpegPath';
 import { AdvancedFormatSettings } from './advancedFormats';
@@ -122,15 +123,22 @@ export interface VideoInfo {
   height: number;
   codec: string;
   format: string;
+  pixFmt?: string;
+  colorPrimaries?: string;
+  colorTransfer?: string;
+  colorSpace?: string;
+  colorRange?: string;
 }
 
 let currentProcess: ChildProcess | null = null;
 const outputPathByProcess = new Map<ChildProcess, string>();
 const canceledProcesses = new Set<ChildProcess>();
+const pendingForceKillTimers = new WeakMap<ChildProcess, NodeJS.Timeout>();
 const MAX_ERROR_OUTPUT_CHARS = 256 * 1024;
 const MAX_PROGRESS_EMIT_INTERVAL_MS = 120;
 
 const BINARY_CHECK_TIMEOUT_MS = 10000;
+const FFMPEG_INSTALLED_CACHE_TTL_MS = 30_000;
 
 const checkBinaryInstalled = async (binaryPath: string): Promise<boolean> => {
   return new Promise((resolve) => {
@@ -150,38 +158,63 @@ const checkBinaryInstalled = async (binaryPath: string): Promise<boolean> => {
   });
 };
 
+let ffmpegInstalledCache: { result: boolean; expiresAt: number } | null = null;
+
 export const checkFFmpegInstalled = async (): Promise<boolean> => {
+  const now = Date.now();
+  if (ffmpegInstalledCache && now < ffmpegInstalledCache.expiresAt) {
+    return ffmpegInstalledCache.result;
+  }
   const [ffmpegOk, ffprobeOk] = await Promise.all([
     checkBinaryInstalled(getFFmpegPath()),
     checkBinaryInstalled(getFFprobePath()),
   ]);
-  return ffmpegOk && ffprobeOk;
+  const result = ffmpegOk && ffprobeOk;
+  ffmpegInstalledCache = { result, expiresAt: now + FFMPEG_INSTALLED_CACHE_TTL_MS };
+  return result;
 };
 
 let encoderCache: Set<string> | null = null;
 let decoderCache: Set<string> | null = null;
+let encoderCacheInFlight: Promise<Set<string>> | null = null;
+let decoderCacheInFlight: Promise<Set<string>> | null = null;
 const hwEncoderProbeCache = new Map<string, boolean>();
 
 export const clearFFmpegCaches = (): void => {
   encoderCache = null;
   decoderCache = null;
+  encoderCacheInFlight = null;
+  decoderCacheInFlight = null;
   hwEncoderProbeCache.clear();
+  ffmpegInstalledCache = null;
 };
+
+const FFMPEG_LIST_TIMEOUT_MS = 15_000;
 
 export const getAvailableEncoders = async (): Promise<Set<string>> => {
   if (encoderCache) {
     return encoderCache;
   }
+  if (encoderCacheInFlight) {
+    return encoderCacheInFlight;
+  }
 
-  return new Promise((resolve) => {
+  encoderCacheInFlight = new Promise<Set<string>>((resolve) => {
     const proc = spawn(getFFmpegPath(), ['-encoders', '-hide_banner']);
     let output = '';
+
+    const timer = setTimeout(() => {
+      proc.kill();
+      encoderCacheInFlight = null;
+      resolve(new Set());
+    }, FFMPEG_LIST_TIMEOUT_MS);
 
     proc.stdout?.on('data', (data) => {
       output += data.toString();
     });
 
     proc.on('close', () => {
+      clearTimeout(timer);
       const encoders = new Set<string>();
       const lines = output.split('\n');
       for (const line of lines) {
@@ -191,13 +224,18 @@ export const getAvailableEncoders = async (): Promise<Set<string>> => {
         }
       }
       encoderCache = encoders;
+      encoderCacheInFlight = null;
       resolve(encoders);
     });
 
     proc.on('error', () => {
+      clearTimeout(timer);
+      encoderCacheInFlight = null;
       resolve(new Set());
     });
   });
+
+  return encoderCacheInFlight;
 };
 
 export const checkEncoderAvailable = async (encoder: string): Promise<boolean> => {
@@ -260,16 +298,26 @@ export const getAvailableDecoders = async (): Promise<Set<string>> => {
   if (decoderCache) {
     return decoderCache;
   }
+  if (decoderCacheInFlight) {
+    return decoderCacheInFlight;
+  }
 
-  return new Promise((resolve) => {
+  decoderCacheInFlight = new Promise<Set<string>>((resolve) => {
     const proc = spawn(getFFmpegPath(), ['-decoders', '-hide_banner']);
     let output = '';
+
+    const timer = setTimeout(() => {
+      proc.kill();
+      decoderCacheInFlight = null;
+      resolve(new Set());
+    }, FFMPEG_LIST_TIMEOUT_MS);
 
     proc.stdout?.on('data', (data) => {
       output += data.toString();
     });
 
     proc.on('close', () => {
+      clearTimeout(timer);
       const decoders = new Set<string>();
       const lines = output.split('\n');
       for (const line of lines) {
@@ -279,13 +327,18 @@ export const getAvailableDecoders = async (): Promise<Set<string>> => {
         }
       }
       decoderCache = decoders;
+      decoderCacheInFlight = null;
       resolve(decoders);
     });
 
     proc.on('error', () => {
+      clearTimeout(timer);
+      decoderCacheInFlight = null;
       resolve(new Set());
     });
   });
+
+  return decoderCacheInFlight;
 };
 
 export const checkDecoderAvailable = async (decoder: string): Promise<boolean> => {
@@ -612,6 +665,8 @@ const getHardwareDecodeArgs = async (gpu: GPUVendor, codec?: string): Promise<st
   return [];
 };
 
+const FFPROBE_TIMEOUT_MS = 30_000;
+
 export const getVideoInfo = async (inputPath: string): Promise<VideoInfo> => {
   return new Promise((resolve, reject) => {
     const args = [
@@ -627,11 +682,17 @@ export const getVideoInfo = async (inputPath: string): Promise<VideoInfo> => {
     const proc = spawn(getFFprobePath(), args);
     let output = '';
 
+    const timer = setTimeout(() => {
+      proc.kill();
+      reject(new Error('ffprobe timed out'));
+    }, FFPROBE_TIMEOUT_MS);
+
     proc.stdout.on('data', (data) => {
       output += data.toString();
     });
 
     proc.on('close', (code) => {
+      clearTimeout(timer);
       if (code === 0) {
         try {
           const data = JSON.parse(output);
@@ -645,6 +706,11 @@ export const getVideoInfo = async (inputPath: string): Promise<VideoInfo> => {
             height: videoStream?.height || 0,
             codec: videoStream?.codec_name || 'unknown',
             format: data.format?.format_name || 'unknown',
+            pixFmt: videoStream?.pix_fmt || undefined,
+            colorPrimaries: videoStream?.color_primaries || undefined,
+            colorTransfer: videoStream?.color_transfer || undefined,
+            colorSpace: videoStream?.color_space || undefined,
+            colorRange: videoStream?.color_range || undefined,
           });
         } catch {
           reject(new Error('Failed to parse video info'));
@@ -655,6 +721,7 @@ export const getVideoInfo = async (inputPath: string): Promise<VideoInfo> => {
     });
 
     proc.on('error', (err) => {
+      clearTimeout(timer);
       reject(err);
     });
   });
@@ -676,11 +743,17 @@ export const getVideoDuration = async (inputPath: string): Promise<number> => {
     const proc = spawn(getFFprobePath(), args);
     let output = '';
 
+    const timer = setTimeout(() => {
+      proc.kill();
+      reject(new Error('ffprobe timed out'));
+    }, FFPROBE_TIMEOUT_MS);
+
     proc.stdout.on('data', (data) => {
       output += data.toString();
     });
 
     proc.on('close', (code) => {
+      clearTimeout(timer);
       if (code === 0) {
         const duration = parseFloat(output.trim());
         resolve(isNaN(duration) ? 0 : duration);
@@ -690,6 +763,7 @@ export const getVideoDuration = async (inputPath: string): Promise<number> => {
     });
 
     proc.on('error', (err) => {
+      clearTimeout(timer);
       reject(err);
     });
   });
@@ -704,8 +778,10 @@ export const parseProgress = (line: string, totalDuration: number): ConversionPr
 
   if (timeMatch) {
     const timeParts = timeMatch[1].split(':');
+    // Support H:MM:SS, MM:SS, and bare-seconds formats from FFmpeg output
+    const [p0, p1, p2] = timeParts.map((p) => parseFloat(p) || 0);
     const seconds =
-      parseFloat(timeParts[0]) * 3600 + parseFloat(timeParts[1]) * 60 + parseFloat(timeParts[2]);
+      timeParts.length >= 3 ? p0 * 3600 + p1 * 60 + p2 : timeParts.length === 2 ? p0 * 60 + p1 : p0;
 
     const percent = totalDuration > 0 ? Math.min(100, (seconds / totalDuration) * 100) : 0;
 
@@ -722,7 +798,7 @@ export const parseProgress = (line: string, totalDuration: number): ConversionPr
   return null;
 };
 
-const appendBoundedErrorOutput = (current: string, nextChunk: string): string => {
+export const appendBoundedErrorOutput = (current: string, nextChunk: string): string => {
   if (!nextChunk) {
     return current;
   }
@@ -730,7 +806,13 @@ const appendBoundedErrorOutput = (current: string, nextChunk: string): string =>
   if (combined.length <= MAX_ERROR_OUTPUT_CHARS) {
     return combined;
   }
-  return combined.slice(combined.length - MAX_ERROR_OUTPUT_CHARS);
+  let start = combined.length - MAX_ERROR_OUTPUT_CHARS;
+  // Don't split a UTF-16 surrogate pair at the cut boundary
+  const c = combined.charCodeAt(start);
+  if (c >= 0xdc00 && c <= 0xdfff) {
+    start += 1;
+  }
+  return combined.slice(start);
 };
 
 export const shouldRetryWithSoftwareDecode = (errorOutput: string): boolean => {
@@ -772,11 +854,26 @@ export const resolveUniqueOutputPath = (
   while (suffix <= MAX_SUFFIX) {
     const suffixPart = suffix === 0 ? '' : `_${suffix}`;
     const candidate = path.join(outputDir, `${outputBaseName}_converted${suffixPart}.${extension}`);
-    const inProgress = [...outputPathByProcess.values()].includes(candidate);
-    if (!fs.existsSync(candidate) && !inProgress) {
-      return candidate;
+
+    // Skip paths already claimed by an in-progress conversion in this process
+    if ([...outputPathByProcess.values()].includes(candidate)) {
+      suffix += 1;
+      continue;
     }
-    suffix += 1;
+
+    try {
+      // Atomically claim the path: 'wx' (exclusive create) throws EEXIST if already present,
+      // preventing a TOCTOU race with other processes writing to the same output directory.
+      const fd = fs.openSync(candidate, 'wx');
+      fs.closeSync(fd);
+      return candidate;
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === 'EEXIST') {
+        suffix += 1;
+        continue;
+      }
+      throw err;
+    }
   }
   throw new Error(`Could not find unique output path after ${MAX_SUFFIX} attempts`);
 };
@@ -814,6 +911,24 @@ export const ensureMp4PlaybackCompatibilityArgs = (
   return [...argsWithoutOutput, outputArg];
 };
 
+/**
+ * Returns true only for colour-space values that are safe to pass to FFmpeg.
+ * FFprobe emits "unknown", "unspecified", or "reserved" for unset fields;
+ * passing those strings to FFmpeg causes an "Invalid option" error.
+ */
+export const isKnownColorValue = (v: string): boolean =>
+  v !== 'unknown' && v !== 'unspecified' && v !== 'reserved' && v.length > 0;
+
+/**
+ * Replaces the user's home-directory prefix in log output with `~` so that
+ * absolute paths sent to the renderer don't reveal the system username.
+ */
+const HOME_DIR = os.homedir();
+export const redactPaths = (s: string): string => {
+  if (!HOME_DIR || !s.includes(HOME_DIR)) return s;
+  return s.split(HOME_DIR).join('~');
+};
+
 export const convertVideo = async (
   inputPath: string,
   outputDir: string,
@@ -829,14 +944,25 @@ export const convertVideo = async (
     options.removeSpacesFromOutputName && basenameWithoutSpaces.length > 0
       ? basenameWithoutSpaces
       : inputBasename;
+  try {
+    fs.accessSync(outputDir, fs.constants.W_OK);
+  } catch {
+    return {
+      success: false,
+      outputPath: '',
+      error: `Output directory is not writable: ${outputDir}`,
+    };
+  }
+
   const outputPath = resolveUniqueOutputPath(outputDir, outputBaseName, preset.extension);
 
   let totalDuration = 0;
   let inputCodec: string | undefined;
+  let videoInfo: VideoInfo | null = null;
   try {
-    const info = await getVideoInfo(inputPath);
-    totalDuration = Number.isFinite(info.duration) ? info.duration : 0;
-    inputCodec = info.codec;
+    videoInfo = await getVideoInfo(inputPath);
+    totalDuration = Number.isFinite(videoInfo.duration) ? videoInfo.duration : 0;
+    inputCodec = videoInfo.codec;
   } catch {
     // ignore
   }
@@ -846,6 +972,20 @@ export const convertVideo = async (
     } catch {
       console.warn('Could not get video duration, progress may be inaccurate');
     }
+  }
+
+  // Warn if disk space on output volume looks tight (non-fatal)
+  try {
+    const inputStat = fs.statSync(inputPath);
+    const dirStats = fs.statfsSync(outputDir);
+    const freeBytes = dirStats.bavail * dirStats.bsize;
+    if (freeBytes < inputStat.size) {
+      onLog?.(
+        `Warning: Low disk space – available: ${Math.round(freeBytes / 1024 / 1024)} MB, input size: ${Math.round(inputStat.size / 1024 / 1024)} MB\n`
+      );
+    }
+  } catch {
+    // statfs unavailable or failed – skip check
   }
 
   const isVideoPreset =
@@ -861,10 +1001,51 @@ export const convertVideo = async (
   const presetContext = options.advancedFormatSettings
     ? { advancedFormatSettings: options.advancedFormatSettings }
     : undefined;
-  const presetArgs = ensureMp4PlaybackCompatibilityArgs(
+  let presetArgs = ensureMp4PlaybackCompatibilityArgs(
     preset,
     preset.getArgs(inputPath, outputPath, gpu, presetContext)
   );
+
+  // Inject color metadata passthrough and pix_fmt for video encodes (skip remux/audio/gif)
+  if (isVideoPreset && videoInfo && presetArgs.length > 0) {
+    const extraArgs: string[] = [];
+    if (videoInfo.colorPrimaries && isKnownColorValue(videoInfo.colorPrimaries))
+      extraArgs.push('-color_primaries', videoInfo.colorPrimaries);
+    if (videoInfo.colorTransfer && isKnownColorValue(videoInfo.colorTransfer))
+      extraArgs.push('-color_trc', videoInfo.colorTransfer);
+    if (videoInfo.colorSpace && isKnownColorValue(videoInfo.colorSpace))
+      extraArgs.push('-colorspace', videoInfo.colorSpace);
+    if (videoInfo.colorRange && isKnownColorValue(videoInfo.colorRange))
+      extraArgs.push('-color_range', videoInfo.colorRange);
+
+    // Preserve 10-bit depth for CPU H.265/AV1 encodes. H.264 CPU is already locked to
+    // yuv420p in the preset builder. Hardware encoders manage their own pixel format pipeline.
+    const is10bitSource =
+      videoInfo.pixFmt !== undefined &&
+      (videoInfo.pixFmt.includes('10') || videoInfo.pixFmt.includes('12'));
+    if (
+      gpu === 'cpu' &&
+      is10bitSource &&
+      (preset.category === 'h265' || preset.category === 'av1')
+    ) {
+      extraArgs.push('-pix_fmt', 'yuv420p10le');
+    }
+
+    if (extraArgs.length > 0) {
+      presetArgs = [...presetArgs.slice(0, -1), ...extraArgs, presetArgs[presetArgs.length - 1]];
+    }
+  }
+  const tryDeleteOutputFile = (filePath: string | undefined, label: string): void => {
+    if (!filePath) return;
+    try {
+      fs.unlinkSync(filePath);
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== 'ENOENT') {
+        console.error(`Failed to delete ${label}:`, err);
+      }
+    }
+  };
+
   let conversionCanceled = false;
   const runAttempt = async (
     activeDecodeArgs: string[],
@@ -877,7 +1058,11 @@ export const convertVideo = async (
     }
 
     return new Promise((resolve) => {
-      const ffmpegProcess = spawn(getFFmpegPath(), args);
+      const ffmpegProcess = spawn(
+        getFFmpegPath(),
+        args,
+        process.platform !== 'win32' ? { detached: true } : {}
+      );
       currentProcess = ffmpegProcess;
       outputPathByProcess.set(ffmpegProcess, outputPath);
 
@@ -971,19 +1156,19 @@ export const convertVideo = async (
         if (currentProcess === ffmpegProcess) {
           currentProcess = null;
         }
+        // Clear any pending force-kill timer; process already exited
+        const forceKillTimer = pendingForceKillTimers.get(ffmpegProcess);
+        if (forceKillTimer !== undefined) {
+          clearTimeout(forceKillTimer);
+          pendingForceKillTimers.delete(ffmpegProcess);
+        }
         const outputToDelete = outputPathByProcess.get(ffmpegProcess);
         outputPathByProcess.delete(ffmpegProcess);
         const wasCanceled = canceledProcesses.has(ffmpegProcess);
         canceledProcesses.delete(ffmpegProcess);
         if (wasCanceled) {
           conversionCanceled = true;
-          if (outputToDelete && fs.existsSync(outputToDelete)) {
-            try {
-              fs.unlinkSync(outputToDelete);
-            } catch (err) {
-              console.error('Failed to delete partial file:', err);
-            }
-          }
+          tryDeleteOutputFile(outputToDelete, 'partial output file');
           resolve({ success: false, outputPath, error: 'Conversion cancelled' });
           return;
         }
@@ -993,13 +1178,7 @@ export const convertVideo = async (
           return;
         }
 
-        if (outputToDelete && fs.existsSync(outputToDelete)) {
-          try {
-            fs.unlinkSync(outputToDelete);
-          } catch (err) {
-            console.error('Failed to delete failed output file:', err);
-          }
-        }
+        tryDeleteOutputFile(outputToDelete, 'failed output file');
 
         if (
           !conversionCanceled &&
@@ -1023,29 +1202,22 @@ export const convertVideo = async (
         if (currentProcess === ffmpegProcess) {
           currentProcess = null;
         }
+        const forceKillTimer = pendingForceKillTimers.get(ffmpegProcess);
+        if (forceKillTimer !== undefined) {
+          clearTimeout(forceKillTimer);
+          pendingForceKillTimers.delete(ffmpegProcess);
+        }
         const outputToDelete = outputPathByProcess.get(ffmpegProcess);
         outputPathByProcess.delete(ffmpegProcess);
         const wasCanceled = canceledProcesses.has(ffmpegProcess);
         canceledProcesses.delete(ffmpegProcess);
         if (wasCanceled) {
           conversionCanceled = true;
-          if (outputToDelete && fs.existsSync(outputToDelete)) {
-            try {
-              fs.unlinkSync(outputToDelete);
-            } catch (deleteErr) {
-              console.error('Failed to delete partial file:', deleteErr);
-            }
-          }
+          tryDeleteOutputFile(outputToDelete, 'partial output file');
           resolve({ success: false, outputPath, error: 'Conversion cancelled' });
           return;
         }
-        if (outputToDelete && fs.existsSync(outputToDelete)) {
-          try {
-            fs.unlinkSync(outputToDelete);
-          } catch (deleteErr) {
-            console.error('Failed to delete failed output file:', deleteErr);
-          }
-        }
+        tryDeleteOutputFile(outputToDelete, 'failed output file');
         resolve({ success: false, outputPath, error: err.message });
       });
     });
@@ -1074,6 +1246,16 @@ const forceKillProcess = (processToKill: ChildProcess): void => {
     return;
   }
 
+  // POSIX: kill entire process group to reap any sub-spawned children
+  if (processToKill.pid) {
+    try {
+      process.kill(-processToKill.pid, 'SIGKILL');
+      return;
+    } catch {
+      // fall through to direct kill if group kill fails (e.g. process already exited)
+    }
+  }
+
   try {
     processToKill.kill('SIGKILL');
   } catch {
@@ -1086,10 +1268,12 @@ export const cancelConversion = (force = false): void => {
     const processToKill = currentProcess;
     canceledProcesses.add(processToKill);
 
-    try {
-      processToKill.stdin?.write('q');
-      processToKill.stdin?.end();
-    } catch {}
+    if (!force) {
+      try {
+        processToKill.stdin?.write('q');
+        processToKill.stdin?.end();
+      } catch {}
+    }
 
     try {
       processToKill.kill('SIGTERM');
@@ -1105,11 +1289,13 @@ export const cancelConversion = (force = false): void => {
       return;
     }
 
-    setTimeout(() => {
+    const forceKillTimer = setTimeout(() => {
+      pendingForceKillTimers.delete(processToKill);
       if (currentProcess === processToKill && processToKill.exitCode === null) {
         forceKillProcess(processToKill);
       }
     }, 1500);
+    pendingForceKillTimers.set(processToKill, forceKillTimer);
   }
 };
 

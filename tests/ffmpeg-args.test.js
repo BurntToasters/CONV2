@@ -107,10 +107,40 @@ test('resolveUniqueOutputPath increments suffix when output exists', () => {
     const firstPath = resolveUniqueOutputPath(tempDir, 'sample', 'mp4');
     assert.equal(firstPath, path.join(tempDir, 'sample_converted.mp4'));
 
+    // Write content to the atomically-reserved placeholder so the next call sees it as occupied
     fs.writeFileSync(firstPath, 'occupied');
 
     const secondPath = resolveUniqueOutputPath(tempDir, 'sample', 'mp4');
     assert.equal(secondPath, path.join(tempDir, 'sample_converted_1.mp4'));
+  } finally {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('resolveUniqueOutputPath atomically creates a placeholder file', () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'conv2-atomic-'));
+
+  try {
+    const outputPath = resolveUniqueOutputPath(tempDir, 'video', 'mp4');
+    assert.ok(fs.existsSync(outputPath), 'placeholder file should exist after reservation');
+    const stat = fs.statSync(outputPath);
+    assert.equal(stat.size, 0, 'placeholder file should be empty');
+  } finally {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('resolveUniqueOutputPath skips suffix already claimed by concurrent reservation', () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'conv2-race-'));
+
+  try {
+    // Simulate external process creating the base path before our reservation attempt
+    const basePath = path.join(tempDir, 'clip_converted.mp4');
+    fs.writeFileSync(basePath, '');
+
+    const result = resolveUniqueOutputPath(tempDir, 'clip', 'mp4');
+    assert.equal(result, path.join(tempDir, 'clip_converted_1.mp4'));
+    assert.ok(fs.existsSync(result), '_1 placeholder should be reserved');
   } finally {
     fs.rmSync(tempDir, { recursive: true, force: true });
   }

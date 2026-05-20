@@ -354,6 +354,26 @@ const normalizeUiPanels = (value: unknown): UIPanelSettings => {
   };
 };
 
+// Extensions accepted by the file-open dialog and via drag-drop
+const ACCEPTED_VIDEO_EXTENSIONS = new Set([
+  'mp4',
+  'mkv',
+  'avi',
+  'mov',
+  'wmv',
+  'flv',
+  'webm',
+  'm4v',
+  'mpeg',
+  'mpg',
+  '3gp',
+]);
+
+const hasAcceptedVideoExtension = (filePath: string): boolean => {
+  const ext = filePath.split('.').pop()?.toLowerCase() ?? '';
+  return ACCEPTED_VIDEO_EXTENSIONS.has(ext);
+};
+
 const getRequiredElement = <T extends HTMLElement>(id: string): T => {
   const element = document.getElementById(id);
   if (!element) {
@@ -2636,8 +2656,12 @@ const setupEventListeners = () => {
     if (files && files.length > 0) {
       const filePaths = Array.from(files)
         .map((file) => window.electronAPI.getPathForFile(file))
-        .filter((filePath) => filePath && filePath.length > 0);
-      handleFileSelect(filePaths);
+        .filter((filePath) => filePath && filePath.length > 0 && hasAcceptedVideoExtension(filePath));
+      if (filePaths.length === 0) {
+        showStatus('error', 'Unsupported file type. Drop a video file (MP4, MKV, MOV, …).');
+        return;
+      }
+      void handleFileSelect(filePaths);
     }
   });
 
@@ -2647,7 +2671,7 @@ const setupEventListeners = () => {
       const filePaths = Array.from(files)
         .map((file) => window.electronAPI.getPathForFile(file))
         .filter((filePath) => filePath && filePath.length > 0);
-      handleFileSelect(filePaths);
+      void handleFileSelect(filePaths);
     }
     elements.fileInput.value = '';
   });
