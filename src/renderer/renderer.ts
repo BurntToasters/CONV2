@@ -354,6 +354,26 @@ const normalizeUiPanels = (value: unknown): UIPanelSettings => {
   };
 };
 
+// Extensions accepted by the file-open dialog and via drag-drop
+const ACCEPTED_VIDEO_EXTENSIONS = new Set([
+  'mp4',
+  'mkv',
+  'avi',
+  'mov',
+  'wmv',
+  'flv',
+  'webm',
+  'm4v',
+  'mpeg',
+  'mpg',
+  '3gp',
+]);
+
+const hasAcceptedVideoExtension = (filePath: string): boolean => {
+  const ext = filePath.split('.').pop()?.toLowerCase() ?? '';
+  return ACCEPTED_VIDEO_EXTENSIONS.has(ext);
+};
+
 const getRequiredElement = <T extends HTMLElement>(id: string): T => {
   const element = document.getElementById(id);
   if (!element) {
@@ -1056,8 +1076,17 @@ const renderGpuCapabilityMatrix = (
       const cell = document.createElement('td');
       const entry = payload.matrix[codec]?.[vendor];
       const status = document.createElement('span');
-      status.className = `gpu-status ${entry?.available ? 'available' : 'unavailable'}`;
-      status.textContent = entry?.available ? 'Available' : 'Unavailable';
+      const available = !!entry?.available;
+      status.className = `gpu-status ${available ? 'available' : 'unavailable'}`;
+      status.setAttribute('role', 'status');
+      status.setAttribute('aria-label', available ? 'Available' : 'Unavailable');
+      const icon = document.createElement('span');
+      icon.className = 'gpu-status-icon';
+      icon.setAttribute('aria-hidden', 'true');
+      icon.textContent = available ? '✓' : '✕';
+      const label = document.createElement('span');
+      label.textContent = available ? 'Available' : 'Unavailable';
+      status.append(icon, label);
       cell.appendChild(status);
 
       const reason = document.createElement('div');
@@ -2185,7 +2214,34 @@ const tagAdvancedTierCards = (): void => {
   });
 };
 
+const renderPreloadFailure = (): void => {
+  const root = document.body;
+  if (!root) return;
+  root.replaceChildren();
+  const wrap = document.createElement('div');
+  wrap.style.cssText =
+    'position:fixed;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px;padding:32px;font-family:system-ui,sans-serif;text-align:center;background:#0d0d0d;color:#f5f5f5;';
+  const title = document.createElement('h1');
+  title.textContent = 'CONV2 failed to start';
+  title.style.cssText = 'margin:0;font-size:20px;';
+  const msg = document.createElement('p');
+  msg.textContent =
+    'The application bridge did not load. This usually means the install is incomplete or was interrupted by an update.';
+  msg.style.cssText = 'margin:0;max-width:480px;line-height:1.5;color:#bbb;';
+  const btn = document.createElement('button');
+  btn.textContent = 'Reload';
+  btn.style.cssText =
+    'padding:10px 24px;border:1px solid #555;background:#222;color:#f5f5f5;border-radius:6px;cursor:pointer;font-size:14px;';
+  btn.addEventListener('click', () => location.reload());
+  wrap.append(title, msg, btn);
+  root.append(wrap);
+};
+
 const init = async () => {
+  if (typeof window.electronAPI === 'undefined' || window.electronAPI === null) {
+    renderPreloadFailure();
+    return;
+  }
   convertBtnOriginalHTML = elements.convertBtn.innerHTML;
   checkUpdateDefaultHTML = elements.checkUpdateBtn.innerHTML;
   tagAdvancedTierCards();
@@ -2600,8 +2656,14 @@ const setupEventListeners = () => {
     if (files && files.length > 0) {
       const filePaths = Array.from(files)
         .map((file) => window.electronAPI.getPathForFile(file))
-        .filter((filePath) => filePath && filePath.length > 0);
-      handleFileSelect(filePaths);
+        .filter(
+          (filePath) => filePath && filePath.length > 0 && hasAcceptedVideoExtension(filePath)
+        );
+      if (filePaths.length === 0) {
+        showStatus('error', 'Unsupported file type. Drop a video file (MP4, MKV, MOV, …).');
+        return;
+      }
+      void handleFileSelect(filePaths);
     }
   });
 
@@ -2611,7 +2673,7 @@ const setupEventListeners = () => {
       const filePaths = Array.from(files)
         .map((file) => window.electronAPI.getPathForFile(file))
         .filter((filePath) => filePath && filePath.length > 0);
-      handleFileSelect(filePaths);
+      void handleFileSelect(filePaths);
     }
     elements.fileInput.value = '';
   });

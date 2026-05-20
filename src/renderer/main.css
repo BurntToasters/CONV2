@@ -866,12 +866,18 @@ header {
 .gpu-status {
   display: inline-flex;
   align-items: center;
+  gap: 3px;
   border-radius: var(--radius-full);
   padding: 1px 6px;
   font-size: 9px;
   font-weight: 700;
   letter-spacing: 0.25px;
   text-transform: uppercase;
+}
+
+.gpu-status-icon {
+  font-size: 10px;
+  line-height: 1;
 }
 
 .gpu-status.available {

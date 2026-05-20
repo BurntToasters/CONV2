@@ -6,6 +6,7 @@ import {
   nativeTheme,
   shell,
   Menu,
+  screen,
   IpcMainInvokeEvent,
 } from 'electron';
 import * as path from 'path';
@@ -26,6 +27,7 @@ import {
   GPU_ENCODERS,
   checkGPUEncoderSupport,
   parseGPUError,
+  redactPaths,
   ConversionResult,
   waitForConversionStop,
 } from './ffmpeg';
@@ -39,6 +41,7 @@ import {
 } from './updater';
 import { setUseSystemFFmpeg } from './ffmpegPath';
 import { clearFFmpegCaches } from './ffmpeg';
+import { normalizeFileUrl, isFrameUrlTrusted } from './ipcTrust';
 import {
   SETTINGS_SCHEMA_VERSION,
   UIPanelSettings,
@@ -68,8 +71,19 @@ if (process.platform === 'darwin') {
   }
 }
 
+if (!app.requestSingleInstanceLock()) {
+  app.quit();
+  process.exit(0);
+}
+
+app.on('second-instance', () => {
+  if (mainWindow) {
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    mainWindow.focus();
+  }
+});
+
 let isConversionActive = false;
-let lastOutputPath = '';
 let trustedRendererUrl: string | null = null;
 const handleNativeThemeUpdated = (): void => {
   mainWindow?.webContents.send('theme-changed', nativeTheme.shouldUseDarkColors ? 'dark' : 'light');
@@ -101,6 +115,26 @@ interface AppSettings {
 type SaveSettingsPayload = Omit<Partial<AppSettings>, 'uiPanels'> & {
   uiPanels?: Partial<UIPanelSettings>;
 };
+
+const ALLOWED_SETTINGS_KEYS = new Set<string>([
+  'outputDirectory',
+  'gpu',
+  'gpuMode',
+  'gpuManualVendor',
+  'theme',
+  'showDebugOutput',
+  'autoCheckUpdates',
+  'useSystemFFmpeg',
+  'useCpuDecodingWhenGpu',
+  'moveOriginalToTrashOnSuccess',
+  'updateChannel',
+  'showAdvancedPresets',
+  'removeSpacesFromFilenames',
+  'showAllGpuVendors',
+  'recentPresetIds',
+  'uiPanels',
+  'advancedFormatSettings',
+]);
 
 const createDefaultSettings = (): AppSettings => ({
   settingsSchemaVersion: SETTINGS_SCHEMA_VERSION,
@@ -180,20 +214,6 @@ const normalizeSettings = (value: unknown): AppSettings => {
     uiPanels: normalizeUiPanels(incoming.uiPanels),
     advancedFormatSettings: normalizeAdvancedFormatSettings(incoming.advancedFormatSettings),
   };
-};
-
-const normalizeFileUrl = (value: string): string | null => {
-  try {
-    const parsed = new URL(value);
-    if (parsed.protocol !== 'file:') {
-      return null;
-    }
-    parsed.search = '';
-    parsed.hash = '';
-    return parsed.toString();
-  } catch {
-    return null;
-  }
 };
 
 const resolveAbsolutePath = (value: unknown): string | null => {
@@ -365,9 +385,7 @@ const isTrustedIpcSender = (event: IpcMainInvokeEvent): boolean => {
     return false;
   }
 
-  const senderUrl = normalizeFileUrl(event.senderFrame?.url || '');
-  const expectedUrl = trustedRendererUrl;
-  return senderUrl !== null && expectedUrl !== null && senderUrl === expectedUrl;
+  return isFrameUrlTrusted(event.senderFrame?.url, trustedRendererUrl);
 };
 
 const assertTrustedIpcSender = (event: IpcMainInvokeEvent): void => {
@@ -386,12 +404,25 @@ const getSettingsPath = (): string => {
 
 const loadSettings = (): void => {
   let shouldPersist = false;
+  const settingsPath = getSettingsPath();
+
+  // Remove any stale .tmp file left by a crash mid-save
   try {
-    const settingsPath = getSettingsPath();
+    fs.unlinkSync(settingsPath + '.tmp');
+  } catch {
+    // doesn't exist — fine
+  }
+
+  try {
     if (fs.existsSync(settingsPath)) {
       const data = fs.readFileSync(settingsPath, 'utf-8');
       const parsed = JSON.parse(data);
       if (isSettingsCorrupted(parsed)) {
+        try {
+          fs.copyFileSync(settingsPath, `${settingsPath}.corrupt-${Date.now()}`);
+        } catch {
+          // backup failure is non-fatal
+        }
         settings = createDefaultSettings();
         shouldPersist = true;
       } else {
@@ -404,6 +435,14 @@ const loadSettings = (): void => {
       settings = createDefaultSettings();
     }
   } catch {
+    // JSON parse failure or unexpected I/O error — back up the file if it exists
+    try {
+      if (fs.existsSync(settingsPath)) {
+        fs.copyFileSync(settingsPath, `${settingsPath}.corrupt-${Date.now()}`);
+      }
+    } catch {
+      // backup failure is non-fatal
+    }
     settings = createDefaultSettings();
     shouldPersist = true;
   }
@@ -420,9 +459,83 @@ const saveSettings = (): void => {
     const settingsPath = getSettingsPath();
     const tmpPath = settingsPath + '.tmp';
     fs.writeFileSync(tmpPath, JSON.stringify(settings, null, 2));
+    const fd = fs.openSync(tmpPath, 'r+');
+    try {
+      fs.fsyncSync(fd);
+    } finally {
+      fs.closeSync(fd);
+    }
     fs.renameSync(tmpPath, settingsPath);
   } catch (err) {
     console.error('Failed to save settings:', err);
+  }
+};
+
+// ── Window state persistence ─────────────────────────────────────────────────
+
+interface WindowState {
+  x?: number;
+  y?: number;
+  width: number;
+  height: number;
+  isMaximized?: boolean;
+}
+
+const DEFAULT_WINDOW_WIDTH = 1080;
+const DEFAULT_WINDOW_HEIGHT = 880;
+
+const getWindowStatePath = (): string => path.join(app.getPath('userData'), 'windowState.json');
+
+const isWindowBoundsOnScreen = (x: number, y: number, width: number, height: number): boolean => {
+  const TITLE_BAR_CLEARANCE = 64;
+  return screen.getAllDisplays().some(({ bounds }) => {
+    return (
+      x + width > bounds.x &&
+      x < bounds.x + bounds.width &&
+      y + TITLE_BAR_CLEARANCE > bounds.y &&
+      y < bounds.y + bounds.height
+    );
+  });
+};
+
+const loadWindowState = (): WindowState => {
+  const defaults: WindowState = { width: DEFAULT_WINDOW_WIDTH, height: DEFAULT_WINDOW_HEIGHT };
+  try {
+    const statePath = getWindowStatePath();
+    if (!fs.existsSync(statePath)) return defaults;
+    const data = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
+    const width =
+      typeof data.width === 'number' && data.width >= 600 ? data.width : DEFAULT_WINDOW_WIDTH;
+    const height =
+      typeof data.height === 'number' && data.height >= 500 ? data.height : DEFAULT_WINDOW_HEIGHT;
+    return {
+      width,
+      height,
+      x: typeof data.x === 'number' ? data.x : undefined,
+      y: typeof data.y === 'number' ? data.y : undefined,
+      isMaximized: data.isMaximized === true,
+    };
+  } catch {
+    return defaults;
+  }
+};
+
+const saveWindowState = (): void => {
+  if (!mainWindow) return;
+  try {
+    const isMaximized = mainWindow.isMaximized();
+    // getNormalBounds() returns restored-state bounds even when maximized
+    const bounds = mainWindow.getNormalBounds();
+    const state: WindowState = {
+      width: bounds.width,
+      height: bounds.height,
+      x: bounds.x,
+      y: bounds.y,
+      isMaximized,
+    };
+    fs.writeFileSync(getWindowStatePath(), JSON.stringify(state, null, 2));
+  } catch (err) {
+    console.error('Failed to save window state:', err);
   }
 };
 
@@ -451,9 +564,21 @@ const createWindow = (): void => {
   const rendererEntryPath = path.join(__dirname, '../renderer/index.html');
   trustedRendererUrl = normalizeFileUrl(pathToFileURL(rendererEntryPath).toString());
 
+  const windowState = loadWindowState();
+  const positionOpts: { x?: number; y?: number } = {};
+  if (
+    windowState.x !== undefined &&
+    windowState.y !== undefined &&
+    isWindowBoundsOnScreen(windowState.x, windowState.y, windowState.width, windowState.height)
+  ) {
+    positionOpts.x = windowState.x;
+    positionOpts.y = windowState.y;
+  }
+
   mainWindow = new BrowserWindow({
-    width: 1080,
-    height: 880,
+    width: windowState.width,
+    height: windowState.height,
+    ...positionOpts,
     minWidth: 600,
     minHeight: 500,
     webPreferences: {
@@ -489,6 +614,9 @@ const createWindow = (): void => {
 
   mainWindow.once('ready-to-show', () => {
     mainWindow?.show();
+    if (windowState.isMaximized) {
+      mainWindow?.maximize();
+    }
 
     if (process.argv.includes('--dev')) {
       mainWindow?.webContents.openDevTools({ mode: 'detach' });
@@ -508,6 +636,7 @@ const createWindow = (): void => {
   });
 
   mainWindow.on('close', (e) => {
+    saveWindowState();
     if (isConversionActive) {
       e.preventDefault();
       dialog
@@ -550,7 +679,11 @@ app.on('before-quit', async (e) => {
   if (isConversionActive) {
     e.preventDefault();
     cancelConversion(true);
-    await waitForConversionStop(3000);
+    const stopped = await waitForConversionStop(3000);
+    if (!stopped) {
+      cancelConversion(true);
+      await waitForConversionStop(1500);
+    }
     isConversionActive = false;
     app.quit();
   }
@@ -689,7 +822,7 @@ ipcMain.handle(
           },
           showDebugOutput
             ? (message) => {
-                mainWindow?.webContents.send('conversion-log', message);
+                mainWindow?.webContents.send('conversion-log', redactPaths(message));
               }
             : undefined,
           {
@@ -707,8 +840,6 @@ ipcMain.handle(
         };
       }
 
-      lastOutputPath = result.outputPath;
-
       if (!result.success && result.error && effectiveGpu !== 'cpu' && codec !== null) {
         const gpuError = parseGPUError(result.error, effectiveGpu, codec);
         if (gpuError) {
@@ -725,7 +856,7 @@ ipcMain.handle(
           if (showDebugOutput) {
             mainWindow?.webContents.send(
               'conversion-log',
-              `Moved original file to trash: ${resolvedInputPath}\n`
+              redactPaths(`Moved original file to trash: ${resolvedInputPath}\n`)
             );
           }
         } catch (trashError) {
@@ -734,13 +865,16 @@ ipcMain.handle(
               trashError instanceof Error ? trashError.message : String(trashError);
             mainWindow?.webContents.send(
               'conversion-log',
-              `Failed to move original file to trash: ${errorMessage}\n`
+              redactPaths(`Failed to move original file to trash: ${errorMessage}\n`)
             );
           }
         }
       }
 
-      mainWindow?.webContents.send('conversion-complete', result);
+      const resultForRenderer: ConversionResult = result.error
+        ? { ...result, error: redactPaths(result.error) }
+        : result;
+      mainWindow?.webContents.send('conversion-complete', resultForRenderer);
       return result;
     } finally {
       isConversionActive = false;
@@ -802,6 +936,13 @@ ipcMain.handle('save-settings', (event: IpcMainInvokeEvent, newSettings: SaveSet
   assertTrustedIpcSender(event);
   const safeIncomingSettings =
     newSettings && typeof newSettings === 'object' ? newSettings : ({} as SaveSettingsPayload);
+
+  // Warn on unknown fields so renderer bugs surface fast in logs
+  for (const key of Object.keys(safeIncomingSettings)) {
+    if (!ALLOWED_SETTINGS_KEYS.has(key)) {
+      console.warn(`save-settings: unexpected field "${key}" – ignored`);
+    }
+  }
   const incomingSettings = safeIncomingSettings as Partial<Record<keyof AppSettings, unknown>>;
   const nextUpdateChannel =
     safeIncomingSettings.updateChannel !== undefined
