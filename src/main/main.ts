@@ -484,8 +484,7 @@ interface WindowState {
 const DEFAULT_WINDOW_WIDTH = 1080;
 const DEFAULT_WINDOW_HEIGHT = 880;
 
-const getWindowStatePath = (): string =>
-  path.join(app.getPath('userData'), 'windowState.json');
+const getWindowStatePath = (): string => path.join(app.getPath('userData'), 'windowState.json');
 
 const isWindowBoundsOnScreen = (x: number, y: number, width: number, height: number): boolean => {
   const TITLE_BAR_CLEARANCE = 64;

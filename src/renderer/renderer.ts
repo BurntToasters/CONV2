@@ -2656,7 +2656,9 @@ const setupEventListeners = () => {
     if (files && files.length > 0) {
       const filePaths = Array.from(files)
         .map((file) => window.electronAPI.getPathForFile(file))
-        .filter((filePath) => filePath && filePath.length > 0 && hasAcceptedVideoExtension(filePath));
+        .filter(
+          (filePath) => filePath && filePath.length > 0 && hasAcceptedVideoExtension(filePath)
+        );
       if (filePaths.length === 0) {
         showStatus('error', 'Unsupported file type. Drop a video file (MP4, MKV, MOV, …).');
         return;
