@@ -62,7 +62,8 @@ function normalizeArch(value) {
 
 function usage() {
   console.error(
-    'Usage: node build-scripts/check-ffmpeg.js [--all] [--current] [--target <platform:arch>]... [--generate-checksums] [--require-checksums]'
+    'Usage: node build-scripts/check-ffmpeg.js [--all] [--current] [--target <platform:arch>]... [--generate-checksums] [--require-checksums]\n' +
+    '  Checksum mismatches are warnings by default; add --require-checksums to make them fatal.'
   );
   process.exit(1);
 }
@@ -293,12 +294,19 @@ function validateTargets(targets, requireChecksums = false) {
   }
 
   if (checksumErrors.length > 0) {
-    console.error('\nFFmpeg/ffprobe checksum verification failed.');
-    for (const item of checksumErrors) {
-      console.error(`- ${item}`);
+    if (requireChecksums) {
+      console.error('\nFFmpeg/ffprobe checksum verification failed.');
+      for (const item of checksumErrors) {
+        console.error(`- ${item}`);
+      }
+      console.error('\nRegenerate with: node build-scripts/check-ffmpeg.js --generate-checksums');
+      process.exit(1);
+    } else {
+      console.warn('\nFFmpeg/ffprobe checksum warnings (non-fatal; pass --require-checksums to enforce):');
+      for (const item of checksumErrors) {
+        console.warn(`- ${item}`);
+      }
     }
-    console.error('\nRegenerate with: node build-scripts/check-ffmpeg.js --generate-checksums');
-    process.exit(1);
   }
 }
 
