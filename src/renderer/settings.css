@@ -42,7 +42,7 @@
 .settings-tab.is-active {
   color: var(--text-primary);
   border-color: var(--accent);
-  background: rgba(139, 92, 246, 0.14);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
 }
 
 .settings-panel {
@@ -231,8 +231,8 @@
 
 .format-tab.is-active {
   color: var(--text-primary);
-  border-color: var(--accent-secondary);
-  background: rgba(6, 182, 212, 0.12);
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
 }
 
 .format-tab-disabled {
@@ -543,7 +543,7 @@
 }
 
 .license-highlight {
-  border-color: rgba(139, 92, 246, 0.25);
+  border-color: color-mix(in srgb, var(--accent) 35%, transparent);
 }
 
 .license-header {
