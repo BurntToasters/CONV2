@@ -33,10 +33,9 @@
 
 - **macOS:** Fixed an issue where the updater was getting stuck and would not be able to restart the app to complete the update process.
 - **Misc:**
-
-* Edge case fixes.
-* General Improvements.
-* Updated packages.
+  * Edge case fixes.
+  * General Improvements.
+  * Updated packages.
 
 ## Changes in `v1.4.0:`
 
