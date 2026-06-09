@@ -31,7 +31,7 @@
 
 ## Changes in `v1.4.0:`
 
-- **FFMPEG:** Updated `FFMPEG` to version `8.1` for all platforms *except* x64 for macOS.
+- **FFMPEG:** Updated `FFMPEG` to version `8.1` for all platforms _except_ x64 for macOS.
 - **UI:** Flat, native-leaning visual refresh across the main window and settings. Dropped purple/cyan gradients, mesh backgrounds, glow, and shimmer in favor of restrained system-blue accents, tighter corner radii, and flatter panels, buttons, and progress bars. Light and dark themes both updated.
 - **FFMPEG:** Retuned AV1 CPU presets for better quality and compression efficiency:
   - All CPU AV1 tiers now apply `libsvtav1` tuning (`tune=0`) consistently, not just the best-quality and best-compression tiers.
