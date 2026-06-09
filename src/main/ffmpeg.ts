@@ -3,8 +3,21 @@ import * as path from 'path';
 import * as fs from 'fs';
 import * as os from 'os';
 import { GPUVendor, Preset, getPresetGpuCodec } from './presets';
-import { getFFmpegPath, getFFprobePath } from './ffmpegPath';
 import { AdvancedFormatSettings } from './advancedFormats';
+
+type FFmpegPathModule = typeof import('./ffmpegPath');
+
+let ffmpegPathModule: FFmpegPathModule | null = null;
+
+const getFFmpegPathModule = (): FFmpegPathModule => {
+  if (!ffmpegPathModule) {
+    ffmpegPathModule = require('./ffmpegPath') as FFmpegPathModule;
+  }
+  return ffmpegPathModule;
+};
+
+const getFFmpegBinaryPath = (): string => getFFmpegPathModule().getFFmpegPath();
+const getFFprobeBinaryPath = (): string => getFFmpegPathModule().getFFprobePath();
 
 const getWindowsSystemBinaryPath = (binaryName: string): string => {
   const root = process.env.SystemRoot || process.env.WINDIR || 'C:\\Windows';
@@ -166,8 +179,8 @@ export const checkFFmpegInstalled = async (): Promise<boolean> => {
     return ffmpegInstalledCache.result;
   }
   const [ffmpegOk, ffprobeOk] = await Promise.all([
-    checkBinaryInstalled(getFFmpegPath()),
-    checkBinaryInstalled(getFFprobePath()),
+    checkBinaryInstalled(getFFmpegBinaryPath()),
+    checkBinaryInstalled(getFFprobeBinaryPath()),
   ]);
   const result = ffmpegOk && ffprobeOk;
   ffmpegInstalledCache = { result, expiresAt: now + FFMPEG_INSTALLED_CACHE_TTL_MS };
@@ -200,7 +213,7 @@ export const getAvailableEncoders = async (): Promise<Set<string>> => {
   }
 
   encoderCacheInFlight = new Promise<Set<string>>((resolve) => {
-    const proc = spawn(getFFmpegPath(), ['-encoders', '-hide_banner']);
+    const proc = spawn(getFFmpegBinaryPath(), ['-encoders', '-hide_banner']);
     let output = '';
 
     const timer = setTimeout(() => {
@@ -272,7 +285,7 @@ const probeHwEncoderAvailable = async (encoder: string): Promise<boolean> => {
       'null',
       process.platform === 'win32' ? 'NUL' : '/dev/null',
     ];
-    const proc = spawn(getFFmpegPath(), args);
+    const proc = spawn(getFFmpegBinaryPath(), args);
     const timer = setTimeout(() => {
       proc.kill();
       hwEncoderProbeCache.set(encoder, false);
@@ -303,7 +316,7 @@ export const getAvailableDecoders = async (): Promise<Set<string>> => {
   }
 
   decoderCacheInFlight = new Promise<Set<string>>((resolve) => {
-    const proc = spawn(getFFmpegPath(), ['-decoders', '-hide_banner']);
+    const proc = spawn(getFFmpegBinaryPath(), ['-decoders', '-hide_banner']);
     let output = '';
 
     const timer = setTimeout(() => {
@@ -679,7 +692,7 @@ export const getVideoInfo = async (inputPath: string): Promise<VideoInfo> => {
       inputPath,
     ];
 
-    const proc = spawn(getFFprobePath(), args);
+    const proc = spawn(getFFprobeBinaryPath(), args);
     let output = '';
 
     const timer = setTimeout(() => {
@@ -740,7 +753,7 @@ export const getVideoDuration = async (inputPath: string): Promise<number> => {
       'csv=p=0',
     ];
 
-    const proc = spawn(getFFprobePath(), args);
+    const proc = spawn(getFFprobeBinaryPath(), args);
     let output = '';
 
     const timer = setTimeout(() => {
@@ -1059,7 +1072,7 @@ export const convertVideo = async (
 
     return new Promise((resolve) => {
       const ffmpegProcess = spawn(
-        getFFmpegPath(),
+        getFFmpegBinaryPath(),
         args,
         process.platform !== 'win32' ? { detached: true } : {}
       );
