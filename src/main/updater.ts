@@ -11,9 +11,12 @@ type UpdateStatePhase =
   | 'not-available'
   | 'downloading'
   | 'downloaded'
+  | 'installing'
   | 'error'
   | 'disabled'
   | 'already-checking';
+
+type UpdateInstallStartingHandler = () => void | Promise<void>;
 
 interface UpdateStatePayload {
   phase: UpdateStatePhase;
@@ -28,6 +31,9 @@ let updateChannel: UpdateChannel = 'auto';
 let listenersRegistered = false;
 let updateCheckInFlight = false;
 let activeCheckMode: UpdateCheckMode | null = null;
+let updateDownloadedReady = false;
+let updateInstallInProgress = false;
+let updateInstallStartingHandler: UpdateInstallStartingHandler | null = null;
 
 const getWindowsSystemBinaryPath = (binaryName: string): string => {
   const root = process.env.SystemRoot || process.env.WINDIR || 'C:\\Windows';
@@ -128,6 +134,7 @@ const beginUpdateCheck = (mode: UpdateCheckMode): boolean => {
   if (updateCheckInFlight) {
     return false;
   }
+  updateDownloadedReady = false;
   activeCheckMode = mode;
   updateCheckInFlight = true;
   return true;
@@ -147,6 +154,12 @@ const getMainWindow = (): BrowserWindow | null => {
 
 export const setUpdaterWindow = (window: BrowserWindow | null): void => {
   mainWindow = window;
+};
+
+export const setUpdateInstallStartingHandler = (
+  handler: UpdateInstallStartingHandler | null
+): void => {
+  updateInstallStartingHandler = handler;
 };
 
 const sendUpdateStateToWindow = (payload: UpdateStatePayload): void => {
@@ -306,6 +319,7 @@ export const initUpdater = (window: BrowserWindow): void => {
     if (!windowRef) {
       return;
     }
+    updateDownloadedReady = true;
     sendUpdateStateToWindow({
       phase: 'downloaded',
       manual: false,
@@ -321,7 +335,15 @@ export const initUpdater = (window: BrowserWindow): void => {
       })
       .then((result) => {
         if (result.response === 0) {
-          autoUpdater.quitAndInstall();
+          void installDownloadedUpdate().catch((err) => {
+            const error = err instanceof Error ? err : new Error(String(err));
+            dialog.showMessageBox(windowRef, {
+              type: 'error',
+              title: 'Update Error',
+              message: `CONV2 could not restart to install the update: ${error.message}`,
+              buttons: ['OK'],
+            });
+          });
         }
       });
   });
@@ -382,6 +404,55 @@ export const checkForUpdates = (): void => {
 
 export const isUpdateDisabled = (): boolean => {
   return updatesDisabled;
+};
+
+export const installDownloadedUpdate = async (): Promise<void> => {
+  if (updatesDisabled) {
+    sendUpdateStateToWindow({
+      phase: 'disabled',
+      manual: true,
+      message: 'Auto-updates are disabled for this installation.',
+    });
+    return;
+  }
+
+  if (updateInstallInProgress) {
+    return;
+  }
+
+  if (!updateDownloadedReady) {
+    const message = 'No downloaded update is ready to install.';
+    sendStatusToWindow(message);
+    sendUpdateStateToWindow({
+      phase: 'error',
+      manual: true,
+      message,
+    });
+    throw new Error(message);
+  }
+
+  updateInstallInProgress = true;
+  sendStatusToWindow('Restarting to install update...');
+  sendUpdateStateToWindow({
+    phase: 'installing',
+    manual: true,
+    message: 'Restarting to install update...',
+  });
+
+  try {
+    await updateInstallStartingHandler?.();
+    autoUpdater.quitAndInstall(false, true);
+  } catch (err) {
+    updateInstallInProgress = false;
+    const error = err instanceof Error ? err : new Error(String(err));
+    sendStatusToWindow(`Update error: ${error.message}`);
+    sendUpdateStateToWindow({
+      phase: 'error',
+      manual: true,
+      message: `Update error: ${error.message}`,
+    });
+    throw error;
+  }
 };
 
 export const checkForUpdatesSilent = (): void => {

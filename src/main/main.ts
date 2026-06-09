@@ -35,8 +35,10 @@ import {
   initUpdater,
   checkForUpdates,
   checkForUpdatesSilent,
+  installDownloadedUpdate,
   isUpdateDisabled,
   setUpdateChannel,
+  setUpdateInstallStartingHandler,
   setUpdaterWindow,
 } from './updater';
 import { setUseSystemFFmpeg } from './ffmpegPath';
@@ -84,6 +86,7 @@ app.on('second-instance', () => {
 });
 
 let isConversionActive = false;
+let isUpdateInstallInProgress = false;
 let trustedRendererUrl: string | null = null;
 const handleNativeThemeUpdated = (): void => {
   mainWindow?.webContents.send('theme-changed', nativeTheme.shouldUseDarkColors ? 'dark' : 'light');
@@ -471,6 +474,21 @@ const saveSettings = (): void => {
   }
 };
 
+const prepareForUpdateInstall = async (): Promise<void> => {
+  isUpdateInstallInProgress = true;
+  if (!isConversionActive) {
+    return;
+  }
+
+  cancelConversion(true);
+  const stopped = await waitForConversionStop(3000);
+  if (!stopped) {
+    cancelConversion(true);
+    await waitForConversionStop(1500);
+  }
+  isConversionActive = false;
+};
+
 // ── Window state persistence ─────────────────────────────────────────────────
 
 interface WindowState {
@@ -637,7 +655,7 @@ const createWindow = (): void => {
 
   mainWindow.on('close', (e) => {
     saveWindowState();
-    if (isConversionActive) {
+    if (isConversionActive && !isUpdateInstallInProgress) {
       e.preventDefault();
       dialog
         .showMessageBox(mainWindow!, {
@@ -664,6 +682,7 @@ const createWindow = (): void => {
 
 app.whenReady().then(() => {
   loadSettings();
+  setUpdateInstallStartingHandler(prepareForUpdateInstall);
   nativeTheme.on('updated', handleNativeThemeUpdated);
   createWindow();
 
@@ -676,6 +695,9 @@ app.whenReady().then(() => {
 
 app.on('before-quit', async (e) => {
   nativeTheme.removeListener('updated', handleNativeThemeUpdated);
+  if (isUpdateInstallInProgress) {
+    return;
+  }
   if (isConversionActive) {
     e.preventDefault();
     cancelConversion(true);
@@ -998,6 +1020,11 @@ ipcMain.handle('save-settings', (event: IpcMainInvokeEvent, newSettings: SaveSet
 ipcMain.handle('check-for-updates', (event: IpcMainInvokeEvent) => {
   assertTrustedIpcSender(event);
   checkForUpdates();
+});
+
+ipcMain.handle('install-update', async (event: IpcMainInvokeEvent) => {
+  assertTrustedIpcSender(event);
+  await installDownloadedUpdate();
 });
 
 ipcMain.handle('is-updates-disabled', (event: IpcMainInvokeEvent) => {

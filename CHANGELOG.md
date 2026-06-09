@@ -8,10 +8,10 @@
 
 | <img height="20" src="https://github.com/user-attachments/assets/340d360e-79b1-4c70-bfab-d944085f75df" /> Windows            | <img height="20" src="https://github.com/user-attachments/assets/42d7e887-4616-4e8c-b1d3-e44e01340f8c" /> macOS | <img height="20" src="https://github.com/user-attachments/assets/e0cc4f33-4516-408b-9c5c-be71a3ac316b" /> Linux                                                                                                        |
 | :--------------------------------------------------------------------------------------------------------------------------- | :-------------------------------------------------------------------------------------------------------------- | :--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **[Universal EXE (x64/arm64)](https://github.com/BurntToasters/CONV2/releases/download/v1.4.0/CONV2-Win.exe)**               | **[Universal DMG](https://github.com/BurntToasters/CONV2/releases/download/v1.4.0/CONV2-MacOS-universal.dmg)**  | **AppImage:** [x64](https://github.com/BurntToasters/CONV2/releases/download/v1.4.0/CONV2-Linux-x86_64.AppImage) / [arm64](https://github.com/BurntToasters/CONV2/releases/download/v1.4.0/CONV2-Linux-arm64.AppImage) |
-| <div align="center"><!--<a href="#"><img src="https://get.microsoft.com/images/en-us%20light.svg" width="150"/></a>--></div> | **[Universal ZIP](https://github.com/BurntToasters/CONV2/releases/download/v1.4.0/CONV2-MacOS-universal.zip)**  | **DEB:** [x64](https://github.com/BurntToasters/CONV2/releases/download/v1.4.0/CONV2-Linux-amd64.deb) / [arm64](https://github.com/BurntToasters/CONV2/releases/download/v1.4.0/CONV2-Linux-arm64.deb)                 |
-| _See MSI note in releases_                                                                                                   |                                                                                                                 | **RPM:** [x64](https://github.com/BurntToasters/CONV2/releases/download/v1.4.0/CONV2-Linux-x86_64.rpm) / [arm64](https://github.com/BurntToasters/CONV2/releases/download/v1.4.0/CONV2-Linux-aarch64.rpm)              |
-|                                                                                                                              |                                                                                                                 | **Flatpak:** [x64](https://github.com/BurntToasters/CONV2/releases/download/v1.4.0/CONV2-Linux-x86_64.flatpak) / [arm64](https://github.com/BurntToasters/CONV2/releases/download/v1.4.0/CONV2-Linux-aarch64.flatpak)  |
+| **[Universal EXE (x64/arm64)](https://github.com/BurntToasters/CONV2/releases/download/v1.4.1/CONV2-Win.exe)**               | **[Universal DMG](https://github.com/BurntToasters/CONV2/releases/download/v1.4.1/CONV2-MacOS-universal.dmg)**  | **AppImage:** [x64](https://github.com/BurntToasters/CONV2/releases/download/v1.4.1/CONV2-Linux-x86_64.AppImage) / [arm64](https://github.com/BurntToasters/CONV2/releases/download/v1.4.1/CONV2-Linux-arm64.AppImage) |
+| <div align="center"><!--<a href="#"><img src="https://get.microsoft.com/images/en-us%20light.svg" width="150"/></a>--></div> | **[Universal ZIP](https://github.com/BurntToasters/CONV2/releases/download/v1.4.1/CONV2-MacOS-universal.zip)**  | **DEB:** [x64](https://github.com/BurntToasters/CONV2/releases/download/v1.4.1/CONV2-Linux-amd64.deb) / [arm64](https://github.com/BurntToasters/CONV2/releases/download/v1.4.1/CONV2-Linux-arm64.deb)                 |
+| _See MSI note in releases_                                                                                                   |                                                                                                                 | **RPM:** [x64](https://github.com/BurntToasters/CONV2/releases/download/v1.4.1/CONV2-Linux-x86_64.rpm) / [arm64](https://github.com/BurntToasters/CONV2/releases/download/v1.4.1/CONV2-Linux-aarch64.rpm)              |
+|                                                                                                                              |                                                                                                                 | **Flatpak:** [x64](https://github.com/BurntToasters/CONV2/releases/download/v1.4.1/CONV2-Linux-x86_64.flatpak) / [arm64](https://github.com/BurntToasters/CONV2/releases/download/v1.4.1/CONV2-Linux-aarch64.flatpak)  |
 
 ### ℹ️ Enjoying CONV2? Consider [❤️ Supporting Me! ❤️](https://rosie.run/support)
 
@@ -28,6 +28,15 @@
 </details> -->
 
 ---
+
+## Changes in `v1.4.1:`
+
+- **macOS:** Fixed an issue where the updater was getting stuck and would not be able to restart the app to complete the update process.
+- **Misc:**
+
+* Edge case fixes.
+* General Improvements.
+* Updated packages.
 
 ## Changes in `v1.4.0:`
 

@@ -111,6 +111,7 @@ export interface UpdateStatePayload {
     | 'not-available'
     | 'downloading'
     | 'downloaded'
+    | 'installing'
     | 'error'
     | 'disabled'
     | 'already-checking';
@@ -169,6 +170,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   // Updates
   checkForUpdates: (): Promise<void> => ipcRenderer.invoke('check-for-updates'),
+  installUpdate: (): Promise<void> => ipcRenderer.invoke('install-update'),
   isUpdatesDisabled: (): Promise<boolean> => ipcRenderer.invoke('is-updates-disabled'),
   onUpdateStatus: (callback: (message: string) => void): (() => void) =>
     subscribe('update-status', callback),
@@ -227,6 +229,7 @@ declare global {
       getDefaultAdvancedFormatSettings: () => Promise<AdvancedFormatSettings>;
       saveSettings: (settings: SaveSettingsPayload) => Promise<void>;
       checkForUpdates: () => Promise<void>;
+      installUpdate: () => Promise<void>;
       isUpdatesDisabled: () => Promise<boolean>;
       onUpdateStatus: (callback: (message: string) => void) => () => void;
       onUpdateState: (callback: (payload: UpdateStatePayload) => void) => () => void;
