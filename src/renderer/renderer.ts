@@ -230,6 +230,7 @@ interface UpdateStatePayload {
     | 'not-available'
     | 'downloading'
     | 'downloaded'
+    | 'installing'
     | 'error'
     | 'disabled'
     | 'already-checking';
@@ -311,6 +312,7 @@ let convertBtnOriginalHTML = '';
 let checkUpdateDefaultHTML = '';
 let manualUpdateCheckInProgress = false;
 let updateDownloadInProgress = false;
+let updateReadyToInstall = false;
 let ffmpegInstalled = true;
 let cancelRequested = false;
 let closeDynamicModal: (() => void) | null = null;
@@ -1976,6 +1978,12 @@ const getDownloadingUpdateButtonHTML = (percent?: number): string => {
   return `<svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="12 5 12 19"/><polyline points="19 12 12 19 5 12"/></svg>Downloading...${suffix}`;
 };
 
+const getInstallUpdateButtonHTML = (): string =>
+  '<svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><polyline points="21 3 21 9 15 9"/></svg>Restart Now';
+
+const getInstallingUpdateButtonHTML = (): string =>
+  '<svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><polyline points="21 3 21 9 15 9"/></svg>Restarting...';
+
 const getUpdateAvailableButtonHTML = (): string =>
   '<svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>Update Available!';
 
@@ -3107,8 +3115,19 @@ const setupEventListeners = () => {
   });
 
   elements.checkUpdateBtn.addEventListener('click', () => {
+    if (updateReadyToInstall) {
+      updateReadyToInstall = false;
+      setCheckUpdateButtonState(getInstallingUpdateButtonHTML(), true);
+      window.electronAPI.installUpdate().catch(() => {
+        updateReadyToInstall = true;
+        setCheckUpdateButtonState(getInstallUpdateButtonHTML(), false, true);
+      });
+      return;
+    }
+
     manualUpdateCheckInProgress = true;
     updateDownloadInProgress = false;
+    updateReadyToInstall = false;
     setCheckUpdateButtonState(getCheckingUpdateButtonHTML(), true);
     window.electronAPI.checkForUpdates();
   });
@@ -3119,12 +3138,14 @@ const setupEventListeners = () => {
     if (phase === 'checking') {
       manualUpdateCheckInProgress = payload.manual;
       updateDownloadInProgress = false;
+      updateReadyToInstall = false;
       setCheckUpdateButtonState(getCheckingUpdateButtonHTML(), true);
       return;
     }
 
     if (phase === 'downloading') {
       updateDownloadInProgress = true;
+      updateReadyToInstall = false;
       setCheckUpdateButtonState(getDownloadingUpdateButtonHTML(percent), true);
       return;
     }
@@ -3134,14 +3155,31 @@ const setupEventListeners = () => {
       setCheckUpdateButtonState(getUpdateAvailableButtonHTML(), false, true);
       manualUpdateCheckInProgress = false;
       updateDownloadInProgress = false;
+      updateReadyToInstall = false;
       return;
     }
 
-    if (phase === 'not-available' || phase === 'downloaded' || phase === 'disabled') {
+    if (phase === 'installing') {
+      updateDownloadInProgress = false;
+      updateReadyToInstall = false;
+      setCheckUpdateButtonState(getInstallingUpdateButtonHTML(), true);
+      return;
+    }
+
+    if (phase === 'downloaded') {
+      updateDownloadInProgress = false;
+      updateReadyToInstall = true;
+      elements.updateBadge.style.display = 'flex';
+      setCheckUpdateButtonState(getInstallUpdateButtonHTML(), false, true);
+      return;
+    }
+
+    if (phase === 'not-available' || phase === 'disabled') {
       elements.updateBadge.style.display = 'none';
       setCheckUpdateButtonState(checkUpdateDefaultHTML, false);
       manualUpdateCheckInProgress = false;
       updateDownloadInProgress = false;
+      updateReadyToInstall = false;
       return;
     }
 
@@ -3153,6 +3191,7 @@ const setupEventListeners = () => {
     if (phase === 'error') {
       manualUpdateCheckInProgress = false;
       updateDownloadInProgress = false;
+      updateReadyToInstall = false;
       setCheckUpdateButtonState(checkUpdateDefaultHTML, false);
       elements.updateBadge.style.display = 'none';
     }
