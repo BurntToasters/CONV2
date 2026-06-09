@@ -202,26 +202,26 @@ test('gif presets map to expected default tier values', () => {
   const expectedByPreset = {
     'gif-best-quality': {
       fps: 15,
-      maxDimension: 1080,
+      maxDimension: 720,
       maxColors: 256,
-      dither: 'sierra2_4a',
+      dither: 'bayer',
     },
     'gif-quality': {
       fps: 12,
-      maxDimension: 900,
-      maxColors: 224,
-      dither: 'sierra2_4a',
-    },
-    'gif-balanced': {
-      fps: 10,
-      maxDimension: 720,
+      maxDimension: 600,
       maxColors: 192,
       dither: 'bayer',
     },
-    'gif-best-compression': {
-      fps: 8,
-      maxDimension: 540,
+    'gif-balanced': {
+      fps: 12,
+      maxDimension: 480,
       maxColors: 128,
+      dither: 'bayer',
+    },
+    'gif-best-compression': {
+      fps: 10,
+      maxDimension: 360,
+      maxColors: 64,
       dither: 'none',
     },
   };
@@ -268,7 +268,7 @@ test('gif presets normalize malformed advanced settings at arg boundary', () => 
   assert.ok(filter.includes('fps=60'));
   assert.ok(filter.includes('scale=160:160'));
   assert.ok(filter.includes('max_colors=256'));
-  assert.ok(filter.includes('dither=sierra2_4a'));
+  assert.ok(filter.includes('dither=bayer'));
   assert.equal(args[args.indexOf('-loop') + 1], '0');
 });
 
@@ -294,6 +294,30 @@ test('av1 preset uses advanced quality, cpu preset, and audio bitrate', () => {
   assert.equal(args[args.indexOf('-crf') + 1], '12');
   assert.equal(args[args.indexOf('-preset') + 1], '3');
   assert.equal(args[args.indexOf('-b:a') + 1], '320k');
+});
+
+test('av1 CPU encodes are 10-bit and apply svtav1-params on every tier', () => {
+  const av1CpuPresetIds = [
+    'av1-balanced',
+    'av1-quality',
+    'av1-best-quality',
+    'av1-best-compression',
+    'av1-compression',
+  ];
+  for (const id of av1CpuPresetIds) {
+    const preset = presets.find((entry) => entry.id === id);
+    assert.ok(preset, `missing ${id}`);
+    const args = preset.getArgs('input.mp4', 'output.mp4', 'cpu');
+    assert.ok(args.includes('-svtav1-params'), `${id}: missing -svtav1-params`);
+    assert.equal(args[args.indexOf('-pix_fmt') + 1], 'yuv420p10le', `${id}: must encode 10-bit`);
+  }
+});
+
+test('av1 GPU encodes do not force libsvtav1-only flags', () => {
+  const preset = presets.find((entry) => entry.id === 'av1-best-quality');
+  const args = preset.getArgs('input.mp4', 'output.mp4', 'nvidia');
+  assert.ok(!args.includes('-svtav1-params'), 'GPU AV1 must not pass -svtav1-params');
+  assert.ok(!args.includes('-pix_fmt'), 'GPU AV1 must not force pix_fmt in preset');
 });
 
 test('h264 preset uses advanced quality, preset, and audio bitrate', () => {

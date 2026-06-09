@@ -176,8 +176,7 @@ const buildAv1Args = (
   output: string,
   gpu: GPUVendor,
   tier: keyof Av1TierCollection,
-  context?: PresetContext,
-  includeAdvancedParams = false
+  context?: PresetContext
 ): string[] => {
   const tierSettings = getAv1TierSettings(tier, context);
   const encoder = getVideoEncoder('av1', gpu);
@@ -195,9 +194,12 @@ const buildAv1Args = (
 
   if (gpu === 'cpu') {
     args.push('-preset', String(tierSettings.cpuPreset));
-    if (includeAdvancedParams) {
-      args.push('-svtav1-params', SVTAV1_ADVANCED_PARAMS);
-    }
+    // libsvtav1 tuning applies to every tier for consistent perceptual quality.
+    args.push('-svtav1-params', SVTAV1_ADVANCED_PARAMS);
+    // 10-bit encoding improves AV1 compression efficiency and reduces banding,
+    // even from an 8-bit source. Runtime injection may also add this for 10-bit
+    // sources; a duplicate flag with the same value is harmless.
+    args.push('-pix_fmt', 'yuv420p10le');
   }
 
   args.push('-c:a', 'libopus', '-b:a', toBitrateKbps(tierSettings.audioBitrateKbps), output);
@@ -373,12 +375,12 @@ export const presets: Preset[] = [
   {
     id: 'av1-best-quality',
     name: 'AV1 - Best Quality',
-    description: 'Maximum quality with best compression (CRF 15, preset 2)',
+    description: 'Maximum quality, 10-bit, with strong compression (CRF 18, preset 2)',
     category: 'av1',
     gpuCodec: 'av1',
     extension: 'mp4',
     getArgs: (input, output, gpu, context) =>
-      buildAv1Args(input, output, gpu, 'bestQuality', context, true),
+      buildAv1Args(input, output, gpu, 'bestQuality', context),
   },
   {
     id: 'av1-best-compression',
@@ -388,7 +390,7 @@ export const presets: Preset[] = [
     gpuCodec: 'av1',
     extension: 'mp4',
     getArgs: (input, output, gpu, context) =>
-      buildAv1Args(input, output, gpu, 'bestCompression', context, true),
+      buildAv1Args(input, output, gpu, 'bestCompression', context),
   },
   {
     id: 'av1-compression',

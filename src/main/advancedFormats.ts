@@ -227,28 +227,33 @@ const cloneAviTierCollection = (tiers: AviTierCollection): AviTierCollection => 
 export const createDefaultGifAdvancedSettings = (): GifAdvancedSettings => ({
   loopMode: 'forever',
   tiers: {
+    // Bayer (ordered) dithering is deterministic per pixel position, so static
+    // regions stay byte-identical frame to frame and the GIF inter-frame
+    // transparency delta compresses them away. Error-diffusion dithers
+    // (sierra2_4a/floyd_steinberg) inject per-frame noise that defeats this and
+    // bloats the file, so they are no longer the default for the quality tiers.
     bestQuality: {
       fps: 15,
-      maxDimension: 1080,
+      maxDimension: 720,
       maxColors: 256,
-      dither: 'sierra2_4a',
+      dither: 'bayer',
     },
     quality: {
       fps: 12,
-      maxDimension: 900,
-      maxColors: 224,
-      dither: 'sierra2_4a',
-    },
-    balanced: {
-      fps: 10,
-      maxDimension: 720,
+      maxDimension: 600,
       maxColors: 192,
       dither: 'bayer',
     },
-    bestCompression: {
-      fps: 8,
-      maxDimension: 540,
+    balanced: {
+      fps: 12,
+      maxDimension: 480,
       maxColors: 128,
+      dither: 'bayer',
+    },
+    bestCompression: {
+      fps: 10,
+      maxDimension: 360,
+      maxColors: 64,
       dither: 'none',
     },
   },
@@ -256,11 +261,11 @@ export const createDefaultGifAdvancedSettings = (): GifAdvancedSettings => ({
 
 export const createDefaultAv1AdvancedSettings = (): Av1AdvancedSettings => ({
   tiers: {
-    bestQuality: { quality: 15, cpuPreset: 2, audioBitrateKbps: 256 },
-    quality: { quality: 20, cpuPreset: 4, audioBitrateKbps: 192 },
+    bestQuality: { quality: 18, cpuPreset: 2, audioBitrateKbps: 256 },
+    quality: { quality: 24, cpuPreset: 4, audioBitrateKbps: 192 },
     balanced: { quality: 30, cpuPreset: 6, audioBitrateKbps: 128 },
     bestCompression: { quality: 38, cpuPreset: 2, audioBitrateKbps: 96 },
-    compression: { quality: 40, cpuPreset: 6, audioBitrateKbps: 96 },
+    compression: { quality: 44, cpuPreset: 6, audioBitrateKbps: 96 },
   },
 });
 

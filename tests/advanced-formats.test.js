@@ -12,31 +12,31 @@ test('normalizeAdvancedFormatSettings returns defaults when values are missing',
   assert.equal(normalized.gif.loopMode, 'forever');
   assert.deepEqual(normalized.gif.tiers.bestQuality, {
     fps: 15,
-    maxDimension: 1080,
+    maxDimension: 720,
     maxColors: 256,
-    dither: 'sierra2_4a',
+    dither: 'bayer',
   });
   assert.deepEqual(normalized.gif.tiers.quality, {
     fps: 12,
-    maxDimension: 900,
-    maxColors: 224,
-    dither: 'sierra2_4a',
-  });
-  assert.deepEqual(normalized.gif.tiers.balanced, {
-    fps: 10,
-    maxDimension: 720,
+    maxDimension: 600,
     maxColors: 192,
     dither: 'bayer',
   });
-  assert.deepEqual(normalized.gif.tiers.bestCompression, {
-    fps: 8,
-    maxDimension: 540,
+  assert.deepEqual(normalized.gif.tiers.balanced, {
+    fps: 12,
+    maxDimension: 480,
     maxColors: 128,
+    dither: 'bayer',
+  });
+  assert.deepEqual(normalized.gif.tiers.bestCompression, {
+    fps: 10,
+    maxDimension: 360,
+    maxColors: 64,
     dither: 'none',
   });
 
   assert.deepEqual(normalized.av1.tiers.bestQuality, {
-    quality: 15,
+    quality: 18,
     cpuPreset: 2,
     audioBitrateKbps: 256,
   });
@@ -79,7 +79,7 @@ test('normalizeAdvancedFormatSettings clamps invalid gif tier values', () => {
   assert.equal(normalized.gif.tiers.bestQuality.fps, 60);
   assert.equal(normalized.gif.tiers.bestQuality.maxDimension, 160);
   assert.equal(normalized.gif.tiers.bestQuality.maxColors, 256);
-  assert.equal(normalized.gif.tiers.bestQuality.dither, 'sierra2_4a');
+  assert.equal(normalized.gif.tiers.bestQuality.dither, 'bayer');
 });
 
 test('mergeAdvancedFormatSettings applies partial nested gif updates', () => {

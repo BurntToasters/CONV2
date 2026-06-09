@@ -1,54 +1,55 @@
 :root {
-  --bg-primary: #09090b;
-  --bg-secondary: rgba(20, 20, 26, 0.95);
-  --bg-tertiary: rgba(26, 26, 34, 0.95);
-  --bg-elevated: rgba(34, 34, 44, 0.95);
-  --bg-surface: rgba(28, 28, 36, 0.95);
-  --bg-hover: rgba(40, 40, 50, 0.95);
+  /* Dark theme — flat, native-leaning neutral grays */
+  --bg-primary: #1e1e22;
+  --bg-secondary: #28282d;
+  --bg-tertiary: #303036;
+  --bg-elevated: #2c2c31;
+  --bg-surface: #2a2a2f;
+  --bg-hover: #34343a;
 
-  --text-primary: #fafafa;
-  --text-secondary: #a1a1aa;
-  --text-muted: #71717a;
+  --text-primary: #f2f2f4;
+  --text-secondary: #b4b4ba;
+  --text-muted: #88888f;
 
-  --accent: #8b5cf6;
-  --accent-secondary: #06b6d4;
-  --accent-hover: #a78bfa;
-  --accent-glow: rgba(139, 92, 246, 0.3);
-  --accent-glow-strong: rgba(139, 92, 246, 0.45);
+  /* Single restrained system accent (macOS blue) */
+  --accent: #0a84ff;
+  --accent-secondary: #0a84ff;
+  --accent-hover: #3a9bff;
+  --accent-glow: rgba(10, 132, 255, 0.35);
+  --accent-glow-strong: rgba(10, 132, 255, 0.45);
 
-  --link: #a5b4fc;
-  --success: #22c55e;
-  --success-bg: rgba(34, 197, 94, 0.1);
-  --success-glow: rgba(34, 197, 94, 0.25);
-  --warning: #f59e0b;
-  --warning-bg: rgba(245, 158, 11, 0.1);
-  --error: #ef4444;
-  --error-bg: rgba(239, 68, 68, 0.1);
+  --link: #4ea1ff;
+  --success: #30d158;
+  --success-bg: rgba(48, 209, 88, 0.12);
+  --success-glow: rgba(48, 209, 88, 0.25);
+  --warning: #ff9f0a;
+  --warning-bg: rgba(255, 159, 10, 0.12);
+  --error: #ff453a;
+  --error-bg: rgba(255, 69, 58, 0.12);
 
-  --border: rgba(255, 255, 255, 0.07);
-  --border-subtle: rgba(255, 255, 255, 0.04);
-  --border-hover: rgba(255, 255, 255, 0.13);
-  --border-glow: rgba(139, 92, 246, 0.3);
+  --border: rgba(255, 255, 255, 0.09);
+  --border-subtle: rgba(255, 255, 255, 0.05);
+  --border-hover: rgba(255, 255, 255, 0.16);
+  --border-glow: var(--accent);
 
-  --shadow: 0 2px 12px rgba(0, 0, 0, 0.3);
-  --shadow-lg: 0 8px 32px rgba(0, 0, 0, 0.4);
-  --shadow-glow: 0 0 24px var(--accent-glow);
+  /* Flat: minimal soft shadows, no glow */
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.25);
+  --shadow-lg: 0 10px 30px rgba(0, 0, 0, 0.45);
+  --shadow-glow: none;
 
-  --radius-xs: 6px;
-  --radius-sm: 8px;
-  --radius-md: 12px;
-  --radius-lg: 16px;
-  --radius-xl: 20px;
+  /* Tighter, native-feeling radii */
+  --radius-xs: 5px;
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 10px;
+  --radius-xl: 12px;
   --radius-full: 9999px;
 
-  --transition: 0.2s cubic-bezier(0.4, 0, 0.2, 1);
-  --transition-spring: 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+  --transition: 0.15s ease;
+  --transition-spring: 0.18s ease;
 
-  --gradient-border: linear-gradient(135deg, var(--accent), var(--accent-secondary));
-  --gradient-mesh:
-    radial-gradient(ellipse 60% 40% at 10% 0%, rgba(139, 92, 246, 0.12), transparent 50%),
-    radial-gradient(ellipse 50% 50% at 90% 20%, rgba(6, 182, 212, 0.08), transparent 50%),
-    radial-gradient(ellipse 40% 40% at 50% 100%, rgba(139, 92, 246, 0.06), transparent 50%);
+  --gradient-border: var(--accent);
+  --gradient-mesh: none;
 
   --text-xs: 10px;
   --text-sm: 12px;
@@ -56,45 +57,61 @@
   --text-lg: 15px;
   --text-xl: 18px;
 
-  --tier-best: #34d399;
-  --tier-quality: #22d3ee;
-  --tier-balanced: #fbbf24;
-  --tier-compression: #fb923c;
-  --tier-small: #f472b6;
-  --tier-fast: #a78bfa;
+  --tier-best: #30d158;
+  --tier-quality: #0a84ff;
+  --tier-balanced: #ff9f0a;
+  --tier-compression: #ff8e3c;
+  --tier-small: #ff6482;
+  --tier-fast: #5e9bff;
 
-  --intent-quality: #22d3ee;
-  --intent-speed: #a78bfa;
-  --intent-size: #fb923c;
-  --intent-default: #64748b;
+  --intent-quality: #0a84ff;
+  --intent-speed: #5e9bff;
+  --intent-size: #ff8e3c;
+  --intent-default: #88888f;
 }
 
 [data-theme='light'] {
-  --bg-primary: #f8fafc;
-  --bg-secondary: rgba(255, 255, 255, 0.95);
-  --bg-tertiary: rgba(241, 245, 249, 0.95);
-  --bg-elevated: rgba(255, 255, 255, 0.98);
-  --bg-surface: rgba(248, 250, 252, 0.95);
-  --bg-hover: rgba(241, 245, 249, 0.95);
+  /* Light theme — flat, native-leaning neutral grays */
+  --bg-primary: #f5f5f7;
+  --bg-secondary: #ffffff;
+  --bg-tertiary: #ececee;
+  --bg-elevated: #ffffff;
+  --bg-surface: #fbfbfd;
+  --bg-hover: #f0f0f2;
 
-  --text-primary: #0f172a;
-  --text-secondary: #475569;
-  --text-muted: #94a3b8;
+  --text-primary: #1d1d1f;
+  --text-secondary: #4b4b50;
+  --text-muted: #86868b;
 
-  --link: #6366f1;
+  --accent: #007aff;
+  --accent-secondary: #007aff;
+  --accent-hover: #2f93ff;
+  --accent-glow: rgba(0, 122, 255, 0.25);
+  --accent-glow-strong: rgba(0, 122, 255, 0.35);
 
-  --border: rgba(0, 0, 0, 0.08);
-  --border-subtle: rgba(0, 0, 0, 0.04);
-  --border-hover: rgba(0, 0, 0, 0.14);
+  --link: #007aff;
+  --success: #28a745;
+  --success-bg: rgba(40, 167, 69, 0.1);
+  --warning: #c77700;
+  --warning-bg: rgba(199, 119, 0, 0.1);
+  --error: #d70015;
+  --error-bg: rgba(215, 0, 21, 0.08);
 
-  --shadow: 0 2px 12px rgba(0, 0, 0, 0.06);
-  --shadow-lg: 0 8px 32px rgba(0, 0, 0, 0.1);
-  --accent-glow: rgba(139, 92, 246, 0.12);
-  --accent-glow-strong: rgba(139, 92, 246, 0.2);
+  --border: rgba(0, 0, 0, 0.1);
+  --border-subtle: rgba(0, 0, 0, 0.06);
+  --border-hover: rgba(0, 0, 0, 0.2);
 
-  --gradient-mesh:
-    radial-gradient(ellipse 60% 40% at 10% 0%, rgba(139, 92, 246, 0.06), transparent 50%),
-    radial-gradient(ellipse 50% 50% at 90% 20%, rgba(6, 182, 212, 0.04), transparent 50%);
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
+  --shadow-lg: 0 10px 30px rgba(0, 0, 0, 0.14);
+
+  --tier-best: #28a745;
+  --tier-quality: #007aff;
+  --tier-balanced: #c77700;
+  --tier-compression: #d2691e;
+  --tier-small: #e8517f;
+  --tier-fast: #4a90d9;
+
+  --gradient-mesh: none;
 }
 
 * {
@@ -126,12 +143,7 @@ body {
 }
 
 body::before {
-  content: '';
-  position: fixed;
-  inset: 0;
-  background: var(--gradient-mesh);
-  pointer-events: none;
-  z-index: 0;
+  content: none;
 }
 
 .app {
@@ -210,7 +222,6 @@ header {
 .settings-btn:hover {
   background: var(--bg-hover);
   border-color: var(--border-hover);
-  transform: rotate(30deg);
 }
 
 .settings-btn img {
@@ -238,7 +249,6 @@ header {
   display: flex;
   align-items: center;
   justify-content: center;
-  box-shadow: 0 0 8px rgba(239, 68, 68, 0.5);
   z-index: 2;
   animation: badgePulse 2s ease-in-out 3;
 }
@@ -319,8 +329,10 @@ header {
   border-color: var(--accent);
   border-style: solid;
   background: var(--bg-tertiary);
-  transform: translateY(-1px);
-  box-shadow: var(--shadow-glow);
+}
+
+.drop-zone.dragover {
+  background: color-mix(in srgb, var(--accent) 8%, var(--bg-tertiary));
 }
 
 .drop-zone-content {
@@ -338,7 +350,6 @@ header {
 
 .drop-zone:hover .drop-zone-icon {
   opacity: 0.8;
-  transform: scale(1.05);
 }
 
 .drop-zone-title {
@@ -425,13 +436,16 @@ header {
 .options-panel.options-redesign {
   display: grid;
   gap: 10px;
-  padding: 8px;
+  padding: 0;
+  background: transparent;
+  border: none;
+  margin-top: 10px;
 }
 
 .panel-shell {
-  border: 1px solid var(--border-subtle);
+  border: 1px solid var(--border);
   border-radius: var(--radius-md);
-  background: rgba(255, 255, 255, 0.01);
+  background: var(--bg-surface);
   overflow: hidden;
 }
 
@@ -455,7 +469,7 @@ header {
 }
 
 .panel-toggle:hover {
-  background: rgba(255, 255, 255, 0.02);
+  background: var(--bg-hover);
 }
 
 .panel-toggle-title-group {
@@ -577,7 +591,7 @@ header {
 .preset-parent-list {
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-md);
-  background: rgba(255, 255, 255, 0.01);
+  background: var(--bg-primary);
   padding: 6px;
   display: flex;
   flex-direction: column;
@@ -609,8 +623,8 @@ header {
 }
 
 .preset-parent-btn.is-active {
-  border-color: rgba(6, 182, 212, 0.35);
-  background: rgba(6, 182, 212, 0.08);
+  border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
   color: var(--text-primary);
 }
 
@@ -635,7 +649,7 @@ header {
 .preset-selection-preview {
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-sm);
-  background: rgba(6, 182, 212, 0.06);
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
   padding: 8px 10px;
   min-height: 64px;
   display: grid;
@@ -673,7 +687,7 @@ header {
   overflow-y: auto;
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-md);
-  background: rgba(255, 255, 255, 0.01);
+  background: var(--bg-primary);
   padding: 6px;
 }
 
@@ -724,14 +738,14 @@ header {
 .preset-card:hover {
   border-color: var(--border-hover);
   color: var(--text-primary);
-  background: rgba(255, 255, 255, 0.02);
+  background: var(--bg-hover);
 }
 
 .preset-card.is-selected {
-  border-color: rgba(6, 182, 212, 0.4);
-  background: rgba(6, 182, 212, 0.08);
+  border-color: color-mix(in srgb, var(--accent) 50%, transparent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
   color: var(--text-primary);
-  box-shadow: inset 3px 0 0 var(--accent-secondary);
+  box-shadow: inset 2px 0 0 var(--accent);
 }
 
 .preset-card + .preset-card {
@@ -794,8 +808,8 @@ header {
 }
 
 .mode-chip input:checked + span {
-  border-color: rgba(148, 163, 184, 0.62);
-  background: rgba(148, 163, 184, 0.12);
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
   color: var(--text-primary);
   font-weight: 700;
 }
@@ -954,9 +968,9 @@ select option {
 }
 
 .btn {
-  padding: 10px 20px;
+  padding: 9px 18px;
   border: none;
-  border-radius: var(--radius-full);
+  border-radius: var(--radius-sm);
   font-size: var(--text-base);
   font-weight: 600;
   cursor: pointer;
@@ -970,7 +984,7 @@ select option {
 }
 
 .btn:active {
-  transform: scale(0.97);
+  transform: scale(0.98);
 }
 
 .btn-icon {
@@ -980,25 +994,22 @@ select option {
 }
 
 .btn-primary {
-  background: linear-gradient(135deg, var(--accent) 0%, #7c3aed 100%);
+  background: var(--accent);
   color: white;
-  box-shadow: 0 2px 12px var(--accent-glow);
 }
 
 .btn-primary:hover:not(:disabled) {
-  transform: translateY(-1px);
-  box-shadow: 0 4px 20px var(--accent-glow-strong);
+  background: var(--accent-hover);
 }
 
 .btn-primary:active:not(:disabled) {
-  transform: translateY(0) scale(0.97);
+  transform: scale(0.98);
 }
 
 .btn-primary:disabled {
   opacity: 0.4;
   cursor: not-allowed;
   transform: none;
-  box-shadow: none;
 }
 
 .btn-secondary {
@@ -1027,14 +1038,14 @@ select option {
 }
 
 .btn-update-available {
-  background: linear-gradient(135deg, #06b6d4 0%, #0891b2 100%);
+  background: var(--accent);
   color: white;
-  border-color: #06b6d4;
+  border-color: var(--accent);
 }
 
 .btn-update-available:hover {
-  background: linear-gradient(135deg, #22d3ee 0%, #06b6d4 100%);
-  box-shadow: 0 4px 16px rgba(6, 182, 212, 0.4);
+  background: var(--accent-hover);
+  border-color: var(--accent-hover);
 }
 
 .btn-sm {
@@ -1101,19 +1112,11 @@ select option {
 
 .progress-fill {
   height: 100%;
-  background: linear-gradient(90deg, var(--accent), var(--accent-secondary));
+  background: var(--accent);
   border-radius: var(--radius-full);
   transition: width 0.3s ease;
   width: 0%;
   position: relative;
-}
-
-.progress-fill::after {
-  content: '';
-  position: absolute;
-  inset: 0;
-  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.2), transparent);
-  animation: shimmer 1.2s infinite;
 }
 
 @keyframes shimmer {
@@ -1257,9 +1260,9 @@ select option {
 .modal-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.6);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
+  background: rgba(0, 0, 0, 0.45);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
   display: none;
   align-items: center;
   justify-content: center;
@@ -1290,12 +1293,12 @@ select option {
 .modal {
   background: var(--bg-elevated);
   border: 1px solid var(--border);
-  border-radius: var(--radius-xl);
+  border-radius: var(--radius-lg);
   padding: 24px;
   width: 100%;
   max-width: 400px;
   box-shadow: var(--shadow-lg);
-  animation: modalIn 0.25s cubic-bezier(0.34, 1.26, 0.64, 1);
+  animation: modalIn 0.16s ease;
   max-height: 85vh;
   overflow-y: auto;
 }
@@ -1303,7 +1306,7 @@ select option {
 @keyframes modalIn {
   from {
     opacity: 0;
-    transform: scale(0.95) translateY(16px);
+    transform: scale(0.98) translateY(8px);
   }
   to {
     opacity: 1;
@@ -1343,7 +1346,6 @@ select option {
   background: var(--bg-hover);
   color: var(--text-primary);
   border-color: var(--border-hover);
-  transform: rotate(90deg);
 }
 
 .modal-body {

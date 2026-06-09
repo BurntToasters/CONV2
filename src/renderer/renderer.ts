@@ -2070,7 +2070,7 @@ const buildLicenseEntries = (
       name: 'FFmpeg binaries',
       license: 'GPL-2.0-or-later',
       link: 'https://github.com/BurntToasters/ffmpeg-static-builds',
-      note: 'Pre-built FFmpeg 8.0 static binaries for all platforms. Source code available at the linked repository.',
+      note: 'Pre-built FFmpeg 8.1 static binaries (macOS Intel/x64 remains 8.0.1 — no hardware to rebuild). Source code available at the linked repository.',
       isSpecial: true,
     },
     {
