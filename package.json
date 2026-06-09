@@ -111,6 +111,9 @@
   "dependencies": {
     "electron-updater": "^6.8.3"
   },
+  "overrides": {
+    "yauzl": "^3.3.1"
+  },
   "build": {
     "appId": "com.burnttoasters.conv2",
     "productName": "CONV2",
