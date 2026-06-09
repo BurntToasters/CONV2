@@ -1,6 +1,7 @@
-Place macOS ARM64 (Apple Silicon) FFmpeg binaries here:
+Place macOS arm64 (Apple Silicon) FFmpeg binaries here:
 - ffmpeg
 - ffprobe
 
-Download from: https://www.osxexperts.net/
+Build from: https://github.com/BurntToasters/ffmpeg-static-builds
+Version: FFmpeg 8.1 (GPL static)
 Ensure execute permissions: chmod +x ffmpeg ffprobe

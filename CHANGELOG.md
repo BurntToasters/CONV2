@@ -8,10 +8,10 @@
 
 | <img height="20" src="https://github.com/user-attachments/assets/340d360e-79b1-4c70-bfab-d944085f75df" /> Windows            | <img height="20" src="https://github.com/user-attachments/assets/42d7e887-4616-4e8c-b1d3-e44e01340f8c" /> macOS | <img height="20" src="https://github.com/user-attachments/assets/e0cc4f33-4516-408b-9c5c-be71a3ac316b" /> Linux                                                                                                        |
 | :--------------------------------------------------------------------------------------------------------------------------- | :-------------------------------------------------------------------------------------------------------------- | :--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **[Universal EXE (x64/arm64)](https://github.com/BurntToasters/CONV2/releases/download/v1.3.3/CONV2-Win.exe)**               | **[Universal DMG](https://github.com/BurntToasters/CONV2/releases/download/v1.3.3/CONV2-MacOS-universal.dmg)**  | **AppImage:** [x64](https://github.com/BurntToasters/CONV2/releases/download/v1.3.3/CONV2-Linux-x86_64.AppImage) / [arm64](https://github.com/BurntToasters/CONV2/releases/download/v1.3.3/CONV2-Linux-arm64.AppImage) |
-| <div align="center"><!--<a href="#"><img src="https://get.microsoft.com/images/en-us%20light.svg" width="150"/></a>--></div> | **[Universal ZIP](https://github.com/BurntToasters/CONV2/releases/download/v1.3.3/CONV2-MacOS-universal.zip)**  | **DEB:** [x64](https://github.com/BurntToasters/CONV2/releases/download/v1.3.3/CONV2-Linux-amd64.deb) / [arm64](https://github.com/BurntToasters/CONV2/releases/download/v1.3.3/CONV2-Linux-arm64.deb)                 |
-| _See MSI note in releases_                                                                                                   |                                                                                                                 | **RPM:** [x64](https://github.com/BurntToasters/CONV2/releases/download/v1.3.3/CONV2-Linux-x86_64.rpm) / [arm64](https://github.com/BurntToasters/CONV2/releases/download/v1.3.3/CONV2-Linux-aarch64.rpm)              |
-|                                                                                                                              |                                                                                                                 | **Flatpak:** [x64](https://github.com/BurntToasters/CONV2/releases/download/v1.3.3/CONV2-Linux-x86_64.flatpak) / [arm64](https://github.com/BurntToasters/CONV2/releases/download/v1.3.3/CONV2-Linux-aarch64.flatpak)  |
+| **[Universal EXE (x64/arm64)](https://github.com/BurntToasters/CONV2/releases/download/v1.4.0/CONV2-Win.exe)**               | **[Universal DMG](https://github.com/BurntToasters/CONV2/releases/download/v1.4.0/CONV2-MacOS-universal.dmg)**  | **AppImage:** [x64](https://github.com/BurntToasters/CONV2/releases/download/v1.4.0/CONV2-Linux-x86_64.AppImage) / [arm64](https://github.com/BurntToasters/CONV2/releases/download/v1.4.0/CONV2-Linux-arm64.AppImage) |
+| <div align="center"><!--<a href="#"><img src="https://get.microsoft.com/images/en-us%20light.svg" width="150"/></a>--></div> | **[Universal ZIP](https://github.com/BurntToasters/CONV2/releases/download/v1.4.0/CONV2-MacOS-universal.zip)**  | **DEB:** [x64](https://github.com/BurntToasters/CONV2/releases/download/v1.4.0/CONV2-Linux-amd64.deb) / [arm64](https://github.com/BurntToasters/CONV2/releases/download/v1.4.0/CONV2-Linux-arm64.deb)                 |
+| _See MSI note in releases_                                                                                                   |                                                                                                                 | **RPM:** [x64](https://github.com/BurntToasters/CONV2/releases/download/v1.4.0/CONV2-Linux-x86_64.rpm) / [arm64](https://github.com/BurntToasters/CONV2/releases/download/v1.4.0/CONV2-Linux-aarch64.rpm)              |
+|                                                                                                                              |                                                                                                                 | **Flatpak:** [x64](https://github.com/BurntToasters/CONV2/releases/download/v1.4.0/CONV2-Linux-x86_64.flatpak) / [arm64](https://github.com/BurntToasters/CONV2/releases/download/v1.4.0/CONV2-Linux-aarch64.flatpak)  |
 
 ### ℹ️ Enjoying CONV2? Consider [❤️ Supporting Me! ❤️](https://rosie.run/support)
 
@@ -28,6 +28,43 @@
 </details> -->
 
 ---
+
+## Changes in `v1.4.0:`
+
+- **FFMPEG:** Updated `FFMPEG` to version `8.1` for all platforms *except* x64 for macOS.
+- **UI:** Flat, native-leaning visual refresh across the main window and settings. Dropped purple/cyan gradients, mesh backgrounds, glow, and shimmer in favor of restrained system-blue accents, tighter corner radii, and flatter panels, buttons, and progress bars. Light and dark themes both updated.
+- **FFMPEG:** Retuned AV1 CPU presets for better quality and compression efficiency:
+  - All CPU AV1 tiers now apply `libsvtav1` tuning (`tune=0`) consistently, not just the best-quality and best-compression tiers.
+  - CPU AV1 encodes now default to 10-bit (`yuv420p10le`) for improved compression and reduced banding.
+  - CRF defaults adjusted: Best Quality `15` → `18`, Quality `20` → `24`, Small File `40` → `44`.
+- **FFMPEG:** Retuned GIF presets to produce much smaller files at comparable quality:
+  - Quality tiers now default to ordered `bayer` dithering instead of error-diffusion `sierra2_4a`, so static regions compress better between frames.
+  - Reduced default dimensions, frame rates, and palette sizes across all GIF tiers (e.g. Best Quality `1080px` → `720px`, Best Compression `128` colors → `64`).
+- **Codebase:** FFmpeg binary path resolution is now lazy-loaded to avoid eager module initialization at startup.
+- **Testing:** Expanded preset tests for AV1 10-bit output, consistent `svtav1-params` usage, and updated GIF tier defaults.
+- **PKG:** Updated packages.
+
+## Changes in `v1.3.0:`
+
+- **FFMPEG:** Major ffmpeg flag tweaks and improvements.
+- **Compression:** Fixed an issue where bitrate args weren't being passed to FFMPEG (causing large file sizes).
+- **UI:** New UI! Enjoy a much more info-dense and friendly preset selection UI!
+  - Still a WIP. Working on cleaning it up :)
+- **Settings:** Fixed an issue with the settings corruption checker where every update would reset settings to default.
+- **Icon:** Added multiple resolutions to the .ico file for windows.
+- **H265/HEVC:** Fixed an issue where conversions with HEVC may not play on all devices.
+- **NEW - QUEUE:** File queuing as now been added to CONV2! Want to batch compress or convert files? Now you can!
+- **NEW - GIF support:** CONV2 now supports converting supported media into GIFs!
+  - This can be enabled under `Advanced Presets` in settings.
+- **NEW - Preset adjustments:** A new advanced settings tab has been added to support power users tweaking the built-in profiles!
+- **Codebase:** Major bug fixes and improvements all over the place!
+- **PKG:** Updated packages
+- **Electron:** Updated electron to `41.2.1`.
+
+## Click below for the full `v1` Changelog
+
+<details>
+  <summary>Full v1 changelog</summary>
 
 ## Changes in `v1.3.3:`
 
@@ -65,28 +102,6 @@
   - **PKG:** Updated packages.
   - **FFMPEG:** Fixed multiple issues with FFMPEG in macOS.
   - **Codebase:** Multiple stability fixes and edge-case error handling.
-
-## Changes in `v1.3.0:`
-
-- **FFMPEG:** Major ffmpeg flag tweaks and improvements.
-- **Compression:** Fixed an issue where bitrate args weren't being passed to FFMPEG (causing large file sizes).
-- **UI:** New UI! Enjoy a much more info-dense and friendly preset selection UI!
-  - Still a WIP. Working on cleaning it up :)
-- **Settings:** Fixed an issue with the settings corruption checker where every update would reset settings to default.
-- **Icon:** Added multiple resolutions to the .ico file for windows.
-- **H265/HEVC:** Fixed an issue where conversions with HEVC may not play on all devices.
-- **NEW - QUEUE:** File queuing as now been added to CONV2! Want to batch compress or convert files? Now you can!
-- **NEW - GIF support:** CONV2 now supports converting supported media into GIFs!
-  - This can be enabled under `Advanced Presets` in settings.
-- **NEW - Preset adjustments:** A new advanced settings tab has been added to support power users tweaking the built-in profiles!
-- **Codebase:** Major bug fixes and improvements all over the place!
-- **PKG:** Updated packages
-- **Electron:** Updated electron to `41.2.1`.
-
-### FULL CHANGELOG:
-
-<details>
-  <summary>ℹ️ Click here to see the full change-log for v1!</summary>
 
 ## Changes in `v1.2.0:`
 

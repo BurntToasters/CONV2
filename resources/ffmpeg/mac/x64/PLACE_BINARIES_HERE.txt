@@ -2,5 +2,6 @@ Place macOS x64 (Intel) FFmpeg binaries here:
 - ffmpeg
 - ffprobe
 
-Download from: https://www.osxexperts.net/
+Build from: https://github.com/BurntToasters/ffmpeg-static-builds
+Version: FFmpeg 8.0.1 (GPL static) — unchanged; no Intel Mac hardware to rebuild
 Ensure execute permissions: chmod +x ffmpeg ffprobe
