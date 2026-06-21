@@ -101,6 +101,7 @@ interface AppSettings {
   gpuMode: GPUMode;
   gpuManualVendor: GPUVendor;
   theme: 'system' | 'dark' | 'light';
+  interfaceStyle: 'glass' | 'flat';
   showDebugOutput: boolean;
   autoCheckUpdates: boolean;
   useSystemFFmpeg: boolean;
@@ -125,6 +126,7 @@ const ALLOWED_SETTINGS_KEYS = new Set<string>([
   'gpuMode',
   'gpuManualVendor',
   'theme',
+  'interfaceStyle',
   'showDebugOutput',
   'autoCheckUpdates',
   'useSystemFFmpeg',
@@ -146,6 +148,7 @@ const createDefaultSettings = (): AppSettings => ({
   gpuMode: 'auto',
   gpuManualVendor: 'cpu',
   theme: 'system',
+  interfaceStyle: 'glass',
   showDebugOutput: false,
   autoCheckUpdates: true,
   useSystemFFmpeg: false,
@@ -204,6 +207,7 @@ const normalizeSettings = (value: unknown): AppSettings => {
     gpuMode: normalizedMode,
     gpuManualVendor: normalizedManualVendor,
     theme: normalizeTheme(incoming.theme ?? defaults.theme),
+    interfaceStyle: incoming.interfaceStyle === 'flat' ? 'flat' : 'glass',
     showDebugOutput: incoming.showDebugOutput === true,
     autoCheckUpdates: incoming.autoCheckUpdates !== false,
     useSystemFFmpeg: incoming.useSystemFFmpeg === true,
@@ -806,7 +810,12 @@ ipcMain.handle(
     const codec = getPresetGpuCodec(preset, {
       advancedFormatSettings: settings.advancedFormatSettings,
     });
-    const effectiveGpu = requestedGpu === 'apple' && codec === 'av1' ? 'cpu' : requestedGpu;
+    const effectiveGpu =
+      requestedGpu === 'apple' && codec === 'av1'
+        ? 'cpu'
+        : requestedGpu === 'amd' && process.platform === 'linux'
+          ? 'cpu'
+          : requestedGpu;
 
     isConversionActive = true;
     try {
