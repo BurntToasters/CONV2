@@ -136,9 +136,10 @@ export const getQualityArgs = (
       }
       return args;
     }
-    case 'apple':
-      // VideoToolbox quality mode; allow_sw allows CPU fallback; realtime 0 = best quality
-      return ['-q:v', String(quality), '-allow_sw', '1', '-realtime', '0'];
+    case 'apple': {
+      const vtQuality = Math.max(1, Math.min(100, Math.round((1 - quality / 51) * 100)));
+      return ['-q:v', String(vtQuality), '-allow_sw', '1', '-realtime', '0'];
+    }
     default:
       return ['-crf', String(quality)];
   }
@@ -300,7 +301,7 @@ const buildAviArgs = (
     }
   }
 
-  args.push('-c:a', 'aac', '-b:a', toBitrateKbps(tierSettings.audioBitrateKbps), output);
+  args.push('-c:a', 'libmp3lame', '-b:a', toBitrateKbps(tierSettings.audioBitrateKbps), output);
   return args;
 };
 
@@ -462,10 +463,10 @@ export const presets: Preset[] = [
   {
     id: 'avi-best-quality',
     name: 'AVI - Best Quality',
-    description: 'AVI container with H.265 best quality encoding (CRF 16, veryslow)',
+    description: 'AVI container with H.264 best quality encoding (CRF 16, veryslow)',
     category: 'avi',
     aviTier: 'bestQuality',
-    gpuCodec: 'h265',
+    gpuCodec: 'h264',
     extension: 'avi',
     getArgs: (input, output, gpu, context) =>
       buildAviArgs(input, output, gpu, 'bestQuality', context),
@@ -473,10 +474,10 @@ export const presets: Preset[] = [
   {
     id: 'avi-best-compression',
     name: 'AVI - Best Compression',
-    description: 'AVI container with H.265 best compression (CRF 26, veryslow)',
+    description: 'AVI container with H.264 best compression (CRF 26, veryslow)',
     category: 'avi',
     aviTier: 'bestCompression',
-    gpuCodec: 'h265',
+    gpuCodec: 'h264',
     extension: 'avi',
     getArgs: (input, output, gpu, context) =>
       buildAviArgs(input, output, gpu, 'bestCompression', context),

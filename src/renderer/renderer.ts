@@ -3606,12 +3606,13 @@ const cancelConversion = async () => {
 
 const showStatus = (type: 'success' | 'error' | 'warning', message: string) => {
   elements.statusMessage.className = `status-message visible ${type}`;
-  const textEl = elements.statusMessage.querySelector('.status-text');
-  if (textEl) {
-    textEl.textContent = message;
-  } else {
-    elements.statusMessage.textContent = message;
+  let textEl = elements.statusMessage.querySelector('.status-text');
+  if (!textEl) {
+    textEl = document.createElement('span');
+    textEl.className = 'status-text';
+    elements.statusMessage.appendChild(textEl);
   }
+  textEl.textContent = message;
 };
 
 const hideStatus = () => {

@@ -14,7 +14,7 @@ env:
 
 jobs:
   typecheck:
-    name: Type Check
+    name: Lint & Type Check
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
@@ -28,8 +28,14 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Check formatting
+        run: npm run format:check
+
       - name: Run TypeScript compiler
         run: npx tsc --noEmit
+
+      - name: Audit dependencies
+        run: npm audit --omit=dev --audit-level=high
 
   test:
     name: Test

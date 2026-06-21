@@ -298,18 +298,18 @@ export const createDefaultH265AdvancedSettings = (): H265AdvancedSettings => ({
 export const createDefaultAviAdvancedSettings = (): AviAdvancedSettings => ({
   tiers: {
     bestQuality: {
-      codec: 'h265',
+      codec: 'h264',
       quality: 16,
       preset: 'veryslow',
       audioBitrateKbps: 256,
-      useAdvancedParams: true,
+      useAdvancedParams: false,
     },
     bestCompression: {
-      codec: 'h265',
+      codec: 'h264',
       quality: 26,
       preset: 'veryslow',
       audioBitrateKbps: 128,
-      useAdvancedParams: true,
+      useAdvancedParams: false,
     },
     balanced: {
       codec: 'h264',

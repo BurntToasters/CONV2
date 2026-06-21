@@ -806,7 +806,12 @@ ipcMain.handle(
     const codec = getPresetGpuCodec(preset, {
       advancedFormatSettings: settings.advancedFormatSettings,
     });
-    const effectiveGpu = requestedGpu === 'apple' && codec === 'av1' ? 'cpu' : requestedGpu;
+    const effectiveGpu =
+      requestedGpu === 'apple' && codec === 'av1'
+        ? 'cpu'
+        : requestedGpu === 'amd' && process.platform === 'linux'
+          ? 'cpu'
+          : requestedGpu;
 
     isConversionActive = true;
     try {
