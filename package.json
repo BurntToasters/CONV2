@@ -1,5 +1,6 @@
 {
   "name": "conv2",
+  "desktopName": "com.burnttoasters.conv2",
   "version": "1.5.0-beta.1",
   "description": "A cross platform FFMPEG GUI front-end making it easy for quick video conversion!",
   "homepage": "https://github.com/BurntToasters/CONV2#readme",
@@ -276,6 +277,7 @@
       ]
     },
     "linux": {
+      "syncDesktopName": true,
       "extraResources": [
         {
           "from": "resources/ffmpeg/linux/${arch}",
