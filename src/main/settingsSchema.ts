@@ -1,4 +1,4 @@
-export const SETTINGS_SCHEMA_VERSION = 2;
+export const SETTINGS_SCHEMA_VERSION = 3;
 export const MAX_RECENT_PRESET_IDS = 8;
 
 export interface UIPanelSettings {

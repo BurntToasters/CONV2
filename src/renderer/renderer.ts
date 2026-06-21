@@ -142,6 +142,7 @@ interface AppSettings {
   gpuMode: GPUMode;
   gpuManualVendor: GPUVendor;
   theme: 'system' | 'dark' | 'light';
+  interfaceStyle: 'glass' | 'flat';
   showDebugOutput: boolean;
   autoCheckUpdates: boolean;
   useSystemFFmpeg: boolean;
@@ -470,6 +471,7 @@ const elements = {
   outputPath: document.getElementById('outputPath') as HTMLSpanElement,
   themeSelect: document.getElementById('themeSelect') as HTMLSelectElement,
   themeSwitcher: document.getElementById('themeSwitcher') as HTMLDivElement,
+  uiStyleSwitcher: document.getElementById('uiStyleSwitcher') as HTMLDivElement,
   resetSettingsBtn: document.getElementById('resetSettingsBtn') as HTMLButtonElement,
   checkUpdateBtn: document.getElementById('checkUpdateBtn') as HTMLButtonElement,
   updateBadge: document.getElementById('updateBadge') as HTMLSpanElement,
@@ -874,19 +876,36 @@ const renderPresetPaneGroups = (
       const card = document.createElement('button');
       card.type = 'button';
       card.className = `preset-card${pickerPreset.id === selectedPresetId ? ' is-selected' : ''}`;
+
+      const detailsDiv = document.createElement('div');
+      detailsDiv.className = 'preset-card-details';
+
       const nameSpan = document.createElement('span');
       nameSpan.className = 'preset-card-name';
       nameSpan.textContent = pickerPreset.displayName;
-      card.appendChild(nameSpan);
+      detailsDiv.appendChild(nameSpan);
+
       if (group.key === 'recent' && pickerPreset.categoryLabel) {
         const codecSpan = document.createElement('span');
         codecSpan.className = 'preset-card-codec';
         codecSpan.textContent = pickerPreset.categoryLabel;
-        card.appendChild(codecSpan);
+        detailsDiv.appendChild(codecSpan);
       }
+      card.appendChild(detailsDiv);
+
       const fullPreset = visiblePresetById.get(pickerPreset.id);
       if (fullPreset) {
         card.title = fullPreset.description;
+
+        // Add visual intent badge
+        const intentKey = getPresetIntentKey(fullPreset);
+        const tone = getPresetIntentTone(intentKey);
+        const label = getPresetIntentLabel(intentKey);
+
+        const badgeSpan = document.createElement('span');
+        badgeSpan.className = `preset-intent-badge ${tone}`;
+        badgeSpan.textContent = label;
+        card.appendChild(badgeSpan);
       }
       card.addEventListener('click', () => {
         selectedPresetId = pickerPreset.id;
@@ -2399,6 +2418,16 @@ const updateThemeSwitcher = () => {
   });
 };
 
+const updateUiStyleSwitcher = () => {
+  const switcher = document.getElementById('uiStyleSwitcher');
+  if (!switcher) return;
+
+  switcher.querySelectorAll('.theme-option').forEach((btn) => {
+    const btnStyle = (btn as HTMLElement).dataset.style;
+    btn.classList.toggle('active', btnStyle === settings.interfaceStyle);
+  });
+};
+
 const applyTheme = async () => {
   if (settings.theme === 'system') {
     const systemTheme = await window.electronAPI.getSystemTheme();
@@ -2407,7 +2436,11 @@ const applyTheme = async () => {
     document.documentElement.setAttribute('data-theme', settings.theme);
   }
 
+  const style = settings.interfaceStyle === 'flat' ? 'flat' : 'glass';
+  document.documentElement.setAttribute('data-ui-style', style);
+
   updateThemeSwitcher();
+  updateUiStyleSwitcher();
 
   if (!themeListenerRegistered) {
     window.electronAPI.onThemeChange((theme) => {
@@ -2799,6 +2832,28 @@ const setupEventListeners = () => {
           async () => {
             await applyTheme();
             updateThemeSwitcher();
+          }
+        );
+      }
+    });
+  });
+
+  elements.uiStyleSwitcher?.querySelectorAll('.theme-option').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const uiStyle = (btn as HTMLElement).dataset.style as AppSettings['interfaceStyle'];
+      if (uiStyle) {
+        const previousStyle = settings.interfaceStyle;
+        await persistSettingsChange(
+          () => {
+            settings.interfaceStyle = uiStyle;
+          },
+          () => {
+            settings.interfaceStyle = previousStyle;
+          },
+          { interfaceStyle: uiStyle },
+          'Failed to save interface style',
+          async () => {
+            await applyTheme();
           }
         );
       }

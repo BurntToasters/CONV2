@@ -33,6 +33,7 @@ export interface AppSettings {
   gpuMode: GPUMode;
   gpuManualVendor: GPUVendor;
   theme: 'system' | 'dark' | 'light';
+  interfaceStyle: 'glass' | 'flat';
   showDebugOutput: boolean;
   autoCheckUpdates: boolean;
   useSystemFFmpeg: boolean;

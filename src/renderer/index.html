@@ -8,6 +8,12 @@
       content="default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; script-src 'self'; object-src 'none'; base-uri 'none'; frame-src 'none'; form-action 'none'"
     />
     <title>CONV2</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Outfit:wght@400;600;700;800&display=swap"
+      rel="stylesheet"
+    />
     <link rel="stylesheet" href="main.css" />
     <link rel="stylesheet" href="settings.css" />
   </head>
@@ -394,6 +400,14 @@
                 <option value="dark">Dark</option>
                 <option value="light">Light</option>
               </select>
+            </div>
+
+            <div class="settings-row settings-row-appearance">
+              <span class="settings-label">Interface Style</span>
+              <div class="theme-switcher" id="uiStyleSwitcher">
+                <button class="theme-option" data-style="glass">Glow / Glass</button>
+                <button class="theme-option" data-style="flat">Flat UI</button>
+              </div>
             </div>
 
             <div class="settings-row">
