@@ -1,5 +1,5 @@
 > [!NOTE]
-> 🅱️ THIS IS A BETA BUILD.
+> 🅱️ This is a Beta build.
 
 ---
 
@@ -31,6 +31,15 @@
 ## Changes in `v1.5.0-beta.2:`
 
 - **UI:** Reverted color scheme back to the blue color (I like it better :P).
+- **UI:** Self-hosted Inter and Outfit fonts for offline reliability and privacy (removed Google Fonts remote links).
+- **UI:** Fixed light-theme muted-text contrast failing WCAG AA (`#7d88a1` → `#5c6880`).
+- **UI:** Modal focus is now restored to the triggering element on close (WCAG 2.4.3).
+- **UI:** File-input change handler now validates extensions (matching drag-drop behavior).
+- **Security:** Removed `'unsafe-inline'` from CSP `style-src` by converting all inline styles to a utility class.
+- **Security:** Added explicit `font-src 'self'` to CSP.
+- **Codebase:** Unified all `getElementById` calls to use `getRequiredElement` (clear errors on missing DOM elements instead of silent null crashes).
+- **Codebase:** Wrapped `getFileInfo` IPC call in `.catch()` to prevent unhandled rejections on file-select.
+- **Codebase:** Progress bar `aria-valuenow` is now reset to `0` at the start of each conversion.
 - **Linux:** Fixed an issue with linux packaging naming for the electron api.
 
 ## Changes in `v1.5.0-beta.1:`

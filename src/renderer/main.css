@@ -80,7 +80,7 @@
 
   --text-primary: #121824;
   --text-secondary: #4e5870;
-  --text-muted: #7d88a1;
+  --text-muted: #5c6880;
 
   --accent: #007aff;
   --accent-secondary: #0056b3;
@@ -173,6 +173,10 @@ a {
 
 a:hover {
   color: var(--accent-hover);
+}
+
+.u-hidden {
+  display: none !important;
 }
 
 :where(button, [role='button'], a, input, select, textarea):focus-visible {
