@@ -71,7 +71,7 @@ function copyRendererAssets() {
   const srcDir = path.join(ROOT, 'src', 'renderer');
   const destDir = path.join(ROOT, 'dist', 'renderer');
   fs.mkdirSync(destDir, { recursive: true });
-  const assets = ['index.html', 'main.css', 'settings.css', 'exports-shim.js'];
+  const assets = ['index.html', 'fonts.css', 'main.css', 'settings.css', 'exports-shim.js'];
   for (const file of assets) {
     const src = path.join(srcDir, file);
     const dest = path.join(destDir, file);
@@ -81,6 +81,15 @@ function copyRendererAssets() {
     } else {
       console.warn(`  Warning: ${file} not found in src/renderer/`);
     }
+  }
+  const fontsSrc = path.join(srcDir, 'fonts');
+  const fontsDest = path.join(destDir, 'fonts');
+  if (fs.existsSync(fontsSrc)) {
+    fs.mkdirSync(fontsDest, { recursive: true });
+    for (const fontFile of fs.readdirSync(fontsSrc)) {
+      fs.copyFileSync(path.join(fontsSrc, fontFile), path.join(fontsDest, fontFile));
+    }
+    console.log('  Copied fonts/');
   }
   console.log('[dist-tools] Copy complete.');
 }
