@@ -950,8 +950,7 @@ const renderPresetPicker = (): void => {
     });
 
     activePresetParentKey = pickerModel.resolveActiveParentKey(activePresetParentKey, buckets) as
-      | PresetParentKey
-      | '';
+      PresetParentKey | '';
     renderPresetParentList(buckets);
 
     const activeBucket = buckets.find((bucket) => bucket.key === activePresetParentKey);
@@ -1515,11 +1514,7 @@ const setSettingsPanel = (
 };
 
 type FormatPanelId =
-  | 'formatPanelGif'
-  | 'formatPanelAv1'
-  | 'formatPanelH264'
-  | 'formatPanelH265'
-  | 'formatPanelAvi';
+  'formatPanelGif' | 'formatPanelAv1' | 'formatPanelH264' | 'formatPanelH265' | 'formatPanelAvi';
 
 const setFormatPanel = (panelId: FormatPanelId): void => {
   formatPanels.forEach((panel) => {

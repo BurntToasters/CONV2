@@ -30,6 +30,10 @@
 
 ## Changes in `v1.5.0-beta.2:`
 
+- **Building - FFMPEG:** FFMPEG checksums are now enforced.
+  - Added a new .env variable and the ability to download ffmpeg binaries from server: `FFMPEG_DL_SERVER="https://example-download-server.com/ffmpeg/version/`
+  - The naming scheme for the `.7z binaries are as follows:` ffmpeg_os_arch.7z (for macos it is: macOS).
+  - `npm run get:ffmpeg:all` downloads all arches and binaries, unzips them and puts them in the right spot, and then calculates their checksums.
 - **UI:** Reverted color scheme back to the blue color (I like it better :P).
 - **UI:** Self-hosted Inter and Outfit fonts for offline reliability and privacy (removed Google Fonts remote links).
 - **UI:** Fixed light-theme muted-text contrast failing WCAG AA (`#7d88a1` → `#5c6880`).
