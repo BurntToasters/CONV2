@@ -20,3 +20,4 @@ resources/ffmpeg/**/ffmpeg
 resources/ffmpeg/**/ffmpeg.exe
 resources/ffmpeg/**/ffprobe
 resources/ffmpeg/**/ffprobe.exe
+*.7z

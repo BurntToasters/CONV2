@@ -60,6 +60,7 @@
     "r": "git fetch origin && git reset --hard && git clean -fd && git switch -C main origin/main && git reset --hard origin/main && git clean -fd && npm run vi && npm run gitprune:force",
     "u": "npm update && npm run release:prepare && npm run format && npm run test:all",
     "restore:release": "node build/restore-release.js",
+    "get:ffmpeg": "node build-scripts/get-ffmpeg.js",
     "ffmpeg:check": "node build-scripts/check-ffmpeg.js --all",
     "ffmpeg:check:win": "node build-scripts/check-ffmpeg.js --target win:x64 --target win:arm64",
     "ffmpeg:check:win:x64": "node build-scripts/check-ffmpeg.js --target win:x64",
