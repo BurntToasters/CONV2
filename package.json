@@ -61,6 +61,7 @@
     "u": "npm update && npm run release:prepare && npm run format && npm run test:all",
     "restore:release": "node build/restore-release.js",
     "get:ffmpeg": "node build-scripts/get-ffmpeg.js",
+    "get:ffmpeg:all": "node build-scripts/get-ffmpeg.js --all && node build-scripts/check-ffmpeg.js --all --generate-checksums",
     "ffmpeg:check": "node build-scripts/check-ffmpeg.js --all",
     "ffmpeg:check:win": "node build-scripts/check-ffmpeg.js --target win:x64 --target win:arm64",
     "ffmpeg:check:win:x64": "node build-scripts/check-ffmpeg.js --target win:x64",
