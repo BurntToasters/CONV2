@@ -1,4 +1,8 @@
 // For some reason, I needed to make this script because GitHub started to split my releases into two drafts.
+// make ONE machine the single creator (win), this script has two modes:
+//   (default)  create-or-reuse the single draft. Run by the Windows machine only.
+//   --wait     poll until that draft exists; NEVER create. Run by mac/linux so
+//              they only ever reuse the draft Windows created (no duplicates).
 
 const https = require('https');
 
@@ -11,6 +15,15 @@ const GH_REQUEST_TIMEOUT_MS = Number.parseInt(process.env.GH_REQUEST_TIMEOUT_MS 
 const GH_REQUEST_RETRIES = Number.parseInt(process.env.GH_REQUEST_RETRIES || '3', 10);
 const GH_REQUEST_RETRY_DELAY_MS = Number.parseInt(
   process.env.GH_REQUEST_RETRY_DELAY_MS || '1500',
+  10
+);
+
+// --wait mode: how long mac/linux will wait for the Windows machine to create
+// the draft before giving up (defaults to 30 minutes, polling every 15s).
+const WAIT_MODE = process.argv.slice(2).includes('--wait');
+const WAIT_TIMEOUT_MS = Number.parseInt(process.env.RELEASE_DRAFT_WAIT_TIMEOUT_MS || '1800000', 10);
+const WAIT_POLL_INTERVAL_MS = Number.parseInt(
+  process.env.RELEASE_DRAFT_WAIT_POLL_MS || '15000',
   10
 );
 
@@ -220,15 +233,69 @@ async function ensureDraftRelease() {
   }
 }
 
+async function waitForDraftRelease() {
+  const deadline = Date.now() + WAIT_TIMEOUT_MS;
+  console.log(
+    'Waiting for draft release ' +
+      TAG_NAME +
+      ' (created by the Windows machine); will NOT create it here...'
+  );
+
+  let attempt = 0;
+  for (;;) {
+    attempt += 1;
+    const existing = await findExistingRelease();
+    if (existing) {
+      console.log(
+        '   Found draft: ' +
+          (existing.name || TAG_NAME) +
+          ' (id ' +
+          existing.id +
+          ', ' +
+          (existing.assets ? existing.assets.length : 0) +
+          ' assets). Proceeding.'
+      );
+      return existing;
+    }
+
+    if (Date.now() >= deadline) {
+      throw new Error(
+        'Timed out after ' +
+          Math.round(WAIT_TIMEOUT_MS / 1000) +
+          's waiting for draft ' +
+          TAG_NAME +
+          '. Run "npm run release:draft" on the Windows machine first (or run it here once), then retry.'
+      );
+    }
+
+    console.log(
+      '   Draft not found yet (attempt ' +
+        attempt +
+        '); re-checking in ' +
+        Math.round(WAIT_POLL_INTERVAL_MS / 1000) +
+        's...'
+    );
+    await sleep(WAIT_POLL_INTERVAL_MS);
+  }
+}
+
 async function main() {
   if (!GH_TOKEN) {
-    console.warn('⚠ WARN: GH_TOKEN not set - cannot pre-create draft release. Skipping.');
-    console.warn('   (electron-builder will create the draft itself, but the duplicate-draft');
-    console.warn('    race may reoccur without a pre-created draft.)');
+    if (WAIT_MODE) {
+      console.warn('⚠ WARN: GH_TOKEN not set - cannot check for the draft release. Skipping wait.');
+    } else {
+      console.warn('⚠ WARN: GH_TOKEN not set - cannot pre-create draft release. Skipping.');
+      console.warn('   (electron-builder will create the draft itself, but the duplicate-draft');
+      console.warn('    race may reoccur without a pre-created draft.)');
+    }
     return;
   }
 
-  await ensureDraftRelease();
+  if (WAIT_MODE) {
+    await waitForDraftRelease();
+  } else {
+    await ensureDraftRelease();
+  }
 }
 
 main().catch((error) => {
