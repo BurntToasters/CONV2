@@ -34,6 +34,7 @@
   - Added a new .env variable and the ability to download ffmpeg binaries from server: `FFMPEG_DL_SERVER="https://example-download-server.com/ffmpeg/version/`
   - The naming scheme for the `.7z binaries are as follows:` ffmpeg_os_arch.7z (for macos it is: macOS).
   - `npm run get:ffmpeg:all` downloads all arches and binaries, unzips them and puts them in the right spot, and then calculates their checksums.
+- **FFMPEG:** Updated bundled FFmpeg wording, notices, and GPL source offer for FFmpeg `8.1.2` across Windows, macOS, and Linux.
 - **UI:** Reverted color scheme back to the blue color (I like it better :P).
 - **UI:** Self-hosted Inter and Outfit fonts for offline reliability and privacy (removed Google Fonts remote links).
 - **UI:** Fixed light-theme muted-text contrast failing WCAG AA (`#7d88a1` → `#5c6880`).
@@ -61,7 +62,7 @@
 
 ## Changes in `v1.4.0:`
 
-- **FFMPEG:** Updated `FFMPEG` to version `8.1` for all platforms _except_ x64 for macOS.
+- **FFMPEG:** Updated bundled `FFMPEG` builds for the v1.4.0 release cycle; current release notes above describe the latest bundled version.
 - **UI:** Flat, native-leaning visual refresh across the main window and settings. Dropped purple/cyan gradients, mesh backgrounds, glow, and shimmer in favor of restrained system-blue accents, tighter corner radii, and flatter panels, buttons, and progress bars. Light and dark themes both updated.
 - **FFMPEG:** Retuned AV1 CPU presets for better quality and compression efficiency:
   - All CPU AV1 tiers now apply `libsvtav1` tuning (`tune=0`) consistently, not just the best-quality and best-compression tiers.
