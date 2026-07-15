@@ -19,8 +19,8 @@
 
 | Platform | Build Status | Notes |
 | :--- | :--- | :--- |
-| **Windows - EXE (Universal, ARM64/x64)** | ✅ Signed (GPG) | GPG Signed. Individual x64 and arm64 exe installers are still provided, however they are deprecated in favor of the Universal exe installer which auto installs the correct architecture for a user's system. |
-| **Windows - MSI (ARM64/x64)** | ✅ Signed (GPG) | GPG Signed. (Auto Updates DISABLED). |
+| **Windows - EXE (Universal, ARM64/x64)** | ✅ Signed (GPG & Azure Artifact Signing) | Fully codesigned using Azure Artifact Signing. Individual x64 and arm64 exe installers are still provided, however they are deprecated in favor of the Universal exe installer which auto installs the correct architecture for a user's system. |
+| **Windows - MSI (ARM64/x64)** | ✅ Signed (GPG & Azure Artifact Signing) | Fully codesigned using Azure Artifact Signing. (Auto Updates DISABLED). |
 | **[Microsoft Store]()** | ❌ | CONV2 Is NOT in the MS Store (YET). |
 | **MacOS (ARM/x64)** | ✅ Signed (GPG & Apple Developer Cert)| Fully codesigned by Apple Developer cert. |
 | **Linux (ARM/x64)**| ✅ Signed (GPG) | GPG Signed. |
@@ -30,6 +30,8 @@
 
 ## Changes in `v1.5.0-beta.2:`
 
+- **NEW - Windows code signing:** WOO HOO!! Windows Codesigning is here!
+  - After a good while of not having it, Windows Binaries are now signed by Azure Artifact Signing!
 - **Building - FFMPEG:** FFMPEG checksums are now enforced.
   - Added a new .env variable and the ability to download ffmpeg binaries from server: `FFMPEG_DL_SERVER="https://example-download-server.com/ffmpeg/version/`
   - The naming scheme for the `.7z binaries are as follows:` ffmpeg_os_arch.7z (for macos it is: macOS).
@@ -190,6 +192,6 @@ To learn more about the FFMPEG builds please go to: https://github.com/BurntToas
 
 - **GPG Signed:** My public key is attached to every release to ensure authenticity.
 - **GPG Key:** You can get my public GPG key here: [https://tuxedo.rosie.run/GPG/BurntToasters_0xF2FBC20F_public.asc](https://tuxedo.rosie.run/GPG/BurntToasters_0xF2FBC20F_public.asc)
-- **Code Signing:** macOS releases are fully signed. Windows releases are not signed by an org, but are signed by my GPG signature (same with Linux).
+- **Code Signing:** macOS releases are fully signed. Windows releases are fully signed using Azure Artifact Signing. Linux releases are GPG signed.
 
 ### This changelog is made using the BCLS Standard: https://github.com/BurntToasters/BCLS
