@@ -225,6 +225,7 @@ function runConfigChecks() {
       'src/main/main.ts',
       'src/main/preload.ts',
       'src/renderer/index.html',
+      'src/renderer/fonts/OFL.txt',
       'assets/icon.ico',
       'assets/conv2.icns',
       'assets/icon.png',

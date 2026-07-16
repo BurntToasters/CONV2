@@ -1,41 +1,29 @@
-> [!NOTE]
-> 🅱️ This is a Beta build.
+<!--> [!NOTE]
 
----
+> 🅱️ This is a Beta build. -->
 
 # ⬇️ Downloads
 
-| <img height="20" src="https://github.com/user-attachments/assets/340d360e-79b1-4c70-bfab-d944085f75df" /> Windows            | <img height="20" src="https://github.com/user-attachments/assets/42d7e887-4616-4e8c-b1d3-e44e01340f8c" /> macOS       | <img height="20" src="https://github.com/user-attachments/assets/e0cc4f33-4516-408b-9c5c-be71a3ac316b" /> Linux                                                                                                                      |
-| :--------------------------------------------------------------------------------------------------------------------------- | :-------------------------------------------------------------------------------------------------------------------- | :----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **[Universal EXE (x64/arm64)](https://github.com/BurntToasters/CONV2/releases/download/v1.5.0-beta.2/CONV2-Win.exe)**        | **[Universal DMG](https://github.com/BurntToasters/CONV2/releases/download/v1.5.0-beta.2/CONV2-MacOS-universal.dmg)** | **AppImage:** [x64](https://github.com/BurntToasters/CONV2/releases/download/v1.5.0-beta.2/CONV2-Linux-x86_64.AppImage) / [arm64](https://github.com/BurntToasters/CONV2/releases/download/v1.5.0-beta.2/CONV2-Linux-arm64.AppImage) |
-| <div align="center"><!--<a href="#"><img src="https://get.microsoft.com/images/en-us%20light.svg" width="150"/></a>--></div> | **[Universal ZIP](https://github.com/BurntToasters/CONV2/releases/download/v1.5.0-beta.2/CONV2-MacOS-universal.zip)** | **DEB:** [x64](https://github.com/BurntToasters/CONV2/releases/download/v1.5.0-beta.2/CONV2-Linux-amd64.deb) / [arm64](https://github.com/BurntToasters/CONV2/releases/download/v1.5.0-beta.2/CONV2-Linux-arm64.deb)                 |
-| _See MSI note in releases_                                                                                                   |                                                                                                                       | **RPM:** [x64](https://github.com/BurntToasters/CONV2/releases/download/v1.5.0-beta.2/CONV2-Linux-x86_64.rpm) / [arm64](https://github.com/BurntToasters/CONV2/releases/download/v1.5.0-beta.2/CONV2-Linux-aarch64.rpm)              |
-|                                                                                                                              |                                                                                                                       | **Flatpak:** [x64](https://github.com/BurntToasters/CONV2/releases/download/v1.5.0-beta.2/CONV2-Linux-x86_64.flatpak) / [arm64](https://github.com/BurntToasters/CONV2/releases/download/v1.5.0-beta.2/CONV2-Linux-aarch64.flatpak)  |
+| <img height="20" src="https://github.com/user-attachments/assets/340d360e-79b1-4c70-bfab-d944085f75df" /> Windows                                                                                              | <img height="20" src="https://github.com/user-attachments/assets/42d7e887-4616-4e8c-b1d3-e44e01340f8c" /> macOS | <img height="20" src="https://github.com/user-attachments/assets/e0cc4f33-4516-408b-9c5c-be71a3ac316b" /> Linux                                                                                                                |
+| :------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | :-------------------------------------------------------------------------------------------------------------- | :----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Setup:** [x64](https://github.com/BurntToasters/CONV2/releases/download/v1.5.0/CONV2-Win-x64-Setup.exe) / [arm64](https://github.com/BurntToasters/CONV2/releases/download/v1.5.0/CONV2-Win-arm64-Setup.exe) | **[Universal DMG](https://github.com/BurntToasters/CONV2/releases/download/v1.5.0/CONV2-macOS-universal.dmg)**  | **AppImage:** [x64](https://github.com/BurntToasters/CONV2/releases/download/v1.5.0/CONV2-Linux-x86_64.AppImage) / [arm64](https://github.com/BurntToasters/CONV2/releases/download/v1.5.0/CONV2-Linux-arm64.AppImage)         |
+| <div align="center"><!--<a href="#"><img src="https://get.microsoft.com/images/en-us%20light.svg" width="150"/></a>--></div>                                                                                   | **[Universal ZIP](https://github.com/BurntToasters/CONV2/releases/download/v1.5.0/CONV2-macOS-universal.zip)**  | **DEB:** [x64](https://github.com/BurntToasters/CONV2/releases/download/v1.5.0/CONV2-Linux-amd64.deb) / [arm64](https://github.com/BurntToasters/CONV2/releases/download/v1.5.0/CONV2-Linux-arm64.deb)                         |
+| _See MSI note in releases_                                                                                                                                                                                     |                                                                                                                 | **RPM:** [x64](https://github.com/BurntToasters/CONV2/releases/download/v1.5.0/CONV2-Linux-x86_64.rpm) / [arm64](https://github.com/BurntToasters/CONV2/releases/download/v1.5.0/CONV2-Linux-aarch64.rpm)                      |
+|                                                                                                                                                                                                                |                                                                                                                 | **Flatpak sideload:** [x64](https://github.com/BurntToasters/CONV2/releases/download/v1.5.0/CONV2-Linux-x86_64.flatpak) / [arm64](https://github.com/BurntToasters/CONV2/releases/download/v1.5.0/CONV2-Linux-aarch64.flatpak) |
 
 ### ℹ️ Enjoying CONV2? Consider [❤️ Supporting Me! ❤️](https://rosie.run/support)
 
-<!-- Removed. <details>
-  <summary>🛠️ Build Status (for NERDS)</summary>
-
-| Platform | Build Status | Notes |
-| :--- | :--- | :--- |
-| **Windows - EXE (Universal, ARM64/x64)** | ✅ Signed (GPG & Azure Artifact Signing) | Fully codesigned using Azure Artifact Signing. Individual x64 and arm64 exe installers are still provided, however they are deprecated in favor of the Universal exe installer which auto installs the correct architecture for a user's system. |
-| **Windows - MSI (ARM64/x64)** | ✅ Signed (GPG & Azure Artifact Signing) | Fully codesigned using Azure Artifact Signing. (Auto Updates DISABLED). |
-| **[Microsoft Store]()** | ❌ | CONV2 Is NOT in the MS Store (YET). |
-| **MacOS (ARM/x64)** | ✅ Signed (GPG & Apple Developer Cert)| Fully codesigned by Apple Developer cert. |
-| **Linux (ARM/x64)**| ✅ Signed (GPG) | GPG Signed. |
-</details> -->
-
 ---
 
-## Changes in `v1.5.0-beta.2:`
+## Changes in `v1.5.0:`
 
+- **FFMPEG:** Updated ffmpeg on _ALL_ platforms to `8.1.2`.
 - **NEW - Windows code signing:** WOO HOO!! Windows Codesigning is here!
   - After a good while of not having it, Windows Binaries are now signed by Azure Artifact Signing!
 - **Building - FFMPEG:** FFMPEG checksums are now enforced.
-  - Added a new .env variable and the ability to download ffmpeg binaries from server: `FFMPEG_DL_SERVER="https://example-download-server.com/ffmpeg/version/`
-  - The naming scheme for the `.7z binaries are as follows:` ffmpeg_os_arch.7z (for macos it is: macOS).
-  - `npm run get:ffmpeg:all` downloads all arches and binaries, unzips them and puts them in the right spot, and then calculates their checksums.
+  - Added a new .env variable and the ability to download FFmpeg binaries from a server: `FFMPEG_DL_SERVER="https://example-download-server.com/ffmpeg/version/"`
+  - The naming scheme for the `.7z` binaries is `ffmpeg_os_arch.7z` (macOS uses `macOS`).
+  - `npm run get:ffmpeg:all` downloads all architectures and extracts them into the right locations. After independently verifying the new binaries, run `npm run ffmpeg:checksums:generate` to update their checksums.
 - **FFMPEG:** Updated bundled FFmpeg wording, notices, and GPL source offer for FFmpeg `8.1.2` across Windows, macOS, and Linux.
 - **UI:** Reverted color scheme back to the blue color (I like it better :P).
 - **UI:** Self-hosted Inter and Outfit fonts for offline reliability and privacy (removed Google Fonts remote links).
@@ -48,11 +36,8 @@
 - **Codebase:** Wrapped `getFileInfo` IPC call in `.catch()` to prevent unhandled rejections on file-select.
 - **Codebase:** Progress bar `aria-valuenow` is now reset to `0` at the start of each conversion.
 - **Linux:** Fixed an issue with linux packaging naming for the electron api.
-
-## Changes in `v1.5.0-beta.1:`
-
-- **UI:** Updated UI to an experimental new look.
-- **Codebase:** Many fixes to the app and ffmpeg for AMD cards.
+- **UI:** Updated the experimental interface introduced during the beta cycle.
+- **Codebase:** Many fixes to the app and FFmpeg for AMD hardware.
 
 ## Changes in `v1.4.1:`
 

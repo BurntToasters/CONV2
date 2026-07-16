@@ -2106,8 +2106,22 @@ const buildLicenseEntries = (
     {
       name: 'Twemoji assets',
       license: 'CC-BY 4.0',
-      link: 'https://github.com/jdecked/twemoji',
-      note: 'Emoji artwork by Twitter and other contributors (used under CC-BY 4.0).',
+      link: 'https://creativecommons.org/licenses/by/4.0/',
+      note: 'Emoji artwork from Twemoji by Twitter and other contributors. Used under CC-BY 4.0; source: github.com/jdecked/twemoji.',
+      isSpecial: true,
+    },
+    {
+      name: 'Inter fonts',
+      license: 'OFL-1.1',
+      link: 'https://github.com/rsms/inter',
+      note: 'Bundled font subsets are licensed under OFL-1.1. Full notice: fonts/OFL.txt.',
+      isSpecial: true,
+    },
+    {
+      name: 'Outfit fonts',
+      license: 'OFL-1.1',
+      link: 'https://github.com/Outfitio/Outfit-Fonts',
+      note: 'Bundled font subsets are licensed under OFL-1.1. Full notice: fonts/OFL.txt.',
       isSpecial: true,
     },
   ];

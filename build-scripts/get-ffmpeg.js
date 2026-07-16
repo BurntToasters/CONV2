@@ -18,7 +18,6 @@
 const fs = require('fs');
 const path = require('path');
 const https = require('https');
-const http = require('http');
 const { execFileSync } = require('child_process');
 
 // Load .env (FFMPEG_DL_SERVER lives here)
@@ -157,73 +156,99 @@ function parseArgs(args) {
   ];
 }
 
-/** Download a URL to a local file path, following redirects.
+const MAX_REDIRECTS = 5;
+const DOWNLOAD_TIMEOUT_MS = 120_000;
+
+/** Download an HTTPS URL to a local file path, following safe redirects.
  * @param {string} url
  * @param {string} destPath
  * @returns {Promise<void>}
  */
 function download(url, destPath) {
   return new Promise((resolve, reject) => {
-    const file = fs.createWriteStream(destPath);
-    let receivedBytes = 0;
-    let totalBytes = 0;
-    let lastLoggedPercent = -1;
+    let settled = false;
 
-    /**
-     * @param {string} requestUrl
-     */
-    function doRequest(requestUrl) {
-      const proto = requestUrl.startsWith('https://') ? https : http;
-      proto
-        .get(requestUrl, (res) => {
-          if (res.statusCode === 301 || res.statusCode === 302 || res.statusCode === 307) {
-            const location = res.headers['location'];
-            if (!location) {
-              reject(new Error(`Redirect with no Location header from ${requestUrl}`));
+    const fail = (error) => {
+      if (settled) return;
+      settled = true;
+      fs.rm(destPath, { force: true }, () => reject(error));
+    };
+
+    /** @param {string} requestUrl @param {number} redirectCount */
+    function doRequest(requestUrl, redirectCount) {
+      let parsed;
+      try {
+        parsed = new URL(requestUrl);
+      } catch {
+        fail(new Error(`Invalid download URL: ${requestUrl}`));
+        return;
+      }
+
+      if (parsed.protocol !== 'https:') {
+        fail(new Error(`Refusing non-HTTPS FFmpeg download URL: ${parsed.href}`));
+        return;
+      }
+      if (redirectCount > MAX_REDIRECTS) {
+        fail(new Error(`Too many redirects while downloading ${url}`));
+        return;
+      }
+
+      const request = https.get(parsed, { timeout: DOWNLOAD_TIMEOUT_MS }, (res) => {
+        if ([301, 302, 303, 307, 308].includes(res.statusCode)) {
+          const location = res.headers.location;
+          res.resume();
+          if (!location) {
+            fail(new Error(`Redirect with no Location header from ${parsed.href}`));
+            return;
+          }
+          doRequest(new URL(location, parsed).href, redirectCount + 1);
+          return;
+        }
+
+        if (res.statusCode !== 200) {
+          res.resume();
+          fail(new Error(`HTTP ${res.statusCode} for ${parsed.href}`));
+          return;
+        }
+
+        const file = fs.createWriteStream(destPath);
+        let receivedBytes = 0;
+        const totalBytes = parseInt(res.headers['content-length'] || '0', 10);
+        let lastLoggedPercent = -1;
+
+        res.on('data', (chunk) => {
+          receivedBytes += chunk.length;
+          if (totalBytes > 0) {
+            const pct = Math.floor((receivedBytes / totalBytes) * 100);
+            if (pct !== lastLoggedPercent && pct % 10 === 0) {
+              process.stdout.write(`  ${pct}%\r`);
+              lastLoggedPercent = pct;
+            }
+          }
+        });
+        res.on('error', fail);
+        file.on('error', fail);
+        file.on('finish', () => {
+          file.close(() => {
+            if (settled) return;
+            if (receivedBytes === 0) {
+              fail(new Error(`Empty download response from ${parsed.href}`));
               return;
             }
-            res.resume();
-            doRequest(location);
-            return;
-          }
-
-          if (res.statusCode !== 200) {
-            file.close();
-            fs.unlink(destPath, () => {});
-            reject(new Error(`HTTP ${res.statusCode} for ${requestUrl}`));
-            return;
-          }
-
-          totalBytes = parseInt(res.headers['content-length'] || '0', 10);
-
-          res.on('data', (chunk) => {
-            receivedBytes += chunk.length;
-            if (totalBytes > 0) {
-              const pct = Math.floor((receivedBytes / totalBytes) * 100);
-              if (pct !== lastLoggedPercent && pct % 10 === 0) {
-                process.stdout.write(`  ${pct}%\r`);
-                lastLoggedPercent = pct;
-              }
-            }
+            settled = true;
+            resolve();
           });
-
-          res.pipe(file);
-          file.on('finish', () => {
-            file.close(() => resolve());
-          });
-          file.on('error', (err) => {
-            fs.unlink(destPath, () => {});
-            reject(err);
-          });
-        })
-        .on('error', (err) => {
-          file.close();
-          fs.unlink(destPath, () => {});
-          reject(err);
         });
+        res.pipe(file);
+      });
+
+      request.on('timeout', () =>
+        request.destroy(new Error(`Download timed out after ${DOWNLOAD_TIMEOUT_MS}ms`))
+      );
+      request.on('error', fail);
     }
 
-    doRequest(url);
+    doRequest(url, 0);
   });
 }
 
@@ -263,6 +288,17 @@ async function main() {
     console.error('  FFMPEG_DL_SERVER=https://your-server.example/ffmpeg/latest/');
     process.exit(1);
   }
+  let parsedServerBase;
+  try {
+    parsedServerBase = new URL(serverBase);
+  } catch {
+    console.error(`\nError: FFMPEG_DL_SERVER is not a valid URL: ${serverBase}`);
+    process.exit(1);
+  }
+  if (parsedServerBase.protocol !== 'https:') {
+    console.error('\nError: FFMPEG_DL_SERVER must use HTTPS.');
+    process.exit(1);
+  }
   const base = serverBase.replace(/\/$/, ''); // strip trailing slash
 
   // Validate 7z
@@ -278,7 +314,9 @@ async function main() {
 
   const targets = parseArgs(process.argv.slice(2));
 
-  console.log(`\nDownloading ffmpeg binaries for: ${targets.map((t) => `${t.platform}:${t.arch}`).join(', ')}`);
+  console.log(
+    `\nDownloading ffmpeg binaries for: ${targets.map((t) => `${t.platform}:${t.arch}`).join(', ')}`
+  );
   console.log(`Server: ${base}\n`);
 
   for (const { platform, arch } of targets) {
@@ -305,7 +343,11 @@ async function main() {
       const msg = err instanceof Error ? err.message : String(err);
       console.error(`\n[${platform}:${arch}] Extraction failed: ${msg}`);
       // Clean up archive
-      try { fs.unlinkSync(tmpFile); } catch { /* ignore */ }
+      try {
+        fs.unlinkSync(tmpFile);
+      } catch {
+        /* ignore */
+      }
       process.exit(1);
     }
 
@@ -320,8 +362,10 @@ async function main() {
     console.log(`[${platform}:${arch}] Done.\n`);
   }
 
-  console.log(`✓ ffmpeg binaries ready for: ${targets.map((t) => `${t.platform}:${t.arch}`).join(', ')}`);
-  console.log(`  Run 'npm run ffmpeg:check:current' to verify.\n`);
+  console.log(
+    `✓ ffmpeg binaries ready for: ${targets.map((t) => `${t.platform}:${t.arch}`).join(', ')}`
+  );
+  console.log(`  Run 'npm run ffmpeg:check' to verify.\n`);
 }
 
 main().catch((err) => {

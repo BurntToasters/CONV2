@@ -11,6 +11,7 @@ permissions:
 
 env:
   NODE_VERSION: '24'
+  FFMPEG_DL_SERVER: ${{ secrets.FFMPEG_DL_SERVER }}
 
 jobs:
   typecheck:
@@ -75,6 +76,9 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
+
+      - name: Prepare FFmpeg payload for package smoke
+        run: npm run ci:prepare-ffmpeg
 
       - name: Build
         run: npm run build

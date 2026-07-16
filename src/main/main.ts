@@ -88,6 +88,7 @@ app.on('second-instance', () => {
 let isConversionActive = false;
 let isUpdateInstallInProgress = false;
 let trustedRendererUrl: string | null = null;
+const isRuntimeSmoke = process.argv.includes('--smoke') || process.env.CONV2_SMOKE === '1';
 const handleNativeThemeUpdated = (): void => {
   mainWindow?.webContents.send('theme-changed', nativeTheme.shouldUseDarkColors ? 'dark' : 'light');
 };
@@ -634,6 +635,31 @@ const createWindow = (): void => {
 
   mainWindow.loadFile(rendererEntryPath);
 
+  if (isRuntimeSmoke) {
+    mainWindow.webContents.once('did-finish-load', () => {
+      void mainWindow?.webContents
+        .executeJavaScript(
+          `Promise.resolve(window.electronAPI?.getVersion()).then((version) => ({
+            title: document.title,
+            version,
+          }))`,
+          true
+        )
+        .then((result) => {
+          if (result?.title !== 'CONV2' || result.version !== app.getVersion()) {
+            throw new Error(
+              `Runtime smoke returned invalid renderer state: ${JSON.stringify(result)}`
+            );
+          }
+          app.exit(0);
+        })
+        .catch((error) => {
+          console.error('Runtime smoke failed:', error);
+          app.exit(1);
+        });
+    });
+  }
+
   mainWindow.once('ready-to-show', () => {
     mainWindow?.show();
     if (windowState.isMaximized) {
@@ -906,7 +932,7 @@ ipcMain.handle(
         ? { ...result, error: redactPaths(result.error) }
         : result;
       mainWindow?.webContents.send('conversion-complete', resultForRenderer);
-      return result;
+      return resultForRenderer;
     } finally {
       isConversionActive = false;
     }

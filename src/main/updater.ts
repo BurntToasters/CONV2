@@ -2,6 +2,7 @@ import { autoUpdater, UpdateInfo } from 'electron-updater';
 import { app, BrowserWindow, dialog } from 'electron';
 import { execFileSync } from 'child_process';
 import * as path from 'path';
+import { isPrereleaseVersion, shouldAcceptUpdateForChannel } from './updaterPolicy';
 
 type UpdateChannel = 'auto' | 'stable' | 'beta';
 type UpdateCheckMode = 'manual' | 'silent';
@@ -41,28 +42,6 @@ const getWindowsSystemBinaryPath = (binaryName: string): string => {
 };
 
 const WINDOWS_REG_PATH = getWindowsSystemBinaryPath('reg.exe');
-
-const isPrereleaseVersion = (version: string): boolean => {
-  return /-(beta|alpha|rc)/i.test(version);
-};
-
-const getBaseVersion = (version: string): number[] => {
-  return version
-    .replace(/-(beta|alpha|rc).*/i, '')
-    .split('.')
-    .map(Number)
-    .slice(0, 3);
-};
-
-const isNewerBaseVersion = (offered: string, current: string): boolean => {
-  const o = getBaseVersion(offered);
-  const c = getBaseVersion(current);
-  for (let i = 0; i < 3; i++) {
-    if ((o[i] || 0) > (c[i] || 0)) return true;
-    if ((o[i] || 0) < (c[i] || 0)) return false;
-  }
-  return false;
-};
 
 const shouldUseBetaChannel = (): boolean => {
   if (updateChannel === 'beta') {
@@ -202,11 +181,7 @@ export const initUpdater = (window: BrowserWindow): void => {
 
   autoUpdater.on('update-available', (info: UpdateInfo) => {
     const manual = isManualCheckActive();
-    if (
-      shouldUseBetaChannel() &&
-      !isPrereleaseVersion(info.version) &&
-      !isNewerBaseVersion(info.version, app.getVersion())
-    ) {
+    if (!shouldAcceptUpdateForChannel(info.version, app.getVersion(), shouldUseBetaChannel())) {
       const windowRef = getMainWindow();
       if (windowRef) {
         windowRef.webContents.send('update-available', false);
