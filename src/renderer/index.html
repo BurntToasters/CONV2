@@ -5,9 +5,10 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; script-src 'self'"
+      content="default-src 'self'; style-src 'self'; font-src 'self'; img-src 'self' data:; script-src 'self'; object-src 'none'; base-uri 'none'; frame-src 'none'; form-action 'none'"
     />
     <title>CONV2</title>
+    <link rel="stylesheet" href="fonts.css" />
     <link rel="stylesheet" href="main.css" />
     <link rel="stylesheet" href="settings.css" />
   </head>
@@ -25,13 +26,13 @@
           </button>
           <button class="settings-btn" id="settingsBtn" title="Settings (Ctrl+,)">
             <img src="../../assets/twemoji/2699.svg" alt="Settings" />
-            <span class="update-badge" id="updateBadge" style="display: none">1</span>
+            <span class="update-badge u-hidden" id="updateBadge">1</span>
           </button>
         </div>
       </header>
 
       <div class="workspace">
-        <div class="ffmpeg-warning" id="ffmpegWarning" style="display: none">
+        <div class="ffmpeg-warning u-hidden" id="ffmpegWarning">
           <h3>FFmpeg Not Found</h3>
           <p>Please install FFmpeg and add it to your system PATH to use CONV2.</p>
         </div>
@@ -189,7 +190,7 @@
             </svg>
             Convert
           </button>
-          <button class="btn btn-secondary" id="cancelBtn" style="display: none">
+          <button class="btn btn-secondary u-hidden" id="cancelBtn">
             <svg
               class="btn-icon"
               viewBox="0 0 24 24"
@@ -246,7 +247,7 @@
             <span class="status-text"></span>
           </div>
           <div class="status-actions">
-            <button class="btn btn-secondary btn-xs" id="showLogsBtn" style="display: none">
+            <button class="btn btn-secondary btn-xs u-hidden" id="showLogsBtn">
               <svg
                 class="btn-icon"
                 viewBox="0 0 24 24"
@@ -263,7 +264,7 @@
               </svg>
               Logs
             </button>
-            <button class="btn btn-secondary btn-xs" id="showInFolderBtn" style="display: none">
+            <button class="btn btn-secondary btn-xs u-hidden" id="showInFolderBtn">
               <svg
                 class="btn-icon"
                 viewBox="0 0 24 24"
@@ -389,11 +390,19 @@
                   Light
                 </button>
               </div>
-              <select id="themeSelect" style="display: none">
+              <select id="themeSelect" class="u-hidden">
                 <option value="system">System</option>
                 <option value="dark">Dark</option>
                 <option value="light">Light</option>
               </select>
+            </div>
+
+            <div class="settings-row settings-row-appearance">
+              <span class="settings-label">Interface Style</span>
+              <div class="theme-switcher" id="uiStyleSwitcher">
+                <button class="theme-option" data-style="glass">Glow / Glass</button>
+                <button class="theme-option" data-style="flat">Flat UI</button>
+              </div>
             </div>
 
             <div class="settings-row">

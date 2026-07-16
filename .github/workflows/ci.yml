@@ -11,10 +11,11 @@ permissions:
 
 env:
   NODE_VERSION: '24'
+  FFMPEG_DL_SERVER: ${{ secrets.FFMPEG_DL_SERVER }}
 
 jobs:
   typecheck:
-    name: Type Check
+    name: Lint & Type Check
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
@@ -28,8 +29,14 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Check formatting
+        run: npm run format:check
+
       - name: Run TypeScript compiler
         run: npx tsc --noEmit
+
+      - name: Audit dependencies
+        run: npm audit --omit=dev --audit-level=high
 
   test:
     name: Test
@@ -69,6 +76,9 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
+
+      - name: Prepare FFmpeg payload for package smoke
+        run: npm run ci:prepare-ffmpeg
 
       - name: Build
         run: npm run build

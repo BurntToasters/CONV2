@@ -1,56 +1,72 @@
 .settings-modal {
-  max-width: 560px;
+  max-width: 720px;
   padding: 0;
   display: flex;
   flex-direction: column;
 }
 
 .settings-modal .modal-header {
-  padding: 20px 24px 0;
+  padding: 20px 24px 10px;
   margin-bottom: 0;
+  border-bottom: 1px solid var(--border-subtle);
 }
 
 .settings-content {
-  padding: 4px 24px 20px;
+  display: flex;
+  gap: 20px;
+  padding: 16px 24px 20px;
+  min-height: 420px;
 }
 
 .settings-tab-strip {
   display: flex;
-  gap: 6px;
-  padding: 10px 0 8px;
-  border-bottom: 1px solid var(--border);
-  margin-bottom: 2px;
+  flex-direction: column;
+  gap: 4px;
+  width: 160px;
+  flex-shrink: 0;
+  border-right: 1px solid var(--border-subtle);
+  padding: 0 12px 0 0;
+  margin-bottom: 0;
 }
 
 .settings-tab {
-  border: 1px solid var(--border);
-  background: var(--bg-surface);
+  border: none;
+  background: transparent;
   color: var(--text-secondary);
-  border-radius: var(--radius-xs);
-  font-size: 11px;
-  font-weight: 600;
-  padding: 7px 12px;
+  border-radius: var(--radius-sm);
+  font-size: var(--text-sm);
+  font-weight: 500;
+  padding: 8px 12px;
   cursor: pointer;
   transition: var(--transition);
+  text-align: left;
+  width: 100%;
 }
 
 .settings-tab:hover {
-  border-color: var(--border-hover);
+  background: var(--bg-hover);
   color: var(--text-primary);
 }
 
 .settings-tab.is-active {
   color: var(--text-primary);
-  border-color: var(--accent);
-  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  font-weight: 600;
+  box-shadow: inset 3px 0 0 var(--accent);
 }
 
 .settings-panel {
   display: none;
+  flex: 1;
+  min-width: 0;
+  overflow-y: auto;
+  padding-right: 4px;
 }
 
 .settings-panel.is-active {
-  display: block;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
 }
 
 .settings-row {
@@ -64,7 +80,7 @@
 
 .settings-hint {
   font-size: 11px;
-  color: var(--text-secondary);
+  color: var(--text-muted);
   margin-top: 2px;
   line-height: 1.35;
 }
@@ -113,7 +129,7 @@
 
 .theme-switcher {
   display: flex;
-  background: var(--bg-surface);
+  background: var(--bg-primary);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   padding: 3px;
@@ -122,7 +138,7 @@
 
 .theme-option {
   flex: 1;
-  padding: 7px 10px;
+  padding: 6px 10px;
   border: none;
   background: transparent;
   color: var(--text-secondary);
@@ -143,9 +159,9 @@
 }
 
 .theme-option.active {
-  background: var(--bg-elevated);
+  background: var(--bg-surface);
   color: var(--text-primary);
-  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.15);
+  box-shadow: var(--shadow);
 }
 
 .theme-option-icon {
@@ -156,7 +172,7 @@
 
 .toggle-switch {
   position: relative;
-  width: 40px;
+  width: 42px;
   height: 22px;
   flex-shrink: 0;
 }
@@ -174,33 +190,36 @@
   background: var(--bg-tertiary);
   border: 1px solid var(--border);
   border-radius: var(--radius-full);
-  transition: var(--transition);
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 .toggle-slider::before {
   content: '';
   position: absolute;
-  height: 16px;
-  width: 16px;
-  left: 2px;
-  bottom: 2px;
+  height: 14px;
+  width: 14px;
+  left: 3px;
+  bottom: 3px;
   background: var(--text-secondary);
   border-radius: 50%;
-  transition: var(--transition);
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
 }
 
 .toggle-switch input:checked + .toggle-slider {
-  background: var(--accent);
+  background: linear-gradient(135deg, var(--accent) 0%, var(--accent-hover) 100%);
   border-color: var(--accent);
 }
 
 .toggle-switch input:checked + .toggle-slider::before {
-  transform: translateX(18px);
+  transform: translateX(20px);
   background: white;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.3);
 }
 
-.toggle-switch input:focus + .toggle-slider {
-  box-shadow: 0 0 0 2px var(--accent-glow);
+.toggle-switch input:focus-visible + .toggle-slider {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 
 .format-tab-strip {
@@ -687,6 +706,30 @@
 }
 
 @media (max-width: 760px) {
+  .settings-content {
+    flex-direction: column;
+    gap: 12px;
+    min-height: 0;
+  }
+
+  .settings-tab-strip {
+    width: 100%;
+    border-right: none;
+    border-bottom: 1px solid var(--border-subtle);
+    padding: 0 0 10px 0;
+    flex-direction: row;
+    overflow-x: auto;
+  }
+
+  .settings-tab {
+    width: auto;
+  }
+
+  .settings-tab.is-active {
+    box-shadow: inset 0 -3px 0 var(--accent);
+    border-radius: var(--radius-sm) var(--radius-sm) 0 0;
+  }
+
   .settings-row {
     flex-direction: column;
     align-items: stretch;

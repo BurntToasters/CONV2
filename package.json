@@ -1,6 +1,7 @@
 {
   "name": "conv2",
-  "version": "1.4.1",
+  "desktopName": "com.burnttoasters.conv2",
+  "version": "1.5.0",
   "description": "A cross platform FFMPEG GUI front-end making it easy for quick video conversion!",
   "homepage": "https://github.com/BurntToasters/CONV2#readme",
   "bugs": {
@@ -23,12 +24,15 @@
     "watch": "tsc -w",
     "start": "npm run build && electron .",
     "dev": "npm run build && electron . --enable-logging",
-    "build:win": "npm run compile && node build-scripts/windows-build.js --arch all",
-    "build:win:x64": "npm run compile && node build-scripts/windows-build.js --arch x64",
-    "build:win:arm64": "npm run compile && node build-scripts/windows-build.js --arch arm64",
-    "build:win:nsis": "npm run compile && electron-builder --win nsis",
-    "build:win:portable": "npm run compile && electron-builder --win portable",
-    "build:win:msi": "npm run compile && node build-scripts/windows-build.js --msi-only",
+    "smoke:runtime": "node build-scripts/smoke-runtime.js",
+    "ci:prepare-ffmpeg": "node build-scripts/ci-ffmpeg.js",
+    "setup:win:artifact-signing": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File build-scripts/setup-windows-artifact-signing.ps1",
+    "build:win": "npm run compile && dotenv -- node build-scripts/windows-build.js --arch all",
+    "build:win:x64": "npm run compile && dotenv -- node build-scripts/windows-build.js --arch x64",
+    "build:win:arm64": "npm run compile && dotenv -- node build-scripts/windows-build.js --arch arm64",
+    "build:win:nsis": "npm run compile && dotenv -- electron-builder --config build-scripts/electron-builder.windows.cjs --win nsis",
+    "build:win:portable": "npm run compile && dotenv -- electron-builder --config build-scripts/electron-builder.windows.cjs --win portable",
+    "build:win:msi": "npm run compile && dotenv -- node build-scripts/windows-build.js --msi-only",
     "build:msstore": "npm run compile && electron-builder --config electron-builder.msstore.yml --win appx",
     "build:msstore:x64": "npm run compile && electron-builder --config electron-builder.msstore.yml --win appx --x64",
     "build:msstore:arm64": "npm run compile && electron-builder --config electron-builder.msstore.yml --win appx --arm64",
@@ -59,22 +63,27 @@
     "r": "git fetch origin && git reset --hard && git clean -fd && git switch -C main origin/main && git reset --hard origin/main && git clean -fd && npm run vi && npm run gitprune:force",
     "u": "npm update && npm run release:prepare && npm run format && npm run test:all",
     "restore:release": "node build/restore-release.js",
-    "ffmpeg:check": "node build-scripts/check-ffmpeg.js --all",
-    "ffmpeg:check:win": "node build-scripts/check-ffmpeg.js --target win:x64 --target win:arm64",
-    "ffmpeg:check:win:x64": "node build-scripts/check-ffmpeg.js --target win:x64",
-    "ffmpeg:check:win:arm64": "node build-scripts/check-ffmpeg.js --target win:arm64",
-    "ffmpeg:check:mac": "node build-scripts/check-ffmpeg.js --target mac:x64 --target mac:arm64",
-    "ffmpeg:check:linux": "node build-scripts/check-ffmpeg.js --target linux:x64 --target linux:arm64",
-    "release:win": "npm run ffmpeg:check:win && npm run licenses && npm run release:prepare && npm run compile && dotenv -- node build-scripts/windows-build.js --arch all --publish always && npm run sign:gpg && npm run release:finalize",
-    "release:win:x64": "npm run ffmpeg:check:win:x64 && npm run licenses && npm run release:prepare && npm run compile && dotenv -- node build-scripts/windows-build.js --arch x64 --publish always && npm run sign:gpg && npm run release:finalize",
-    "release:win:arm64": "npm run ffmpeg:check:win:arm64 && npm run licenses && npm run release:prepare && npm run compile && dotenv -- node build-scripts/windows-build.js --arch arm64 --publish always && npm run sign:gpg && npm run release:finalize",
-    "release:msstore": "npm run ffmpeg:check:win && npm run licenses && npm run release:prepare && npm run compile && dotenv -- electron-builder --config electron-builder.msstore.yml --win appx --publish always && npm run release:finalize",
-    "release:mac": "npm run ffmpeg:check:mac && npm run licenses && npm run release:prepare && npm run compile && cross-env REQUIRE_NOTARIZATION=1 dotenv -- electron-builder --mac --universal --publish always && npm run sign:gpg && npm run release:finalize",
+    "release:draft": "dotenv -- node build-scripts/ensure-draft-release.js",
+    "release:wait-draft": "dotenv -- node build-scripts/ensure-draft-release.js --wait",
+    "get:ffmpeg": "node build-scripts/get-ffmpeg.js",
+    "get:ffmpeg:all": "node build-scripts/get-ffmpeg.js --all",
+    "ffmpeg:checksums:generate": "cross-env FFMPEG_ALLOW_CHECKSUM_GENERATION=1 node build-scripts/check-ffmpeg.js --all --generate-checksums",
+    "ffmpeg:check": "node build-scripts/check-ffmpeg.js --all --require-checksums",
+    "ffmpeg:check:win": "node build-scripts/check-ffmpeg.js --require-checksums --target win:x64 --target win:arm64",
+    "ffmpeg:check:win:x64": "node build-scripts/check-ffmpeg.js --require-checksums --target win:x64",
+    "ffmpeg:check:win:arm64": "node build-scripts/check-ffmpeg.js --require-checksums --target win:arm64",
+    "ffmpeg:check:mac": "node build-scripts/check-ffmpeg.js --require-checksums --target mac:x64 --target mac:arm64",
+    "ffmpeg:check:linux": "node build-scripts/check-ffmpeg.js --require-checksums --target linux:x64 --target linux:arm64",
+    "release:win": "npm run ffmpeg:check:win && npm run licenses && npm run release:prepare && npm run compile && npm run release:draft && dotenv -- node build-scripts/windows-build.js --arch all --publish always && npm run sign:gpg && npm run release:finalize",
+    "release:win:x64": "npm run ffmpeg:check:win:x64 && npm run licenses && npm run release:prepare && npm run compile && npm run release:draft && dotenv -- node build-scripts/windows-build.js --arch x64 --publish always && npm run sign:gpg && npm run release:finalize",
+    "release:win:arm64": "npm run ffmpeg:check:win:arm64 && npm run licenses && npm run release:prepare && npm run compile && npm run release:draft && dotenv -- node build-scripts/windows-build.js --arch arm64 --publish always && npm run sign:gpg && npm run release:finalize",
+    "release:msstore": "npm run ffmpeg:check:win && npm run licenses && npm run release:prepare && npm run compile && npm run release:draft && dotenv -- electron-builder --config electron-builder.msstore.yml --win appx --publish always && npm run release:finalize",
+    "release:mac": "npm run ffmpeg:check:mac && npm run licenses && npm run release:prepare && npm run compile && npm run release:wait-draft && cross-env REQUIRE_NOTARIZATION=1 dotenv -- electron-builder --mac --universal --publish always && npm run sign:gpg && npm run release:finalize",
     "release:mac:ssh": "npm run mac:ssh:keychain && npm run release:mac",
-    "release:linux": "npm run ffmpeg:check:linux && npm run licenses && npm run release:prepare && npm run compile && dotenv -- electron-builder --linux --publish always && npm run sign:gpg && npm run release:finalize",
-    "release:linux:all": "npm run ffmpeg:check:linux && npm run licenses && npm run release:prepare && npm run compile && dotenv -- electron-builder --linux --publish always && npm run flatpak:clean && npm run flatpak:bundle && npm run sign:gpg && npm run release:finalize",
+    "release:linux": "npm run ffmpeg:check:linux && npm run licenses && npm run release:prepare && npm run compile && npm run release:wait-draft && dotenv -- electron-builder --linux --publish always && npm run sign:gpg && npm run release:finalize",
+    "release:linux:all": "npm run ffmpeg:check:linux && npm run licenses && npm run release:prepare && npm run compile && npm run release:wait-draft && dotenv -- electron-builder --linux --publish always && npm run flatpak:clean && npm run flatpak:bundle && npm run sign:gpg && npm run release:finalize",
     "release:linux:native": "cross-env USE_SYSTEM_FPM=true npm run release:linux:all",
-    "release:all": "npm run ffmpeg:check && npm run licenses && npm run release:prepare && npm run compile && dotenv -- node build-scripts/windows-build.js --arch all --publish always && cross-env REQUIRE_NOTARIZATION=1 dotenv -- electron-builder --mac --universal --publish always && dotenv -- electron-builder --linux --publish always && npm run sign:gpg && npm run release:finalize",
+    "release:all": "npm run ffmpeg:check && npm run licenses && npm run release:prepare && npm run compile && npm run release:draft && dotenv -- node build-scripts/windows-build.js --arch all --publish always && cross-env REQUIRE_NOTARIZATION=1 dotenv -- electron-builder --mac --universal --publish always && dotenv -- electron-builder --linux --publish always && npm run sign:gpg && npm run release:finalize",
     "release:beta:win": "node build-scripts/release-beta.js release:win",
     "release:beta:mac": "node build-scripts/release-beta.js release:mac",
     "release:beta:linux": "node build-scripts/release-beta.js release:linux",
@@ -104,7 +113,7 @@
     "electron": "^42.1.0",
     "electron-builder": "^26.8.1",
     "js-yaml": "^4.1.1",
-    "license-checker-rseidelsohn": "^4.4.2",
+    "license-checker-rseidelsohn": "^5.0.1",
     "prettier": "^3.8.1",
     "typescript": "^6.0.2"
   },
@@ -126,12 +135,6 @@
       "dist/**/*",
       "assets/**/*",
       "licenses.json"
-    ],
-    "extraResources": [
-      {
-        "from": "assets/twemoji",
-        "to": "twemoji"
-      }
     ],
     "win": {
       "extraResources": [
@@ -276,6 +279,7 @@
       ]
     },
     "linux": {
+      "syncDesktopName": true,
       "extraResources": [
         {
           "from": "resources/ffmpeg/linux/${arch}",

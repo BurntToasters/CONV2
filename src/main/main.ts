@@ -88,6 +88,7 @@ app.on('second-instance', () => {
 let isConversionActive = false;
 let isUpdateInstallInProgress = false;
 let trustedRendererUrl: string | null = null;
+const isRuntimeSmoke = process.argv.includes('--smoke') || process.env.CONV2_SMOKE === '1';
 const handleNativeThemeUpdated = (): void => {
   mainWindow?.webContents.send('theme-changed', nativeTheme.shouldUseDarkColors ? 'dark' : 'light');
 };
@@ -101,6 +102,7 @@ interface AppSettings {
   gpuMode: GPUMode;
   gpuManualVendor: GPUVendor;
   theme: 'system' | 'dark' | 'light';
+  interfaceStyle: 'glass' | 'flat';
   showDebugOutput: boolean;
   autoCheckUpdates: boolean;
   useSystemFFmpeg: boolean;
@@ -125,6 +127,7 @@ const ALLOWED_SETTINGS_KEYS = new Set<string>([
   'gpuMode',
   'gpuManualVendor',
   'theme',
+  'interfaceStyle',
   'showDebugOutput',
   'autoCheckUpdates',
   'useSystemFFmpeg',
@@ -146,6 +149,7 @@ const createDefaultSettings = (): AppSettings => ({
   gpuMode: 'auto',
   gpuManualVendor: 'cpu',
   theme: 'system',
+  interfaceStyle: 'glass',
   showDebugOutput: false,
   autoCheckUpdates: true,
   useSystemFFmpeg: false,
@@ -204,6 +208,7 @@ const normalizeSettings = (value: unknown): AppSettings => {
     gpuMode: normalizedMode,
     gpuManualVendor: normalizedManualVendor,
     theme: normalizeTheme(incoming.theme ?? defaults.theme),
+    interfaceStyle: incoming.interfaceStyle === 'flat' ? 'flat' : 'glass',
     showDebugOutput: incoming.showDebugOutput === true,
     autoCheckUpdates: incoming.autoCheckUpdates !== false,
     useSystemFFmpeg: incoming.useSystemFFmpeg === true,
@@ -630,6 +635,31 @@ const createWindow = (): void => {
 
   mainWindow.loadFile(rendererEntryPath);
 
+  if (isRuntimeSmoke) {
+    mainWindow.webContents.once('did-finish-load', () => {
+      void mainWindow?.webContents
+        .executeJavaScript(
+          `Promise.resolve(window.electronAPI?.getVersion()).then((version) => ({
+            title: document.title,
+            version,
+          }))`,
+          true
+        )
+        .then((result) => {
+          if (result?.title !== 'CONV2' || result.version !== app.getVersion()) {
+            throw new Error(
+              `Runtime smoke returned invalid renderer state: ${JSON.stringify(result)}`
+            );
+          }
+          app.exit(0);
+        })
+        .catch((error) => {
+          console.error('Runtime smoke failed:', error);
+          app.exit(1);
+        });
+    });
+  }
+
   mainWindow.once('ready-to-show', () => {
     mainWindow?.show();
     if (windowState.isMaximized) {
@@ -806,7 +836,12 @@ ipcMain.handle(
     const codec = getPresetGpuCodec(preset, {
       advancedFormatSettings: settings.advancedFormatSettings,
     });
-    const effectiveGpu = requestedGpu === 'apple' && codec === 'av1' ? 'cpu' : requestedGpu;
+    const effectiveGpu =
+      requestedGpu === 'apple' && codec === 'av1'
+        ? 'cpu'
+        : requestedGpu === 'amd' && process.platform === 'linux'
+          ? 'cpu'
+          : requestedGpu;
 
     isConversionActive = true;
     try {
@@ -897,7 +932,7 @@ ipcMain.handle(
         ? { ...result, error: redactPaths(result.error) }
         : result;
       mainWindow?.webContents.send('conversion-complete', resultForRenderer);
-      return result;
+      return resultForRenderer;
     } finally {
       isConversionActive = false;
     }

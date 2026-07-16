@@ -3,6 +3,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const https = require('https');
+const { getReleaseUploadFiles } = require('./release-upload-policy');
 
 // Environment variables are loaded via the `dotenv -e .env --` prefix in npm scripts.
 
@@ -37,6 +38,7 @@ const SIGNABLE_EXTENSIONS = [
   '.rpm',
   '.appx',
   '.msix',
+  '.flatpak',
 ];
 
 const ARCH_PATTERNS = {
@@ -517,7 +519,7 @@ async function main() {
     );
   }
 
-  const filesToUpload = [...signatureFiles, checksumFile];
+  const filesToUpload = getReleaseUploadFiles(files, signatureFiles, checksumFile, RELEASE_DIR);
 
   console.log('\nFiles queued for upload:');
   filesToUpload.forEach((f) => console.log('   • ' + path.basename(f)));

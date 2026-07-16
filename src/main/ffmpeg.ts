@@ -367,6 +367,23 @@ export const checkGPUEncoderSupport = async (
     return { available: true, encoder: GPU_ENCODERS[codec].cpu };
   }
 
+  if (gpu === 'amd' && process.platform === 'linux') {
+    return {
+      available: false,
+      encoder: GPU_ENCODERS[codec].amd,
+      error: {
+        type: 'encoder_unavailable',
+        message: 'AMD hardware encoding is not available on Linux',
+        details:
+          'AMD AMF encoders are not provided in Linux FFmpeg builds. CONV2 falls back to CPU encoding for AMD GPUs on Linux.',
+        suggestion: 'CPU encoding is used automatically.',
+        canRetryWithCPU: true,
+        codec,
+        gpu,
+      },
+    };
+  }
+
   const encoder = GPU_ENCODERS[codec]?.[gpu];
   if (!encoder) {
     return {
@@ -942,6 +959,23 @@ export const redactPaths = (s: string): string => {
   return s.split(HOME_DIR).join('~');
 };
 
+export const getRemuxIncompatibilityReason = (
+  videoCodec: string | undefined,
+  extension: string
+): string | null => {
+  if (!videoCodec || videoCodec === 'unknown') {
+    return null;
+  }
+  const codec = videoCodec.toLowerCase();
+  if (extension === 'webm' && !['vp8', 'vp9', 'av1'].includes(codec)) {
+    return `Cannot remux ${videoCodec.toUpperCase()} into a WebM container without re-encoding. WebM supports only VP8, VP9, or AV1 video. Use an MP4 or MKV remux, or pick an encoding preset instead.`;
+  }
+  if (extension === 'mp4' && ['vp8', 'vp9', 'theora'].includes(codec)) {
+    return `Cannot remux ${videoCodec.toUpperCase()} into an MP4 container without re-encoding. Use an MKV remux, or pick an encoding preset instead.`;
+  }
+  return null;
+};
+
 export const convertVideo = async (
   inputPath: string,
   outputDir: string,
@@ -979,6 +1013,17 @@ export const convertVideo = async (
   } catch {
     // ignore
   }
+  if (preset.category === 'remux') {
+    const remuxIssue = getRemuxIncompatibilityReason(inputCodec, preset.extension);
+    if (remuxIssue) {
+      try {
+        fs.unlinkSync(outputPath);
+      } catch {
+        /* best-effort placeholder cleanup */
+      }
+      return { success: false, outputPath: '', error: remuxIssue };
+    }
+  }
   if (totalDuration <= 0) {
     try {
       totalDuration = await getVideoDuration(inputPath);
@@ -1001,13 +1046,13 @@ export const convertVideo = async (
     // statfs unavailable or failed – skip check
   }
 
-  const isVideoPreset =
-    getPresetGpuCodec(
-      preset,
-      options.advancedFormatSettings
-        ? { advancedFormatSettings: options.advancedFormatSettings }
-        : undefined
-    ) !== null;
+  const presetCodec = getPresetGpuCodec(
+    preset,
+    options.advancedFormatSettings
+      ? { advancedFormatSettings: options.advancedFormatSettings }
+      : undefined
+  );
+  const isVideoPreset = presetCodec !== null;
   const shouldUseHardwareDecode =
     isVideoPreset && !(options.useCpuDecodingWhenGpu === true && gpu !== 'cpu');
   const decodeArgs = shouldUseHardwareDecode ? await getHardwareDecodeArgs(gpu, inputCodec) : [];
@@ -1042,6 +1087,11 @@ export const convertVideo = async (
       (preset.category === 'h265' || preset.category === 'av1')
     ) {
       extraArgs.push('-pix_fmt', 'yuv420p10le');
+    }
+
+    const decodeKeepsFramesOnGpu = decodeArgs.includes('-hwaccel_output_format');
+    if (gpu !== 'cpu' && is10bitSource && presetCodec === 'h264' && !decodeKeepsFramesOnGpu) {
+      extraArgs.push('-pix_fmt', 'yuv420p');
     }
 
     if (extraArgs.length > 0) {
@@ -1135,12 +1185,12 @@ export const convertVideo = async (
           if (!line.includes('out_time_ms=')) {
             continue;
           }
-          const rawTimeMs = line.split('=')[1];
-          const timeMs = parseInt(rawTimeMs, 10);
-          if (!Number.isFinite(timeMs) || timeMs < 0) {
+          const rawTimeUs = line.split('=')[1];
+          const timeUs = parseInt(rawTimeUs, 10);
+          if (!Number.isFinite(timeUs) || timeUs < 0) {
             continue;
           }
-          const seconds = timeMs / 1000000;
+          const seconds = timeUs / 1000000;
           const percent = totalDuration > 0 ? Math.min(100, (seconds / totalDuration) * 100) : 0;
           emitProgressThrottled({
             percent,

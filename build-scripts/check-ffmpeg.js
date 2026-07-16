@@ -63,7 +63,7 @@ function normalizeArch(value) {
 function usage() {
   console.error(
     'Usage: node build-scripts/check-ffmpeg.js [--all] [--current] [--target <platform:arch>]... [--generate-checksums] [--require-checksums]\n' +
-    '  Checksum mismatches are warnings by default; add --require-checksums to make them fatal.'
+      '  Checksum mismatches are warnings by default; add --require-checksums to make them fatal.'
   );
   process.exit(1);
 }
@@ -154,12 +154,12 @@ function parseArgs(args) {
     resolvedTargets = allTargets();
   } else if (includeCurrent) {
     const platform = normalizePlatform(process.platform);
-    const arch = normalizeArch(process.arch);
-    if (!platform || !arch || !REQUIRED_BINARIES[platform]?.[arch]) {
-      console.error(`Current runtime target is unsupported: ${process.platform}:${process.arch}`);
+    if (!platform || !REQUIRED_BINARIES[platform]) {
+      console.error(`Current runtime target is unsupported: ${process.platform}`);
       process.exit(1);
     }
-    targets.push({ platform, arch });
+    targets.push({ platform, arch: 'x64' });
+    targets.push({ platform, arch: 'arm64' });
     resolvedTargets = dedupeTargets(targets);
   } else if (targets.length === 0) {
     resolvedTargets = allTargets();
@@ -302,7 +302,9 @@ function validateTargets(targets, requireChecksums = false) {
       console.error('\nRegenerate with: node build-scripts/check-ffmpeg.js --generate-checksums');
       process.exit(1);
     } else {
-      console.warn('\nFFmpeg/ffprobe checksum warnings (non-fatal; pass --require-checksums to enforce):');
+      console.warn(
+        '\nFFmpeg/ffprobe checksum warnings (non-fatal; pass --require-checksums to enforce):'
+      );
       for (const item of checksumErrors) {
         console.warn(`- ${item}`);
       }
@@ -316,6 +318,14 @@ const {
   requireChecksums,
 } = parseArgs(process.argv.slice(2));
 if (shouldGenerate) {
+  if (process.env.FFMPEG_ALLOW_CHECKSUM_GENERATION !== '1') {
+    console.error(
+      '\nRefusing to overwrite the FFmpeg checksum manifest without explicit approval.\n' +
+        'Review the new binaries against an independent trusted source, then run\n' +
+        'FFMPEG_ALLOW_CHECKSUM_GENERATION=1 npm run ffmpeg:checksums:generate.'
+    );
+    process.exit(1);
+  }
   validateTargets(targets, requireChecksums);
   generateChecksumManifest(targets);
 } else {

@@ -189,12 +189,24 @@ test('AVI balanced (H.264 CPU) includes -pix_fmt yuv420p', () => {
   assert.equal(args[args.indexOf('-pix_fmt') + 1], 'yuv420p');
 });
 
-test('AVI best-quality (H.265 CPU) does NOT include -pix_fmt yuv420p', () => {
+test('AVI best-quality (H.264 CPU) includes -pix_fmt yuv420p', () => {
   const preset = presets.find((p) => p.id === 'avi-best-quality');
   const args = preset.getArgs('/input.mp4', '/output.avi', 'cpu');
-  // H.265 must NOT force 8-bit; 10-bit injection happens at runtime via convertVideo
-  const pixIdx = args.indexOf('-pix_fmt');
-  assert.ok(pixIdx === -1 || args[pixIdx + 1] !== 'yuv420p');
+  assert.ok(
+    args.includes('-pix_fmt'),
+    'avi-best-quality now defaults to H.264 and must force yuv420p'
+  );
+  assert.equal(args[args.indexOf('-pix_fmt') + 1], 'yuv420p');
+});
+
+test('AVI presets use MP3 audio (libmp3lame), not AAC', () => {
+  for (const id of ['avi-best-quality', 'avi-best-compression', 'avi-balanced']) {
+    const preset = presets.find((p) => p.id === id);
+    assert.ok(preset, `missing ${id}`);
+    const args = preset.getArgs('/input.mp4', '/output.avi', 'cpu');
+    assert.equal(args[args.indexOf('-c:a') + 1], 'libmp3lame', `${id}: AVI audio must be MP3`);
+    assert.ok(!args.includes('aac'), `${id}: AVI must not use AAC audio`);
+  }
 });
 
 // GIF filter quality

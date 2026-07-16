@@ -51,13 +51,21 @@ for (let i = 0; i < args.length; i += 1) {
 const isBetaVersion = /-beta\.\d+$/i.test(version);
 
 if (msiOnly && isBetaVersion) {
-  console.error(`Refusing MSI build for beta version "${version}". MSI requires numeric-only versioning.`);
+  console.error(
+    `Refusing MSI build for beta version "${version}". MSI requires numeric-only versioning.`
+  );
   process.exit(1);
 }
 
 const targets = msiOnly ? ['msi'] : ['nsis', 'portable', ...(isBetaVersion ? [] : ['msi'])];
 
-const electronBuilderArgs = ['electron-builder', '--win', ...targets];
+const electronBuilderArgs = [
+  'electron-builder',
+  '--config',
+  'build-scripts/electron-builder.windows.cjs',
+  '--win',
+  ...targets,
+];
 
 if (arch === 'x64') {
   electronBuilderArgs.push('--x64');

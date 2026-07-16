@@ -142,6 +142,7 @@ interface AppSettings {
   gpuMode: GPUMode;
   gpuManualVendor: GPUVendor;
   theme: 'system' | 'dark' | 'light';
+  interfaceStyle: 'glass' | 'flat';
   showDebugOutput: boolean;
   autoCheckUpdates: boolean;
   useSystemFFmpeg: boolean;
@@ -316,6 +317,7 @@ let updateReadyToInstall = false;
 let ffmpegInstalled = true;
 let cancelRequested = false;
 let closeDynamicModal: (() => void) | null = null;
+let modalReturnFocus: HTMLElement | null = null;
 let fileSelectionToken = 0;
 let advancedSaveDebounceTimer: ReturnType<typeof setTimeout> | null = null;
 let advancedSettingsSaveQueue: Promise<void> = Promise.resolve();
@@ -385,11 +387,11 @@ const getRequiredElement = <T extends HTMLElement>(id: string): T => {
 };
 
 const elements = {
-  dropZone: document.getElementById('dropZone') as HTMLDivElement,
-  fileInput: document.getElementById('fileInput') as HTMLInputElement,
-  fileInfo: document.getElementById('fileInfo') as HTMLDivElement,
-  fileName: document.getElementById('fileName') as HTMLSpanElement,
-  fileDetails: document.getElementById('fileDetails') as HTMLSpanElement,
+  dropZone: getRequiredElement<HTMLDivElement>('dropZone'),
+  fileInput: getRequiredElement<HTMLInputElement>('fileInput'),
+  fileInfo: getRequiredElement<HTMLDivElement>('fileInfo'),
+  fileName: getRequiredElement<HTMLSpanElement>('fileName'),
+  fileDetails: getRequiredElement<HTMLSpanElement>('fileDetails'),
   presetPanelSection: getRequiredElement<HTMLElement>('presetPanelSection'),
   presetPanelToggle: getRequiredElement<HTMLButtonElement>('presetPanelToggle'),
   presetPanelBody: getRequiredElement<HTMLDivElement>('presetPanelBody'),
@@ -410,19 +412,19 @@ const elements = {
   gpuManualRow: getRequiredElement<HTMLDivElement>('gpuManualRow'),
   gpuManualVendorSelect: getRequiredElement<HTMLSelectElement>('gpuManualVendorSelect'),
   gpuCapabilityMatrix: getRequiredElement<HTMLDivElement>('gpuCapabilityMatrix'),
-  convertBtn: document.getElementById('convertBtn') as HTMLButtonElement,
-  cancelBtn: document.getElementById('cancelBtn') as HTMLButtonElement,
-  progressContainer: document.getElementById('progressContainer') as HTMLDivElement,
-  progressFill: document.getElementById('progressFill') as HTMLDivElement,
-  progressPercent: document.getElementById('progressPercent') as HTMLSpanElement,
-  progressTime: document.getElementById('progressTime') as HTMLSpanElement,
-  progressEta: document.getElementById('progressEta') as HTMLSpanElement,
-  progressSpeed: document.getElementById('progressSpeed') as HTMLSpanElement,
-  statusMessage: document.getElementById('statusMessage') as HTMLDivElement,
-  showInFolderBtn: document.getElementById('showInFolderBtn') as HTMLButtonElement,
-  settingsBtn: document.getElementById('settingsBtn') as HTMLButtonElement,
-  supportBtn: document.getElementById('supportBtn') as HTMLButtonElement,
-  settingsModal: document.getElementById('settingsModal') as HTMLDivElement,
+  convertBtn: getRequiredElement<HTMLButtonElement>('convertBtn'),
+  cancelBtn: getRequiredElement<HTMLButtonElement>('cancelBtn'),
+  progressContainer: getRequiredElement<HTMLDivElement>('progressContainer'),
+  progressFill: getRequiredElement<HTMLDivElement>('progressFill'),
+  progressPercent: getRequiredElement<HTMLSpanElement>('progressPercent'),
+  progressTime: getRequiredElement<HTMLSpanElement>('progressTime'),
+  progressEta: getRequiredElement<HTMLSpanElement>('progressEta'),
+  progressSpeed: getRequiredElement<HTMLSpanElement>('progressSpeed'),
+  statusMessage: getRequiredElement<HTMLDivElement>('statusMessage'),
+  showInFolderBtn: getRequiredElement<HTMLButtonElement>('showInFolderBtn'),
+  settingsBtn: getRequiredElement<HTMLButtonElement>('settingsBtn'),
+  supportBtn: getRequiredElement<HTMLButtonElement>('supportBtn'),
+  settingsModal: getRequiredElement<HTMLDivElement>('settingsModal'),
   settingsGeneralTab: getRequiredElement<HTMLButtonElement>('settingsGeneralTab'),
   settingsAdvancedFormatsTab: getRequiredElement<HTMLButtonElement>('settingsAdvancedFormatsTab'),
   settingsDebugTab: getRequiredElement<HTMLButtonElement>('settingsDebugTab'),
@@ -464,41 +466,40 @@ const elements = {
   ),
   gifBestCompressionMaxColors: getRequiredElement<HTMLInputElement>('gifBestCompressionMaxColors'),
   gifBestCompressionDither: getRequiredElement<HTMLSelectElement>('gifBestCompressionDither'),
-  closeSettings: document.getElementById('closeSettings') as HTMLButtonElement,
-  outputDirBtn: document.getElementById('outputDirBtn') as HTMLButtonElement,
-  outputDirResetBtn: document.getElementById('outputDirResetBtn') as HTMLButtonElement,
-  outputPath: document.getElementById('outputPath') as HTMLSpanElement,
-  themeSelect: document.getElementById('themeSelect') as HTMLSelectElement,
-  themeSwitcher: document.getElementById('themeSwitcher') as HTMLDivElement,
-  resetSettingsBtn: document.getElementById('resetSettingsBtn') as HTMLButtonElement,
-  checkUpdateBtn: document.getElementById('checkUpdateBtn') as HTMLButtonElement,
-  updateBadge: document.getElementById('updateBadge') as HTMLSpanElement,
-  autoCheckUpdatesCheck: document.getElementById('autoCheckUpdatesCheck') as HTMLInputElement,
-  updateChannelSelect: document.getElementById('updateChannelSelect') as HTMLSelectElement,
-  versionInfo: document.getElementById('versionInfo') as HTMLSpanElement,
-  versionLink: document.getElementById('versionLink') as HTMLAnchorElement,
-  ffmpegWarning: document.getElementById('ffmpegWarning') as HTMLDivElement,
-  dynamicModal: document.getElementById('dynamicModal') as HTMLDivElement,
-  viewCreditsBtn: document.getElementById('viewCreditsBtn') as HTMLButtonElement,
-  creditsModal: document.getElementById('creditsModal') as HTMLDivElement,
-  closeCredits: document.getElementById('closeCredits') as HTMLButtonElement,
-  licensesList: document.getElementById('licensesList') as HTMLDivElement,
-  debugOutputCheck: document.getElementById('debugOutputCheck') as HTMLInputElement,
-  advancedPresetsCheck: document.getElementById('advancedPresetsCheck') as HTMLInputElement,
-  removeSpacesCheck: document.getElementById('removeSpacesCheck') as HTMLInputElement,
-  useSystemFFmpegCheck: document.getElementById('useSystemFFmpegCheck') as HTMLInputElement,
-  useCpuDecodingWhenGpuCheck: document.getElementById(
-    'useCpuDecodingWhenGpuCheck'
-  ) as HTMLInputElement,
-  moveOriginalToTrashOnSuccessCheck: document.getElementById(
+  closeSettings: getRequiredElement<HTMLButtonElement>('closeSettings'),
+  outputDirBtn: getRequiredElement<HTMLButtonElement>('outputDirBtn'),
+  outputDirResetBtn: getRequiredElement<HTMLButtonElement>('outputDirResetBtn'),
+  outputPath: getRequiredElement<HTMLSpanElement>('outputPath'),
+  themeSelect: getRequiredElement<HTMLSelectElement>('themeSelect'),
+  themeSwitcher: getRequiredElement<HTMLDivElement>('themeSwitcher'),
+  uiStyleSwitcher: getRequiredElement<HTMLDivElement>('uiStyleSwitcher'),
+  resetSettingsBtn: getRequiredElement<HTMLButtonElement>('resetSettingsBtn'),
+  checkUpdateBtn: getRequiredElement<HTMLButtonElement>('checkUpdateBtn'),
+  updateBadge: getRequiredElement<HTMLSpanElement>('updateBadge'),
+  autoCheckUpdatesCheck: getRequiredElement<HTMLInputElement>('autoCheckUpdatesCheck'),
+  updateChannelSelect: getRequiredElement<HTMLSelectElement>('updateChannelSelect'),
+  versionInfo: getRequiredElement<HTMLSpanElement>('versionInfo'),
+  versionLink: getRequiredElement<HTMLAnchorElement>('versionLink'),
+  ffmpegWarning: getRequiredElement<HTMLDivElement>('ffmpegWarning'),
+  dynamicModal: getRequiredElement<HTMLDivElement>('dynamicModal'),
+  viewCreditsBtn: getRequiredElement<HTMLButtonElement>('viewCreditsBtn'),
+  creditsModal: getRequiredElement<HTMLDivElement>('creditsModal'),
+  closeCredits: getRequiredElement<HTMLButtonElement>('closeCredits'),
+  licensesList: getRequiredElement<HTMLDivElement>('licensesList'),
+  debugOutputCheck: getRequiredElement<HTMLInputElement>('debugOutputCheck'),
+  advancedPresetsCheck: getRequiredElement<HTMLInputElement>('advancedPresetsCheck'),
+  removeSpacesCheck: getRequiredElement<HTMLInputElement>('removeSpacesCheck'),
+  useSystemFFmpegCheck: getRequiredElement<HTMLInputElement>('useSystemFFmpegCheck'),
+  useCpuDecodingWhenGpuCheck: getRequiredElement<HTMLInputElement>('useCpuDecodingWhenGpuCheck'),
+  moveOriginalToTrashOnSuccessCheck: getRequiredElement<HTMLInputElement>(
     'moveOriginalToTrashOnSuccessCheck'
-  ) as HTMLInputElement,
-  showLogsBtn: document.getElementById('showLogsBtn') as HTMLButtonElement,
-  logsModal: document.getElementById('logsModal') as HTMLDivElement,
-  closeLogs: document.getElementById('closeLogs') as HTMLButtonElement,
-  logsContent: document.getElementById('logsContent') as HTMLPreElement,
-  clearLogsBtn: document.getElementById('clearLogsBtn') as HTMLButtonElement,
-  copyLogsBtn: document.getElementById('copyLogsBtn') as HTMLButtonElement,
+  ),
+  showLogsBtn: getRequiredElement<HTMLButtonElement>('showLogsBtn'),
+  logsModal: getRequiredElement<HTMLDivElement>('logsModal'),
+  closeLogs: getRequiredElement<HTMLButtonElement>('closeLogs'),
+  logsContent: getRequiredElement<HTMLPreElement>('logsContent'),
+  clearLogsBtn: getRequiredElement<HTMLButtonElement>('clearLogsBtn'),
+  copyLogsBtn: getRequiredElement<HTMLButtonElement>('copyLogsBtn'),
 };
 
 const createFallbackPresetPickerModel = (): PresetPickerModelApi => {
@@ -874,19 +875,36 @@ const renderPresetPaneGroups = (
       const card = document.createElement('button');
       card.type = 'button';
       card.className = `preset-card${pickerPreset.id === selectedPresetId ? ' is-selected' : ''}`;
+
+      const detailsDiv = document.createElement('div');
+      detailsDiv.className = 'preset-card-details';
+
       const nameSpan = document.createElement('span');
       nameSpan.className = 'preset-card-name';
       nameSpan.textContent = pickerPreset.displayName;
-      card.appendChild(nameSpan);
+      detailsDiv.appendChild(nameSpan);
+
       if (group.key === 'recent' && pickerPreset.categoryLabel) {
         const codecSpan = document.createElement('span');
         codecSpan.className = 'preset-card-codec';
         codecSpan.textContent = pickerPreset.categoryLabel;
-        card.appendChild(codecSpan);
+        detailsDiv.appendChild(codecSpan);
       }
+      card.appendChild(detailsDiv);
+
       const fullPreset = visiblePresetById.get(pickerPreset.id);
       if (fullPreset) {
         card.title = fullPreset.description;
+
+        // Add visual intent badge
+        const intentKey = getPresetIntentKey(fullPreset);
+        const tone = getPresetIntentTone(intentKey);
+        const label = getPresetIntentLabel(intentKey);
+
+        const badgeSpan = document.createElement('span');
+        badgeSpan.className = `preset-intent-badge ${tone}`;
+        badgeSpan.textContent = label;
+        card.appendChild(badgeSpan);
       }
       card.addEventListener('click', () => {
         selectedPresetId = pickerPreset.id;
@@ -932,8 +950,7 @@ const renderPresetPicker = (): void => {
     });
 
     activePresetParentKey = pickerModel.resolveActiveParentKey(activePresetParentKey, buckets) as
-      | PresetParentKey
-      | '';
+      PresetParentKey | '';
     renderPresetParentList(buckets);
 
     const activeBucket = buckets.find((bucket) => bucket.key === activePresetParentKey);
@@ -1497,11 +1514,7 @@ const setSettingsPanel = (
 };
 
 type FormatPanelId =
-  | 'formatPanelGif'
-  | 'formatPanelAv1'
-  | 'formatPanelH264'
-  | 'formatPanelH265'
-  | 'formatPanelAvi';
+  'formatPanelGif' | 'formatPanelAv1' | 'formatPanelH264' | 'formatPanelH265' | 'formatPanelAvi';
 
 const setFormatPanel = (panelId: FormatPanelId): void => {
   formatPanels.forEach((panel) => {
@@ -1928,6 +1941,7 @@ const openSettingsModal = (): void => {
   if (elements.settingsModal.classList.contains('visible')) {
     return;
   }
+  modalReturnFocus = document.activeElement as HTMLElement | null;
   setSettingsPanel('settingsGeneralPanel');
   setAdvancedFormatControlValues(settings.advancedFormatSettings);
   elements.settingsModal.classList.add('visible');
@@ -1937,6 +1951,10 @@ const openSettingsModal = (): void => {
 const closeSettingsModal = async (): Promise<void> => {
   await waitForAdvancedSettingsIdle();
   elements.settingsModal.classList.remove('visible');
+  if (modalReturnFocus && typeof modalReturnFocus.focus === 'function') {
+    modalReturnFocus.focus();
+    modalReturnFocus = null;
+  }
 };
 
 const flushLogBuffer = (): void => {
@@ -1999,6 +2017,7 @@ const setCheckUpdateButtonState = (
 
 const showModal = (options: ModalOptions): void => {
   const modal = elements.dynamicModal;
+  const returnFocus = document.activeElement as HTMLElement | null;
   const titleEl = modal.querySelector('.modal-header h2') as HTMLElement;
   const bodyEl = modal.querySelector('.modal-body p') as HTMLElement;
   const confirmBtn = modal.querySelector('#modalConfirm') as HTMLButtonElement;
@@ -2024,6 +2043,9 @@ const showModal = (options: ModalOptions): void => {
     cancelBtn.replaceWith(cancelBtn.cloneNode(true));
     if (closeDynamicModal === closeByEscape) {
       closeDynamicModal = null;
+    }
+    if (returnFocus && typeof returnFocus.focus === 'function') {
+      returnFocus.focus();
     }
   };
 
@@ -2077,15 +2099,29 @@ const buildLicenseEntries = (
     {
       name: 'FFmpeg binaries',
       license: 'GPL-2.0-or-later',
-      link: 'https://github.com/BurntToasters/ffmpeg-static-builds',
-      note: 'Pre-built FFmpeg 8.1 static binaries (macOS Intel/x64 remains 8.0.1 — no hardware to rebuild). Source code available at the linked repository.',
+      link: 'https://github.com/BurntToasters/ffmpeg-static-builds/releases/tag/ffmpeg-v8.1.2',
+      note: 'Pre-built FFmpeg 8.1.2 GPL static binaries for Windows, macOS, and Linux. Source code available at the linked release.',
       isSpecial: true,
     },
     {
       name: 'Twemoji assets',
       license: 'CC-BY 4.0',
-      link: 'https://github.com/jdecked/twemoji',
-      note: 'Emoji artwork by Twitter and other contributors (used under CC-BY 4.0).',
+      link: 'https://creativecommons.org/licenses/by/4.0/',
+      note: 'Emoji artwork from Twemoji by Twitter and other contributors. Used under CC-BY 4.0; source: github.com/jdecked/twemoji.',
+      isSpecial: true,
+    },
+    {
+      name: 'Inter fonts',
+      license: 'OFL-1.1',
+      link: 'https://github.com/rsms/inter',
+      note: 'Bundled font subsets are licensed under OFL-1.1. Full notice: fonts/OFL.txt.',
+      isSpecial: true,
+    },
+    {
+      name: 'Outfit fonts',
+      license: 'OFL-1.1',
+      link: 'https://github.com/Outfitio/Outfit-Fonts',
+      note: 'Bundled font subsets are licensed under OFL-1.1. Full notice: fonts/OFL.txt.',
       isSpecial: true,
     },
   ];
@@ -2173,6 +2209,7 @@ const openCreditsModal = async (): Promise<void> => {
   if (elements.settingsModal.classList.contains('visible')) {
     await closeSettingsModal();
   }
+  modalReturnFocus = document.activeElement as HTMLElement | null;
   elements.creditsModal.classList.add('visible');
   focusFirstInteractiveElement(elements.creditsModal);
   elements.licensesList.innerHTML = '<div class="license-item">Loading credits...</div>';
@@ -2199,6 +2236,10 @@ const openCreditsModal = async (): Promise<void> => {
 
 const closeCreditsModal = (): void => {
   elements.creditsModal.classList.remove('visible');
+  if (modalReturnFocus && typeof modalReturnFocus.focus === 'function') {
+    modalReturnFocus.focus();
+    modalReturnFocus = null;
+  }
 };
 
 const TIER_LABEL_TO_KEY: Record<string, string> = {
@@ -2279,14 +2320,14 @@ const checkFFmpeg = async () => {
   const installed = await window.electronAPI.checkFFmpeg();
   ffmpegInstalled = installed;
   if (!installed) {
-    elements.ffmpegWarning.style.display = 'block';
+    elements.ffmpegWarning.classList.remove('u-hidden');
     if (!isConverting) {
       elements.convertBtn.disabled = true;
     }
     return;
   }
 
-  elements.ffmpegWarning.style.display = 'none';
+  elements.ffmpegWarning.classList.add('u-hidden');
   if (!isConverting && selectedFiles.length > 0) {
     elements.convertBtn.disabled = false;
   }
@@ -2335,9 +2376,9 @@ const loadSettings = async () => {
   setAdvancedFormatControlValues(settings.advancedFormatSettings);
 
   if (settings.showDebugOutput) {
-    elements.showLogsBtn.style.display = 'inline-block';
+    elements.showLogsBtn.classList.remove('u-hidden');
   } else {
-    elements.showLogsBtn.style.display = 'none';
+    elements.showLogsBtn.classList.add('u-hidden');
   }
 
   if (settings.outputDirectory) {
@@ -2380,11 +2421,11 @@ const applyUpdateVisibility = async () => {
   const updatesDisabled = await window.electronAPI.isUpdatesDisabled();
   const updateChannelSetting = document.getElementById('updateChannelSetting');
   if (updatesDisabled) {
-    elements.checkUpdateBtn.style.display = 'none';
-    elements.updateBadge.style.display = 'none';
+    elements.checkUpdateBtn.classList.add('u-hidden');
+    elements.updateBadge.classList.add('u-hidden');
     elements.autoCheckUpdatesCheck.disabled = true;
     if (updateChannelSetting) {
-      updateChannelSetting.style.display = 'none';
+      updateChannelSetting.classList.add('u-hidden');
     }
   }
 };
@@ -2399,6 +2440,16 @@ const updateThemeSwitcher = () => {
   });
 };
 
+const updateUiStyleSwitcher = () => {
+  const switcher = document.getElementById('uiStyleSwitcher');
+  if (!switcher) return;
+
+  switcher.querySelectorAll('.theme-option').forEach((btn) => {
+    const btnStyle = (btn as HTMLElement).dataset.style;
+    btn.classList.toggle('active', btnStyle === settings.interfaceStyle);
+  });
+};
+
 const applyTheme = async () => {
   if (settings.theme === 'system') {
     const systemTheme = await window.electronAPI.getSystemTheme();
@@ -2407,7 +2458,11 @@ const applyTheme = async () => {
     document.documentElement.setAttribute('data-theme', settings.theme);
   }
 
+  const style = settings.interfaceStyle === 'flat' ? 'flat' : 'glass';
+  document.documentElement.setAttribute('data-ui-style', style);
+
   updateThemeSwitcher();
+  updateUiStyleSwitcher();
 
   if (!themeListenerRegistered) {
     window.electronAPI.onThemeChange((theme) => {
@@ -2448,6 +2503,10 @@ const setupKeyboardShortcuts = () => {
       }
       if (topModal === elements.logsModal) {
         elements.logsModal.classList.remove('visible');
+        if (modalReturnFocus && typeof modalReturnFocus.focus === 'function') {
+          modalReturnFocus.focus();
+          modalReturnFocus = null;
+        }
         return;
       }
       if (topModal === elements.creditsModal) {
@@ -2680,8 +2739,12 @@ const setupEventListeners = () => {
     if (files && files.length > 0) {
       const filePaths = Array.from(files)
         .map((file) => window.electronAPI.getPathForFile(file))
-        .filter((filePath) => filePath && filePath.length > 0);
-      void handleFileSelect(filePaths);
+        .filter(
+          (filePath) => filePath && filePath.length > 0 && hasAcceptedVideoExtension(filePath)
+        );
+      if (filePaths.length > 0) {
+        void handleFileSelect(filePaths);
+      }
     }
     elements.fileInput.value = '';
   });
@@ -2805,6 +2868,28 @@ const setupEventListeners = () => {
     });
   });
 
+  elements.uiStyleSwitcher?.querySelectorAll('.theme-option').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const uiStyle = (btn as HTMLElement).dataset.style as AppSettings['interfaceStyle'];
+      if (uiStyle) {
+        const previousStyle = settings.interfaceStyle;
+        await persistSettingsChange(
+          () => {
+            settings.interfaceStyle = uiStyle;
+          },
+          () => {
+            settings.interfaceStyle = previousStyle;
+          },
+          { interfaceStyle: uiStyle },
+          'Failed to save interface style',
+          async () => {
+            await applyTheme();
+          }
+        );
+      }
+    });
+  });
+
   elements.debugOutputCheck.addEventListener('change', async () => {
     const nextValue = elements.debugOutputCheck.checked;
     const previousValue = settings.showDebugOutput;
@@ -2819,7 +2904,7 @@ const setupEventListeners = () => {
       { showDebugOutput: nextValue },
       'Failed to save debug output setting',
       () => {
-        elements.showLogsBtn.style.display = settings.showDebugOutput ? 'inline-block' : 'none';
+        elements.showLogsBtn.classList.toggle('u-hidden', !settings.showDebugOutput);
       }
     );
   });
@@ -3007,17 +3092,26 @@ const setupEventListeners = () => {
 
   elements.showLogsBtn.addEventListener('click', () => {
     flushLogBuffer();
+    modalReturnFocus = document.activeElement as HTMLElement | null;
     elements.logsModal.classList.add('visible');
     focusFirstInteractiveElement(elements.logsModal);
   });
 
   elements.closeLogs.addEventListener('click', () => {
     elements.logsModal.classList.remove('visible');
+    if (modalReturnFocus && typeof modalReturnFocus.focus === 'function') {
+      modalReturnFocus.focus();
+      modalReturnFocus = null;
+    }
   });
 
   elements.logsModal.addEventListener('click', (e) => {
     if (e.target === elements.logsModal) {
       elements.logsModal.classList.remove('visible');
+      if (modalReturnFocus && typeof modalReturnFocus.focus === 'function') {
+        modalReturnFocus.focus();
+        modalReturnFocus = null;
+      }
     }
   });
 
@@ -3151,7 +3245,7 @@ const setupEventListeners = () => {
     }
 
     if (phase === 'available') {
-      elements.updateBadge.style.display = 'flex';
+      elements.updateBadge.classList.remove('u-hidden');
       setCheckUpdateButtonState(getUpdateAvailableButtonHTML(), false, true);
       manualUpdateCheckInProgress = false;
       updateDownloadInProgress = false;
@@ -3169,13 +3263,13 @@ const setupEventListeners = () => {
     if (phase === 'downloaded') {
       updateDownloadInProgress = false;
       updateReadyToInstall = true;
-      elements.updateBadge.style.display = 'flex';
+      elements.updateBadge.classList.remove('u-hidden');
       setCheckUpdateButtonState(getInstallUpdateButtonHTML(), false, true);
       return;
     }
 
     if (phase === 'not-available' || phase === 'disabled') {
-      elements.updateBadge.style.display = 'none';
+      elements.updateBadge.classList.add('u-hidden');
       setCheckUpdateButtonState(checkUpdateDefaultHTML, false);
       manualUpdateCheckInProgress = false;
       updateDownloadInProgress = false;
@@ -3193,7 +3287,7 @@ const setupEventListeners = () => {
       updateDownloadInProgress = false;
       updateReadyToInstall = false;
       setCheckUpdateButtonState(checkUpdateDefaultHTML, false);
-      elements.updateBadge.style.display = 'none';
+      elements.updateBadge.classList.add('u-hidden');
     }
   });
 
@@ -3268,7 +3362,7 @@ const handleFileSelect = async (filePaths: string[]) => {
     const [filePath] = selectedFiles;
     elements.fileName.textContent = getFileName(filePath);
 
-    const info = await window.electronAPI.getFileInfo(filePath);
+    const info = await window.electronAPI.getFileInfo(filePath).catch(() => null);
     if (
       selectionToken !== fileSelectionToken ||
       selectedFiles.length !== 1 ||
@@ -3306,7 +3400,7 @@ const handleFileSelect = async (filePaths: string[]) => {
 
   elements.fileInfo.classList.add('visible');
   elements.convertBtn.disabled = !ffmpegInstalled;
-  elements.showInFolderBtn.style.display = 'none';
+  elements.showInFolderBtn.classList.add('u-hidden');
   hideStatus();
 };
 
@@ -3389,6 +3483,7 @@ const runSingleConversion = async (
 ): Promise<ConversionResult & { usedCpuFallback?: boolean }> => {
   conversionStartTime = Date.now();
   elements.progressFill.style.width = '0%';
+  elements.progressFill.setAttribute('aria-valuenow', '0');
   elements.progressPercent.textContent = '0%';
   elements.progressTime.textContent = '00:00:00';
   elements.progressEta.textContent = '';
@@ -3443,7 +3538,7 @@ const finishConversionUi = () => {
   elements.convertBtn.innerHTML = convertBtnOriginalHTML;
   elements.convertBtn.classList.remove('converting');
   elements.convertBtn.disabled = !ffmpegInstalled || selectedFiles.length === 0;
-  elements.cancelBtn.style.display = 'none';
+  elements.cancelBtn.classList.add('u-hidden');
 };
 
 const startConversion = async () => {
@@ -3480,9 +3575,9 @@ const startConversion = async () => {
   isConverting = true;
   cancelRequested = false;
   elements.convertBtn.classList.add('converting');
-  elements.cancelBtn.style.display = 'inline-flex';
+  elements.cancelBtn.classList.remove('u-hidden');
   elements.progressContainer.classList.add('visible');
-  elements.showInFolderBtn.style.display = 'none';
+  elements.showInFolderBtn.classList.add('u-hidden');
   pendingProgressUpdate = null;
   progressUpdateScheduled = false;
   pendingLogBuffer = '';
@@ -3539,7 +3634,7 @@ const startConversion = async () => {
   finishConversionUi();
   if (unexpectedError) {
     showStatus('error', `Conversion failed: ${unexpectedError}`);
-    elements.showInFolderBtn.style.display = 'none';
+    elements.showInFolderBtn.classList.add('u-hidden');
     return;
   }
 
@@ -3547,10 +3642,10 @@ const startConversion = async () => {
     const [result] = results;
     if (result?.success && result.usedCpuFallback) {
       showStatus('warning', 'Conversion complete. GPU unavailable; retried with CPU.');
-      elements.showInFolderBtn.style.display = 'inline-flex';
+      elements.showInFolderBtn.classList.remove('u-hidden');
     } else if (result?.success) {
       showStatus('success', 'Conversion complete!');
-      elements.showInFolderBtn.style.display = 'inline-flex';
+      elements.showInFolderBtn.classList.remove('u-hidden');
     } else if (result?.error === 'Conversion cancelled' || wasCancelled) {
       showStatus('warning', 'Conversion cancelled');
     } else {
@@ -3584,9 +3679,9 @@ const startConversion = async () => {
   }
 
   if (successCount > 0) {
-    elements.showInFolderBtn.style.display = 'inline-flex';
+    elements.showInFolderBtn.classList.remove('u-hidden');
   } else {
-    elements.showInFolderBtn.style.display = 'none';
+    elements.showInFolderBtn.classList.add('u-hidden');
   }
 };
 
@@ -3606,12 +3701,13 @@ const cancelConversion = async () => {
 
 const showStatus = (type: 'success' | 'error' | 'warning', message: string) => {
   elements.statusMessage.className = `status-message visible ${type}`;
-  const textEl = elements.statusMessage.querySelector('.status-text');
-  if (textEl) {
-    textEl.textContent = message;
-  } else {
-    elements.statusMessage.textContent = message;
+  let textEl = elements.statusMessage.querySelector('.status-text');
+  if (!textEl) {
+    textEl = document.createElement('span');
+    textEl.className = 'status-text';
+    elements.statusMessage.appendChild(textEl);
   }
+  textEl.textContent = message;
 };
 
 const hideStatus = () => {
