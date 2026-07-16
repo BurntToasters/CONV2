@@ -39,13 +39,10 @@
 - **UI:** Updated the experimental interface introduced during the beta cycle.
 - **Codebase:** Many fixes to the app and FFmpeg for AMD hardware.
 
-## Changes in `v1.4.1:`
+## Click below for the full `v1` Changelog
 
-- **macOS:** Fixed an issue where the updater was getting stuck and would not be able to restart the app to complete the update process.
-- **Misc:**
-  - Edge case fixes.
-  - General Improvements.
-  - Updated packages.
+<details>
+  <summary>Full v1 changelog</summary>
 
 ## Changes in `v1.4.0:`
 
@@ -78,48 +75,6 @@
 - **Codebase:** Major bug fixes and improvements all over the place!
 - **PKG:** Updated packages
 - **Electron:** Updated electron to `41.2.1`.
-
-## Click below for the full `v1` Changelog
-
-<details>
-  <summary>Full v1 changelog</summary>
-
-## Changes in `v1.3.3:`
-
-- **NEW - Window State Persistence:** CONV2 now saves and restores window size, position, and maximized state between sessions. The saved position is validated against connected displays before restoring, so the window won't open off-screen after disconnecting a monitor.
-- **NEW - Drag-Drop Validation:** Files dropped onto the drop zone are now checked against the list of supported video extensions before processing. Unsupported file types are rejected immediately with a helpful error message instead of silently failing.
-- **FFMPEG:** Fixed progress parsing not handling `MM:SS` and bare-seconds time formats, which some FFmpeg builds emit during conversion.
-- **FFMPEG:** Fixed AVI H.264 CPU encodes missing the `-pix_fmt yuv420p` flag, which could produce output files with incompatible pixel formats.
-- **Settings:** Fixed stale `.tmp` files left on disk by a previous crash not being cleaned up at startup. Corrupt settings files are now backed up with a timestamped filename before being reset to defaults, instead of being silently discarded.
-- **Security:** Log output sent to the renderer now replaces the user's home directory path with `~`, preventing the system username from appearing in shared screenshots or debug logs.
-- **Codebase:** Multiple reliability and performance improvements to the FFmpeg backend:
-  - Added a 30-second TTL cache for the FFmpeg availability check to avoid repeated process spawns.
-  - Added timeouts to `ffprobe` calls (30s) and encoder/decoder list queries (15s) to prevent hangs if FFmpeg stalls.
-  - Fixed a race where concurrent encoder/decoder list requests could spawn multiple FFmpeg processes before the cache was populated; results are now deduplicated with an in-flight Promise guard.
-  - Fixed the cancel conversion force-kill timer always firing 1.5 seconds after cancellation even when the process had already exited; the timer is now cleared immediately in the process exit handler.
-  - The `save-settings` IPC handler now logs a warning for any unknown fields sent by the renderer, making stale or mismatched field names easier to catch.
-- **Testing:** Expanded test coverage for progress parsing edge cases (MM:SS and bare-seconds formats), AVI H.264 pixel format correctness, and path redaction.
-
-## Changes in `v1.3.2:`
-
-- **Conversion presets & Hardware Acceleration:** Multiple updates and tweaks:
-  - **Conversion:** Tweaked UI/UX.
-  - **Conversion:** Recent now shows which format was used under the preset name.
-  - **Conversion:** More FFMPEG Flags added.
-  - **HW Accel:** Added a new detection module at startup that detects what GPUs a user has on their computer.
-  - **HW Accel:** Blocks usage of certain GPU options if a selected format is not compatible with the user's GPU.
-- **NEW - DEBUG Settings Tab:**
-  - Moved `System FFMPEG` setting option to debug tab.
-  - Moved `Debug Logs` setting option to debug tab.
-  - Added Show ALL GPU Vendors option.
-    - This setting will show all potential GPU options regardless of what the user has installed.
-- **NEW - Trash Original on Success:** A new option in settings has been added to trash the original video file after a successful conversion (off by default).
-- **NEW - CPU Decoding with GPU Encode:** A new option in settings has been added to move decoding tasks to the CPU and let the GPU handle encoding only.
-  - This is useful if a user is playing a video game for example to distribute computer resources more efficiently under heavy load.
-- **Misc:**
-  - **PKG:** Updated packages.
-  - **FFMPEG:** Fixed multiple issues with FFMPEG in macOS.
-  - **Codebase:** Multiple stability fixes and edge-case error handling.
 
 ## Changes in `v1.2.0:`
 
