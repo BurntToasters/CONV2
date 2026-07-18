@@ -92,6 +92,7 @@
     "format": "prettier --write \"src/**/*.{ts,js,html,css}\" \"build/**/*.js\" \"tests/**/*.js\" \"*.{json,md,yml,yaml}\"",
     "format:check": "prettier --check \"src/**/*.{ts,js,html,css}\" \"build/**/*.js\" \"tests/**/*.js\" \"*.{json,md,yml,yaml}\"",
     "test": "npm run tests:node",
+    "test:release-assets": "node --test tests/post-release-assets.test.js",
     "tests:node": "npm run compile && node --test tests/*.test.js",
     "tests": "npm run tests:node",
     "test:all": "node build-scripts/test-all.js",
