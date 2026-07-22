@@ -69,10 +69,16 @@ test('gif presets exist with expected order and extension', () => {
   assert.ok(gifPresets.every((preset) => preset.extension === 'gif'));
 });
 
-test('gif category only appears when advanced presets are enabled', () => {
-  assert.ok(ADVANCED_PRESET_CATEGORIES.includes('gif'));
-  assert.equal(getVisiblePresetCategories(false).includes('gif'), false);
+test('gif category is visible by default', () => {
+  assert.equal(ADVANCED_PRESET_CATEGORIES.includes('gif'), false);
+  assert.equal(getVisiblePresetCategories(false).includes('gif'), true);
   assert.equal(getVisiblePresetCategories(true).includes('gif'), true);
+});
+
+test('avi category still requires advanced presets', () => {
+  assert.ok(ADVANCED_PRESET_CATEGORIES.includes('avi'));
+  assert.equal(getVisiblePresetCategories(false).includes('avi'), false);
+  assert.equal(getVisiblePresetCategories(true).includes('avi'), true);
 });
 
 test('preset categories export labels and stable ordering', () => {

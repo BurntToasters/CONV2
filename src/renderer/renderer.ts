@@ -304,6 +304,7 @@ interface LicenseDisplayEntry {
 
 let selectedFiles: string[] = [];
 let isConverting = false;
+let conversionStarting = false;
 let settings: AppSettings;
 let presets: Preset[] = [];
 let conversionStartTime = 0;
@@ -3541,7 +3542,7 @@ const finishConversionUi = () => {
   elements.cancelBtn.classList.add('u-hidden');
 };
 
-const startConversion = async () => {
+const runConversionWorkflow = async () => {
   await waitForAdvancedSettingsIdle();
 
   if (selectedFiles.length === 0) return;
@@ -3683,6 +3684,29 @@ const startConversion = async () => {
   } else {
     elements.showInFolderBtn.classList.add('u-hidden');
   }
+};
+
+const startConversion = (): void => {
+  if (isConverting || conversionStarting) return;
+
+  conversionStarting = true;
+  elements.convertBtn.disabled = true;
+  void runConversionWorkflow()
+    .catch((error) => {
+      if (isConverting) {
+        finishConversionUi();
+      }
+      showStatus(
+        'error',
+        `Conversion failed to start: ${error instanceof Error ? error.message : String(error)}`
+      );
+    })
+    .finally(() => {
+      conversionStarting = false;
+      if (!isConverting) {
+        elements.convertBtn.disabled = !ffmpegInstalled || selectedFiles.length === 0;
+      }
+    });
 };
 
 const cancelConversion = async () => {

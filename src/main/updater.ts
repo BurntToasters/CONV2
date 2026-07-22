@@ -33,6 +33,7 @@ let listenersRegistered = false;
 let updateCheckInFlight = false;
 let activeCheckMode: UpdateCheckMode | null = null;
 let updateDownloadedReady = false;
+let downloadedUpdateVersion: string | null = null;
 let updateInstallInProgress = false;
 let updateInstallStartingHandler: UpdateInstallStartingHandler | null = null;
 
@@ -148,6 +149,15 @@ const sendUpdateStateToWindow = (payload: UpdateStatePayload): void => {
   }
 };
 
+const sendDownloadedUpdateStateToWindow = (): void => {
+  if (!updateDownloadedReady || !downloadedUpdateVersion) return;
+  sendUpdateStateToWindow({
+    phase: 'downloaded',
+    manual: false,
+    message: `Version ${downloadedUpdateVersion} downloaded.`,
+  });
+};
+
 export const initUpdater = (window: BrowserWindow): void => {
   mainWindow = window;
   updatesDisabled = checkMsiInstallation();
@@ -167,6 +177,7 @@ export const initUpdater = (window: BrowserWindow): void => {
   applyUpdaterChannel();
 
   if (listenersRegistered) {
+    window.webContents.once('did-finish-load', sendDownloadedUpdateStateToWindow);
     return;
   }
 
@@ -290,16 +301,13 @@ export const initUpdater = (window: BrowserWindow): void => {
   });
 
   autoUpdater.on('update-downloaded', (info: UpdateInfo) => {
+    updateDownloadedReady = true;
+    downloadedUpdateVersion = info.version;
     const windowRef = getMainWindow();
     if (!windowRef) {
       return;
     }
-    updateDownloadedReady = true;
-    sendUpdateStateToWindow({
-      phase: 'downloaded',
-      manual: false,
-      message: `Version ${info.version} downloaded.`,
-    });
+    sendDownloadedUpdateStateToWindow();
     dialog
       .showMessageBox(windowRef, {
         type: 'info',

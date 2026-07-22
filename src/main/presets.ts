@@ -315,7 +315,7 @@ export const PRESET_CATEGORY_ORDER: PresetCategory[] = [
   'audio',
 ];
 
-export const ADVANCED_PRESET_CATEGORIES: PresetCategory[] = ['avi', 'gif'];
+export const ADVANCED_PRESET_CATEGORIES: PresetCategory[] = ['avi'];
 
 export const PRESET_CATEGORY_LABELS: Record<PresetCategory, string> = {
   av1: 'AV1',

@@ -21,7 +21,7 @@ import {
 } from './advancedFormats';
 import {
   convertVideo,
-  cancelConversion,
+  cancelConversion as cancelFFmpegConversion,
   checkFFmpegInstalled,
   getVideoInfo,
   GPU_ENCODERS,
@@ -88,6 +88,11 @@ app.on('second-instance', () => {
 let isConversionActive = false;
 let isUpdateInstallInProgress = false;
 let trustedRendererUrl: string | null = null;
+let activeConversionAbortController: AbortController | null = null;
+const cancelActiveConversion = (force = false): void => {
+  activeConversionAbortController?.abort();
+  cancelFFmpegConversion(force);
+};
 const isRuntimeSmoke = process.argv.includes('--smoke') || process.env.CONV2_SMOKE === '1';
 const handleNativeThemeUpdated = (): void => {
   mainWindow?.webContents.send('theme-changed', nativeTheme.shouldUseDarkColors ? 'dark' : 'light');
@@ -485,10 +490,10 @@ const prepareForUpdateInstall = async (): Promise<void> => {
     return;
   }
 
-  cancelConversion(true);
+  cancelActiveConversion(true);
   const stopped = await waitForConversionStop(3000);
   if (!stopped) {
-    cancelConversion(true);
+    cancelActiveConversion(true);
     await waitForConversionStop(1500);
   }
   isConversionActive = false;
@@ -698,7 +703,7 @@ const createWindow = (): void => {
         })
         .then(async (result) => {
           if (result.response === 1) {
-            cancelConversion(true);
+            cancelActiveConversion(true);
             await waitForConversionStop(3000);
             isConversionActive = false;
             mainWindow?.destroy();
@@ -730,10 +735,10 @@ app.on('before-quit', async (e) => {
   }
   if (isConversionActive) {
     e.preventDefault();
-    cancelConversion(true);
+    cancelActiveConversion(true);
     const stopped = await waitForConversionStop(3000);
     if (!stopped) {
-      cancelConversion(true);
+      cancelActiveConversion(true);
       await waitForConversionStop(1500);
     }
     isConversionActive = false;
@@ -844,9 +849,24 @@ ipcMain.handle(
           : requestedGpu;
 
     isConversionActive = true;
+    const conversionAbortController = new AbortController();
+    activeConversionAbortController = conversionAbortController;
     try {
       if (codec !== null && effectiveGpu !== 'cpu') {
-        const encoderCheck = await checkGPUEncoderSupport(effectiveGpu, codec);
+        const encoderCheck = await checkGPUEncoderSupport(
+          effectiveGpu,
+          codec,
+          conversionAbortController.signal
+        );
+        if (conversionAbortController.signal.aborted) {
+          const canceledResult: ConversionResult = {
+            success: false,
+            outputPath: '',
+            error: 'Conversion cancelled',
+          };
+          mainWindow?.webContents.send('conversion-complete', canceledResult);
+          return canceledResult;
+        }
         if (!encoderCheck.available && encoderCheck.error) {
           if (!suppressGpuErrorEvent) {
             mainWindow?.webContents.send('gpu-encoder-error', encoderCheck.error);
@@ -887,6 +907,7 @@ ipcMain.handle(
               options?.removeSpacesFromFilenames ?? settings.removeSpacesFromFilenames,
             useCpuDecodingWhenGpu: settings.useCpuDecodingWhenGpu,
             advancedFormatSettings: settings.advancedFormatSettings,
+            signal: conversionAbortController.signal,
           }
         );
       } catch (err) {
@@ -934,6 +955,9 @@ ipcMain.handle(
       mainWindow?.webContents.send('conversion-complete', resultForRenderer);
       return resultForRenderer;
     } finally {
+      if (activeConversionAbortController === conversionAbortController) {
+        activeConversionAbortController = null;
+      }
       isConversionActive = false;
     }
   }
@@ -941,7 +965,7 @@ ipcMain.handle(
 
 ipcMain.handle('cancel-conversion', (event: IpcMainInvokeEvent, force?: boolean) => {
   assertTrustedIpcSender(event);
-  cancelConversion(!!force);
+  cancelActiveConversion(!!force);
 });
 
 ipcMain.handle('get-file-info', async (event: IpcMainInvokeEvent, filePath: string) => {

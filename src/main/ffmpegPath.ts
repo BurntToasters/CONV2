@@ -1,10 +1,34 @@
 import * as path from 'path';
 import * as fs from 'fs';
 import { app } from 'electron';
+import {
+  copyExecutableToPrivateDirectory,
+  createPrivateExecutableDirectory,
+  removePrivateExecutableDirectory,
+} from './executableTemp';
 
 let cachedFFmpegPath: string | null = null;
 let cachedFFprobePath: string | null = null;
 let useSystemFFmpeg = false;
+let privateExecutableDirectory: string | null = null;
+
+const getPrivateExecutableDirectory = (): string => {
+  if (privateExecutableDirectory) {
+    return privateExecutableDirectory;
+  }
+
+  privateExecutableDirectory = createPrivateExecutableDirectory(app.getPath('temp'));
+  app.once('will-quit', () => {
+    try {
+      removePrivateExecutableDirectory(privateExecutableDirectory);
+    } catch (error) {
+      console.warn('Failed to remove temporary FFmpeg directory:', error);
+    } finally {
+      privateExecutableDirectory = null;
+    }
+  });
+  return privateExecutableDirectory;
+};
 
 /**
  * Ensures the binary at filePath is executable. Returns the path to use —
@@ -32,15 +56,7 @@ const ensureExecutable = (filePath: string): string => {
             // Already executable despite mode bits — use as-is
           } catch {
             // Not executable and can't chmod in place — copy to temp and chmod there
-            const binaryName = path.basename(filePath);
-            const tmpDir = path.join(app.getPath('temp'), 'conv2-bin');
-            if (!fs.existsSync(tmpDir)) {
-              fs.mkdirSync(tmpDir, { recursive: true });
-            }
-            const tmpBin = path.join(tmpDir, binaryName);
-            fs.copyFileSync(filePath, tmpBin);
-            fs.chmodSync(tmpBin, 0o755);
-            return tmpBin;
+            return copyExecutableToPrivateDirectory(filePath, getPrivateExecutableDirectory());
           }
         }
         // Other errors: ignore and continue with the original path

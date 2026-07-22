@@ -5,12 +5,29 @@ const path = require('node:path');
 
 const ROOT = path.join(__dirname, '..');
 const read = (relativePath) => fs.readFileSync(path.join(ROOT, relativePath), 'utf8');
+const escapeRegex = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 test('conversion IPC returns the redacted result', () => {
   const source = read('src/main/main.ts');
   assert.match(
     source,
     /webContents\.send\('conversion-complete', resultForRenderer\);\s*return resultForRenderer;/
+  );
+});
+
+test('conversion cancellation aborts preflight as well as FFmpeg', () => {
+  const source = read('src/main/main.ts');
+  assert.match(source, /activeConversionAbortController\?\.abort\(\)/);
+  assert.match(source, /signal: conversionAbortController\.signal/);
+  assert.match(source, /cancelActiveConversion\(!!force\)/);
+});
+
+test('renderer locks conversion startup before asynchronous preparation', () => {
+  const source = read('src/renderer/renderer.ts');
+  assert.match(source, /if \(isConverting \|\| conversionStarting\) return;/);
+  assert.match(
+    source,
+    /conversionStarting = true;\s*elements\.convertBtn\.disabled = true;\s*void runConversionWorkflow\(\)/
   );
 });
 
@@ -61,11 +78,21 @@ test('stable release metadata is internally aligned', () => {
   const lockfile = JSON.parse(read('package-lock.json'));
   const metainfo = read('com.burnttoasters.conv2.metainfo.xml');
   const changelog = read('CHANGELOG.md');
+  const versionPattern = escapeRegex(packageJson.version);
 
-  assert.equal(packageJson.version, '1.5.0');
-  assert.equal(lockfile.version, '1.5.0');
-  assert.match(metainfo, /<release version="1\.5\.0"/);
-  assert.match(changelog, /## Changes in `v1\.5\.0:`/);
+  assert.equal(lockfile.version, packageJson.version);
+  assert.match(metainfo, new RegExp(`<release version="${versionPattern}"`));
+  assert.match(changelog, new RegExp(String.raw`## Changes in \`v${versionPattern}:\``));
   assert.doesNotMatch(changelog, /This is a Beta build/);
   assert.match(changelog, /CONV2-Win-x64-Setup\.exe/);
+  const downloadsSection = changelog.split(/^## Changes in /m, 1)[0];
+  const downloadVersions = [...downloadsSection.matchAll(/releases\/download\/v([^/]+)\//g)].map(
+    (match) => match[1]
+  );
+  assert.ok(downloadVersions.length > 0, 'changelog must contain release download URLs');
+  assert.deepEqual(
+    [...new Set(downloadVersions)],
+    [packageJson.version],
+    'every changelog download URL must use the package version'
+  );
 });
