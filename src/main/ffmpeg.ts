@@ -127,6 +127,7 @@ export interface ConvertVideoOptions {
   removeSpacesFromOutputName?: boolean;
   useCpuDecodingWhenGpu?: boolean;
   advancedFormatSettings?: AdvancedFormatSettings;
+  signal?: AbortSignal;
 }
 
 export interface VideoInfo {
@@ -258,11 +259,13 @@ export const checkEncoderAvailable = async (encoder: string): Promise<boolean> =
 
 const HW_PROBE_TIMEOUT_MS = 8000;
 
-const probeHwEncoderAvailable = async (encoder: string): Promise<boolean> => {
+const probeHwEncoderAvailable = async (encoder: string, signal?: AbortSignal): Promise<boolean> => {
   const cached = hwEncoderProbeCache.get(encoder);
   if (cached !== undefined) return cached;
+  if (signal?.aborted) return false;
 
   const listed = await checkEncoderAvailable(encoder);
+  if (signal?.aborted) return false;
   if (!listed) {
     hwEncoderProbeCache.set(encoder, false);
     return false;
@@ -286,23 +289,34 @@ const probeHwEncoderAvailable = async (encoder: string): Promise<boolean> => {
       process.platform === 'win32' ? 'NUL' : '/dev/null',
     ];
     const proc = spawn(getFFmpegBinaryPath(), args);
+    let settled = false;
+    const finish = (available: boolean, cacheResult = true): void => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      signal?.removeEventListener('abort', handleAbort);
+      if (cacheResult) {
+        hwEncoderProbeCache.set(encoder, available);
+      }
+      resolve(available);
+    };
+    const handleAbort = (): void => {
+      proc.kill();
+      finish(false, false);
+    };
     const timer = setTimeout(() => {
       proc.kill();
-      hwEncoderProbeCache.set(encoder, false);
-      resolve(false);
+      finish(false);
     }, HW_PROBE_TIMEOUT_MS);
 
+    signal?.addEventListener('abort', handleAbort, { once: true });
+
     proc.on('close', (code) => {
-      clearTimeout(timer);
-      const available = code === 0;
-      hwEncoderProbeCache.set(encoder, available);
-      resolve(available);
+      finish(code === 0);
     });
 
     proc.on('error', () => {
-      clearTimeout(timer);
-      hwEncoderProbeCache.set(encoder, false);
-      resolve(false);
+      finish(false);
     });
   });
 };
@@ -361,7 +375,8 @@ export const checkDecoderAvailable = async (decoder: string): Promise<boolean> =
 
 export const checkGPUEncoderSupport = async (
   gpu: GPUVendor,
-  codec: 'h264' | 'h265' | 'av1'
+  codec: 'h264' | 'h265' | 'av1',
+  signal?: AbortSignal
 ): Promise<{ available: boolean; encoder: string; error?: GPUEncoderError }> => {
   if (gpu === 'cpu') {
     return { available: true, encoder: GPU_ENCODERS[codec].cpu };
@@ -401,7 +416,7 @@ export const checkGPUEncoderSupport = async (
     };
   }
 
-  const available = await probeHwEncoderAvailable(encoder);
+  const available = await probeHwEncoderAvailable(encoder, signal);
   if (!available) {
     return {
       available: false,
@@ -696,107 +711,112 @@ const getHardwareDecodeArgs = async (gpu: GPUVendor, codec?: string): Promise<st
 };
 
 const FFPROBE_TIMEOUT_MS = 30_000;
+export const MAX_FFPROBE_OUTPUT_BYTES = 8 * 1024 * 1024;
 
-export const getVideoInfo = async (inputPath: string): Promise<VideoInfo> => {
+export const wouldExceedFFprobeOutputLimit = (
+  currentBytes: number,
+  nextChunkBytes: number
+): boolean => currentBytes + nextChunkBytes > MAX_FFPROBE_OUTPUT_BYTES;
+
+const createConversionCancelledError = (): Error => new Error('Conversion cancelled');
+
+const runFFprobe = async (args: string[], signal?: AbortSignal): Promise<string> => {
+  if (signal?.aborted) {
+    throw createConversionCancelledError();
+  }
+
   return new Promise((resolve, reject) => {
-    const args = [
-      '-v',
-      'quiet',
-      '-print_format',
-      'json',
-      '-show_format',
-      '-show_streams',
-      inputPath,
-    ];
-
     const proc = spawn(getFFprobeBinaryPath(), args);
     let output = '';
+    let outputBytes = 0;
+    let settled = false;
 
+    const cleanup = (): void => {
+      clearTimeout(timer);
+      signal?.removeEventListener('abort', handleAbort);
+    };
+    const finishResolve = (value: string): void => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      resolve(value);
+    };
+    const finishReject = (error: Error): void => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      reject(error);
+    };
+    const handleAbort = (): void => {
+      proc.kill();
+      finishReject(createConversionCancelledError());
+    };
     const timer = setTimeout(() => {
       proc.kill();
-      reject(new Error('ffprobe timed out'));
+      finishReject(new Error('ffprobe timed out'));
     }, FFPROBE_TIMEOUT_MS);
 
-    proc.stdout.on('data', (data) => {
+    signal?.addEventListener('abort', handleAbort, { once: true });
+    proc.stdout.on('data', (data: Buffer) => {
+      if (wouldExceedFFprobeOutputLimit(outputBytes, data.length)) {
+        proc.kill();
+        finishReject(
+          new Error(`ffprobe output exceeded ${MAX_FFPROBE_OUTPUT_BYTES} byte safety limit`)
+        );
+        return;
+      }
+      outputBytes += data.length;
       output += data.toString();
     });
-
     proc.on('close', (code) => {
-      clearTimeout(timer);
       if (code === 0) {
-        try {
-          const data = JSON.parse(output);
-          const videoStream = data.streams?.find(
-            (s: { codec_type: string }) => s.codec_type === 'video'
-          );
-          resolve({
-            duration: parseFloat(data.format?.duration || '0'),
-            size: parseInt(data.format?.size || '0'),
-            width: videoStream?.width || 0,
-            height: videoStream?.height || 0,
-            codec: videoStream?.codec_name || 'unknown',
-            format: data.format?.format_name || 'unknown',
-            pixFmt: videoStream?.pix_fmt || undefined,
-            colorPrimaries: videoStream?.color_primaries || undefined,
-            colorTransfer: videoStream?.color_transfer || undefined,
-            colorSpace: videoStream?.color_space || undefined,
-            colorRange: videoStream?.color_range || undefined,
-          });
-        } catch {
-          reject(new Error('Failed to parse video info'));
-        }
+        finishResolve(output);
       } else {
-        reject(new Error('Failed to get video info'));
+        finishReject(new Error('Failed to get video info'));
       }
     });
-
-    proc.on('error', (err) => {
-      clearTimeout(timer);
-      reject(err);
-    });
+    proc.on('error', (error) => finishReject(error));
   });
 };
 
-export const getVideoDuration = async (inputPath: string): Promise<number> => {
-  return new Promise((resolve, reject) => {
-    const args = [
-      '-i',
-      inputPath,
-      '-show_entries',
-      'format=duration',
-      '-v',
-      'quiet',
-      '-of',
-      'csv=p=0',
-    ];
+export const getVideoInfo = async (inputPath: string, signal?: AbortSignal): Promise<VideoInfo> => {
+  const output = await runFFprobe(
+    ['-v', 'quiet', '-print_format', 'json', '-show_format', '-show_streams', inputPath],
+    signal
+  );
+  try {
+    const data = JSON.parse(output);
+    const videoStream = data.streams?.find(
+      (stream: { codec_type: string }) => stream.codec_type === 'video'
+    );
+    return {
+      duration: parseFloat(data.format?.duration || '0'),
+      size: parseInt(data.format?.size || '0'),
+      width: videoStream?.width || 0,
+      height: videoStream?.height || 0,
+      codec: videoStream?.codec_name || 'unknown',
+      format: data.format?.format_name || 'unknown',
+      pixFmt: videoStream?.pix_fmt || undefined,
+      colorPrimaries: videoStream?.color_primaries || undefined,
+      colorTransfer: videoStream?.color_transfer || undefined,
+      colorSpace: videoStream?.color_space || undefined,
+      colorRange: videoStream?.color_range || undefined,
+    };
+  } catch {
+    throw new Error('Failed to parse video info');
+  }
+};
 
-    const proc = spawn(getFFprobeBinaryPath(), args);
-    let output = '';
-
-    const timer = setTimeout(() => {
-      proc.kill();
-      reject(new Error('ffprobe timed out'));
-    }, FFPROBE_TIMEOUT_MS);
-
-    proc.stdout.on('data', (data) => {
-      output += data.toString();
-    });
-
-    proc.on('close', (code) => {
-      clearTimeout(timer);
-      if (code === 0) {
-        const duration = parseFloat(output.trim());
-        resolve(isNaN(duration) ? 0 : duration);
-      } else {
-        reject(new Error('Failed to get video duration'));
-      }
-    });
-
-    proc.on('error', (err) => {
-      clearTimeout(timer);
-      reject(err);
-    });
-  });
+export const getVideoDuration = async (
+  inputPath: string,
+  signal?: AbortSignal
+): Promise<number> => {
+  const output = await runFFprobe(
+    ['-i', inputPath, '-show_entries', 'format=duration', '-v', 'quiet', '-of', 'csv=p=0'],
+    signal
+  );
+  const duration = parseFloat(output.trim());
+  return isNaN(duration) ? 0 : duration;
 };
 
 export const parseProgress = (line: string, totalDuration: number): ConversionProgress | null => {
@@ -985,6 +1005,10 @@ export const convertVideo = async (
   onLog?: (message: string) => void,
   options: ConvertVideoOptions = {}
 ): Promise<ConversionResult> => {
+  if (options.signal?.aborted) {
+    return { success: false, outputPath: '', error: 'Conversion cancelled' };
+  }
+
   const inputBasename = path.basename(inputPath, path.extname(inputPath));
   const basenameWithoutSpaces = inputBasename.replace(/\s+/g, '');
   const outputBaseName =
@@ -1002,15 +1026,32 @@ export const convertVideo = async (
   }
 
   const outputPath = resolveUniqueOutputPath(outputDir, outputBaseName, preset.extension);
+  const tryDeleteOutputFile = (filePath: string | undefined, label: string): void => {
+    if (!filePath) return;
+    try {
+      fs.unlinkSync(filePath);
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== 'ENOENT') {
+        console.error(`Failed to delete ${label}:`, err);
+      }
+    }
+  };
+  const canceledResult = (): ConversionResult => {
+    tryDeleteOutputFile(outputPath, 'cancelled output reservation');
+    return { success: false, outputPath, error: 'Conversion cancelled' };
+  };
 
   let totalDuration = 0;
   let inputCodec: string | undefined;
   let videoInfo: VideoInfo | null = null;
   try {
-    videoInfo = await getVideoInfo(inputPath);
+    videoInfo = await getVideoInfo(inputPath, options.signal);
     totalDuration = Number.isFinite(videoInfo.duration) ? videoInfo.duration : 0;
     inputCodec = videoInfo.codec;
   } catch {
+    if (options.signal?.aborted) {
+      return canceledResult();
+    }
     // ignore
   }
   if (preset.category === 'remux') {
@@ -1026,8 +1067,11 @@ export const convertVideo = async (
   }
   if (totalDuration <= 0) {
     try {
-      totalDuration = await getVideoDuration(inputPath);
+      totalDuration = await getVideoDuration(inputPath, options.signal);
     } catch {
+      if (options.signal?.aborted) {
+        return canceledResult();
+      }
       console.warn('Could not get video duration, progress may be inaccurate');
     }
   }
@@ -1056,6 +1100,9 @@ export const convertVideo = async (
   const shouldUseHardwareDecode =
     isVideoPreset && !(options.useCpuDecodingWhenGpu === true && gpu !== 'cpu');
   const decodeArgs = shouldUseHardwareDecode ? await getHardwareDecodeArgs(gpu, inputCodec) : [];
+  if (options.signal?.aborted) {
+    return canceledResult();
+  }
   const presetContext = options.advancedFormatSettings
     ? { advancedFormatSettings: options.advancedFormatSettings }
     : undefined;
@@ -1098,22 +1145,14 @@ export const convertVideo = async (
       presetArgs = [...presetArgs.slice(0, -1), ...extraArgs, presetArgs[presetArgs.length - 1]];
     }
   }
-  const tryDeleteOutputFile = (filePath: string | undefined, label: string): void => {
-    if (!filePath) return;
-    try {
-      fs.unlinkSync(filePath);
-    } catch (err) {
-      if ((err as NodeJS.ErrnoException).code !== 'ENOENT') {
-        console.error(`Failed to delete ${label}:`, err);
-      }
-    }
-  };
-
   let conversionCanceled = false;
   const runAttempt = async (
     activeDecodeArgs: string[],
     allowRetry: boolean
   ): Promise<ConversionResult> => {
+    if (options.signal?.aborted) {
+      return canceledResult();
+    }
     const args = ['-y', '-progress', 'pipe:1', ...activeDecodeArgs, ...presetArgs];
 
     if (onLog) {

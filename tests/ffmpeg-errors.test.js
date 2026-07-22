@@ -7,6 +7,8 @@ const {
   appendBoundedErrorOutput,
   isKnownColorValue,
   redactPaths,
+  MAX_FFPROBE_OUTPUT_BYTES,
+  wouldExceedFFprobeOutputLimit,
 } = require('../dist/main/ffmpeg.js');
 
 test('detects NVIDIA encoder initialization errors', () => {
@@ -157,4 +159,10 @@ test('redactPaths: handles multiple occurrences of home dir in one string', () =
   const input = `Input: ${HOME}/in.mp4 Output: ${HOME}/out.mp4`;
   const result = redactPaths(input);
   assert.equal(result, 'Input: ~/in.mp4 Output: ~/out.mp4');
+});
+
+test('ffprobe output limit accepts the boundary and rejects overflow', () => {
+  assert.equal(wouldExceedFFprobeOutputLimit(0, MAX_FFPROBE_OUTPUT_BYTES), false);
+  assert.equal(wouldExceedFFprobeOutputLimit(MAX_FFPROBE_OUTPUT_BYTES - 1, 1), false);
+  assert.equal(wouldExceedFFprobeOutputLimit(MAX_FFPROBE_OUTPUT_BYTES, 1), true);
 });
