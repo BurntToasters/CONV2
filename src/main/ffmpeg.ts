@@ -4,6 +4,9 @@ import * as fs from 'fs';
 import * as os from 'os';
 import { GPUVendor, Preset, getPresetGpuCodec } from './presets';
 import { AdvancedFormatSettings } from './advancedFormats';
+import { CODEC_NAMES, GPU_ENCODERS, GPU_NAMES } from './gpuEncoders';
+
+export { GPU_ENCODERS } from './gpuEncoders';
 
 type FFmpegPathModule = typeof import('./ffmpegPath');
 
@@ -25,45 +28,6 @@ const getWindowsSystemBinaryPath = (binaryName: string): string => {
 };
 
 const WINDOWS_TASKKILL_PATH = getWindowsSystemBinaryPath('taskkill.exe');
-
-export const GPU_ENCODERS: Record<string, Record<GPUVendor, string>> = {
-  h264: {
-    nvidia: 'h264_nvenc',
-    amd: 'h264_amf',
-    intel: 'h264_qsv',
-    apple: 'h264_videotoolbox',
-    cpu: 'libx264',
-  },
-  h265: {
-    nvidia: 'hevc_nvenc',
-    amd: 'hevc_amf',
-    intel: 'hevc_qsv',
-    apple: 'hevc_videotoolbox',
-    cpu: 'libx265',
-  },
-  av1: {
-    nvidia: 'av1_nvenc',
-    amd: 'av1_amf',
-    intel: 'av1_qsv',
-    apple: 'libsvtav1',
-    cpu: 'libsvtav1',
-  },
-};
-
-// Human-readable
-const GPU_NAMES: Record<GPUVendor, string> = {
-  nvidia: 'NVIDIA',
-  amd: 'AMD',
-  intel: 'Intel',
-  apple: 'Apple',
-  cpu: 'CPU',
-};
-
-const CODEC_NAMES: Record<string, string> = {
-  h264: 'H.264',
-  h265: 'H.265/HEVC',
-  av1: 'AV1',
-};
 
 const NVIDIA_DECODERS: Record<string, string> = {
   h264: 'h264_cuvid',
@@ -819,34 +783,9 @@ export const getVideoDuration = async (
   return isNaN(duration) ? 0 : duration;
 };
 
-export const parseProgress = (line: string, totalDuration: number): ConversionProgress | null => {
-  const frameMatch = line.match(/frame=\s*(\d+)/);
-  const fpsMatch = line.match(/fps=\s*([\d.]+)/);
-  const timeMatch = line.match(/time=\s*([\d:.]+)/);
-  const bitrateMatch = line.match(/bitrate=\s*([\d.]+\s*\w+)/);
-  const speedMatch = line.match(/speed=\s*([\d.]+x)/);
+import { parseProgress } from './ffmpegProgress';
 
-  if (timeMatch) {
-    const timeParts = timeMatch[1].split(':');
-    // Support H:MM:SS, MM:SS, and bare-seconds formats from FFmpeg output
-    const [p0, p1, p2] = timeParts.map((p) => parseFloat(p) || 0);
-    const seconds =
-      timeParts.length >= 3 ? p0 * 3600 + p1 * 60 + p2 : timeParts.length === 2 ? p0 * 60 + p1 : p0;
-
-    const percent = totalDuration > 0 ? Math.min(100, (seconds / totalDuration) * 100) : 0;
-
-    return {
-      percent,
-      frame: frameMatch ? parseInt(frameMatch[1]) : 0,
-      fps: fpsMatch ? parseFloat(fpsMatch[1]) : 0,
-      time: timeMatch[1],
-      bitrate: bitrateMatch ? bitrateMatch[1] : 'N/A',
-      speed: speedMatch ? speedMatch[1] : 'N/A',
-    };
-  }
-
-  return null;
-};
+export { parseProgress } from './ffmpegProgress';
 
 export const appendBoundedErrorOutput = (current: string, nextChunk: string): string => {
   if (!nextChunk) {
