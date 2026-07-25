@@ -2100,6 +2100,25 @@ select option {
   color: var(--error);
 }
 
+.conversion-queue-item.is-failed .conversion-queue-status {
+  color: var(--error);
+  text-transform: none;
+  font-weight: 600;
+  letter-spacing: 0;
+}
+
+.conversion-queue-item.is-cancelled .conversion-queue-status {
+  color: var(--warning, var(--text-muted));
+}
+
+html[data-custom-titlebar='true'] .modal-overlay {
+  padding-top: var(--titlebar-height);
+}
+
+html[data-custom-titlebar='true'] .settings-modal.modal {
+  max-height: calc(85vh - var(--titlebar-height));
+}
+
 .conversion-queue-error {
   display: block;
   font-size: var(--text-xs);
@@ -2141,14 +2160,6 @@ select option {
 
 .conversion-queue-item.is-done .conversion-queue-status {
   color: var(--success);
-}
-
-.conversion-queue-item.is-failed .conversion-queue-status {
-  color: var(--error);
-}
-
-.conversion-queue-item.is-cancelled .conversion-queue-status {
-  color: var(--warning);
 }
 
 /* Preset hierarchy polish */

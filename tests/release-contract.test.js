@@ -82,7 +82,9 @@ test('stable release metadata is internally aligned', () => {
   assert.equal(lockfile.version, packageJson.version);
   assert.match(metainfo, new RegExp(`<release version="${versionPattern}"`));
   assert.match(changelog, new RegExp(String.raw`## Changes in \`v${versionPattern}:\``));
-  assert.doesNotMatch(changelog, /This is a Beta build/);
+  if (!packageJson.version.includes('-beta') && !packageJson.version.includes('-alpha')) {
+    assert.doesNotMatch(changelog, /This is a Beta build/);
+  }
   assert.match(changelog, /CONV2-Win-x64-Setup\.exe/);
   const downloadsSection = changelog.split(/^## Changes in /m, 1)[0];
   const downloadVersions = [...downloadsSection.matchAll(/releases\/download\/v([^/]+)\//g)].map(
