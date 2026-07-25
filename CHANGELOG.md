@@ -16,7 +16,7 @@
 
 ## Changes in `v1.6.0-beta.2:`
 
-- **UI:** First-launch **setup tour** (skippable, 8 steps); **Replay setup tour** in Settings; **Reset settings** + restart shows the tour again.
+- **UI:** First-launch **setup tour** (skippable, 10 steps with main-window spotlights for files, presets, and Convert); **Skip tour** on every step; **Replay setup tour** in Settings; **Reset settings** + restart shows the tour again.
 - **UI:** Custom title bar polish (macOS traffic-light inset, themed border/background); window background syncs with theme and interface style (glass/flat); modals clear the title bar on Win/macOS.
 - **UI:** Settings **Appearance** section; batch queue with clearer failures, **Retry failed**, and per-file **Retry**; live **File N of M** text during multi-file jobs.
 - **UI:** In-app batch status matches background notification copy via shared `queueSummary` helpers.

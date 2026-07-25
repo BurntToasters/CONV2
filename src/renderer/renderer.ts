@@ -675,6 +675,8 @@ type SetupWizardApi = {
     openHelp: () => void;
     focusFirstIn: (container: HTMLElement) => void;
     isFfmpegInstalled: () => boolean;
+    prepareAppTourSpotlight: (targetId: string) => void;
+    clearAppTourSpotlight: () => void;
   }) => void;
   maybeOpenSetupWizard: () => void;
   openSetupWizard: () => void;
@@ -700,6 +702,9 @@ type QueueSummaryApi = {
 
 const getSetupWizard = (): SetupWizardApi | undefined =>
   (window as Window & { setupWizard?: SetupWizardApi }).setupWizard;
+
+const isSetupWizardBlockingUi = (): boolean =>
+  getSetupWizard()?.isSetupWizardVisible() ?? false;
 
 const getQueueSummary = (): QueueSummaryApi | undefined =>
   (window as Window & { queueSummary?: QueueSummaryApi }).queueSummary;
@@ -1701,11 +1706,16 @@ const getTopVisibleModal = (): HTMLDivElement | null => {
 };
 
 const trapFocusInModal = (event: KeyboardEvent, modalOverlay: HTMLDivElement): void => {
-  const modal = modalOverlay.querySelector<HTMLElement>('.modal, .setup-wizard-dialog');
-  if (!modal) {
+  let container: HTMLElement | null = null;
+  if (modalOverlay.id === 'setupWizardModal' && modalOverlay.classList.contains('spotlight-mode')) {
+    container = modalOverlay.querySelector<HTMLElement>('.setup-wizard-callout');
+  } else {
+    container = modalOverlay.querySelector<HTMLElement>('.setup-wizard-dialog, .modal');
+  }
+  if (!container || container.hidden) {
     return;
   }
-  const focusables = getFocusableElements(modal);
+  const focusables = getFocusableElements(container);
   if (focusables.length === 0) {
     return;
   }
@@ -1713,13 +1723,13 @@ const trapFocusInModal = (event: KeyboardEvent, modalOverlay: HTMLDivElement): v
   const last = focusables[focusables.length - 1];
   const active = document.activeElement as HTMLElement | null;
   if (event.shiftKey) {
-    if (active === first || !active || !modal.contains(active)) {
+    if (active === first || !active || !container.contains(active)) {
       event.preventDefault();
       last.focus();
     }
     return;
   }
-  if (active === last || !active || !modal.contains(active)) {
+  if (active === last || !active || !container.contains(active)) {
     event.preventDefault();
     first.focus();
   }
@@ -2076,6 +2086,9 @@ const waitForAdvancedSettingsIdle = async (): Promise<void> => {
 };
 
 const openSettingsModal = (): void => {
+  if (isSetupWizardBlockingUi()) {
+    return;
+  }
   if (elements.settingsModal.classList.contains('visible')) {
     return;
   }
@@ -2346,6 +2359,9 @@ const renderLicenses = (entries: LicenseDisplayEntry[]): void => {
 };
 
 const openCreditsModal = async (): Promise<void> => {
+  if (isSetupWizardBlockingUi()) {
+    return;
+  }
   if (elements.settingsModal.classList.contains('visible')) {
     await closeSettingsModal();
   }
@@ -2399,6 +2415,7 @@ const syncConversionMenuState = (): void => {
 
 const hasBlockingModalForShortcuts = (): boolean => {
   return (
+    isSetupWizardBlockingUi() ||
     elements.settingsModal.classList.contains('visible') ||
     elements.dynamicModal.classList.contains('visible') ||
     elements.logsModal.classList.contains('visible') ||
@@ -2407,6 +2424,9 @@ const hasBlockingModalForShortcuts = (): boolean => {
 };
 
 const openLogsModal = (): void => {
+  if (isSetupWizardBlockingUi()) {
+    return;
+  }
   if (!settings.showDebugOutput) {
     return;
   }
@@ -2841,9 +2861,7 @@ const setupKeyboardShortcuts = () => {
       !(e.target instanceof HTMLSelectElement)
     ) {
       const isModalOpen =
-        (getSetupWizard()?.isSetupWizardVisible() ?? false) ||
-        elements.settingsModal.classList.contains('visible') ||
-        elements.dynamicModal.classList.contains('visible');
+        hasBlockingModalForShortcuts();
       if (!isModalOpen) {
         e.preventDefault();
         elements.presetSearch.focus();
@@ -2854,13 +2872,7 @@ const setupKeyboardShortcuts = () => {
 
     if ((e.ctrlKey || e.metaKey) && (e.key === ',' || e.code === 'Comma')) {
       e.preventDefault();
-      const hasBlockingModal =
-        (getSetupWizard()?.isSetupWizardVisible() ?? false) ||
-        elements.settingsModal.classList.contains('visible') ||
-        elements.dynamicModal.classList.contains('visible') ||
-        elements.logsModal.classList.contains('visible') ||
-        elements.creditsModal.classList.contains('visible');
-      if (!hasBlockingModal) {
+      if (!hasBlockingModalForShortcuts()) {
         openSettingsModal();
       }
       return;
@@ -2875,11 +2887,7 @@ const setupKeyboardShortcuts = () => {
       ) {
         return;
       }
-      const isModalOpen =
-        elements.settingsModal.classList.contains('visible') ||
-        elements.dynamicModal.classList.contains('visible') ||
-        elements.logsModal.classList.contains('visible') ||
-        elements.creditsModal.classList.contains('visible');
+      const isModalOpen = hasBlockingModalForShortcuts();
       if (
         !isModalOpen &&
         selectedFiles.length > 0 &&
@@ -3739,7 +3747,12 @@ const setupEventListeners = () => {
   });
 
   document.getElementById('replaySetupWizardBtn')?.addEventListener('click', () => {
-    getSetupWizard()?.openSetupWizard();
+    void (async () => {
+      if (elements.settingsModal.classList.contains('visible')) {
+        await closeSettingsModal();
+      }
+      getSetupWizard()?.openSetupWizard();
+    })();
   });
 
   getSetupWizard()?.initSetupWizard({
@@ -3762,6 +3775,17 @@ const setupEventListeners = () => {
     },
     focusFirstIn: focusFirstInteractiveElement,
     isFfmpegInstalled: () => ffmpegInstalled,
+    prepareAppTourSpotlight: (targetId) => {
+      applyPanelCollapseUi();
+      if (targetId === 'mainOptionsPanel') {
+        elements.presetPanelBody.hidden = false;
+        elements.presetPanelToggle.setAttribute('aria-expanded', 'true');
+        elements.presetPanelSection.classList.add('is-expanded');
+      }
+    },
+    clearAppTourSpotlight: () => {
+      applyPanelCollapseUi();
+    },
   });
 };
 

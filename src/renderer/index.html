@@ -131,7 +131,7 @@
           </div>
         </div>
 
-        <div class="options-panel options-redesign">
+        <div class="options-panel options-redesign" id="mainOptionsPanel">
           <section
             class="panel-shell preset-panel"
             id="presetPanelSection"
@@ -232,7 +232,7 @@
           </section>
         </div>
 
-        <div class="convert-section">
+        <div class="convert-section" id="convert-section">
           <button class="btn btn-primary" id="convertBtn" disabled>
             <svg
               class="btn-icon"
@@ -1773,6 +1773,44 @@
     </div>
 
     <div class="modal-overlay setup-wizard-overlay" id="setupWizardModal" aria-hidden="true">
+      <div class="setup-wizard-spotlight-layer" id="setupWizardSpotlightLayer" hidden>
+        <div
+          class="setup-wizard-spotlight-ring"
+          id="setupWizardSpotlightRing"
+          aria-hidden="true"
+        ></div>
+        <div
+          class="setup-wizard-callout"
+          id="setupWizardCallout"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="setupWizardCalloutTitle"
+          tabindex="-1"
+        >
+          <div class="setup-wizard-callout-header">
+            <div>
+              <p class="setup-wizard-kicker" id="setupWizardCalloutTitle">Product tour</p>
+              <span class="setup-wizard-step-label" id="setupWizardSpotlightStepLabel"></span>
+            </div>
+          </div>
+          <div class="setup-wizard-callout-body" id="setupWizardCalloutBody"></div>
+          <div class="setup-wizard-callout-actions">
+            <button class="btn btn-link setup-wizard-step-skip" type="button">Skip tour</button>
+            <div class="setup-wizard-nav">
+              <button
+                class="btn btn-secondary btn-sm"
+                id="setupWizardSpotlightBackBtn"
+                type="button"
+              >
+                Back
+              </button>
+              <button class="btn btn-primary btn-sm" id="setupWizardSpotlightNextBtn" type="button">
+                Next
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
       <div
         class="modal setup-wizard-dialog"
         role="dialog"
@@ -1785,7 +1823,7 @@
             <p class="setup-wizard-kicker">Welcome to CONV2</p>
             <h2 id="setupWizardTitle">Setup tour</h2>
           </div>
-          <span class="setup-wizard-step-label" id="setupWizardStepLabel">Step 1 of 8</span>
+          <span class="setup-wizard-step-label" id="setupWizardStepLabel">Step 1 of 10</span>
         </div>
         <div class="modal-body setup-wizard-body">
           <section class="setup-wizard-step" data-wizard-step="0">
@@ -1900,31 +1938,63 @@
             </div>
           </section>
 
-          <section class="setup-wizard-step" data-wizard-step="6" hidden>
-            <p class="setup-wizard-lead">How to convert</p>
-            <ul class="setup-wizard-list">
-              <li>
-                Drop files on the window or press <kbd>Ctrl</kbd>+<kbd>O</kbd> (macOS:
-                <kbd>⌘</kbd>+<kbd>O</kbd>).
-              </li>
-              <li>Pick a preset, then click <strong>Convert</strong>.</li>
-              <li>Queue multiple files; retry failures from the batch list.</li>
-              <li>
-                Use <strong>File</strong>, <strong>Convert</strong>, and <strong>Help</strong> in
-                the menu bar.
-              </li>
-            </ul>
-            <p class="setup-wizard-muted" id="wizardFfmpegNote" hidden>
-              FFmpeg was not detected yet. Install or bundle FFmpeg before converting.
-            </p>
+          <section
+            class="setup-wizard-step"
+            data-wizard-step="6"
+            data-wizard-presentation="spotlight"
+            data-spotlight-target="dropZone"
+            hidden
+          >
+            <p class="setup-wizard-lead">Add your videos</p>
             <p>
-              <button class="btn-link" id="wizardOpenHelpBtn" type="button">
-                Open Help in browser
-              </button>
+              Drop one or more files on the highlighted area, or press <kbd>Ctrl</kbd>+<kbd>O</kbd>
+              (macOS: <kbd>⌘</kbd>+<kbd>O</kbd>) to browse.
+            </p>
+            <p class="setup-wizard-muted">CONV2 queues multiple files so you can batch convert.</p>
+          </section>
+
+          <section
+            class="setup-wizard-step"
+            data-wizard-step="7"
+            data-wizard-presentation="spotlight"
+            data-spotlight-target="mainOptionsPanel"
+            hidden
+          >
+            <p class="setup-wizard-lead">Choose a conversion preset</p>
+            <p>
+              Open <strong>Conversion Preset</strong>, search with <kbd>/</kbd>, and pick a format
+              (H.264, AV1, GIF, audio extract, and more).
+            </p>
+            <p class="setup-wizard-muted">
+              Presets control quality, codec, and container. Advanced presets are in Settings.
             </p>
           </section>
 
-          <section class="setup-wizard-step" data-wizard-step="7" hidden>
+          <section
+            class="setup-wizard-step"
+            data-wizard-step="8"
+            data-wizard-presentation="spotlight"
+            data-spotlight-target="convert-section"
+            hidden
+          >
+            <p class="setup-wizard-lead">Convert and track progress</p>
+            <p>
+              Click <strong>Convert</strong> when a preset is selected. Watch per-file status in the
+              queue and retry any failures.
+            </p>
+            <p class="setup-wizard-muted wizard-ffmpeg-note" hidden>
+              FFmpeg was not detected yet. Install or bundle FFmpeg before converting.
+            </p>
+            <p class="setup-wizard-muted">
+              Use <strong>File</strong>, <strong>Convert</strong>, and <strong>Help</strong> in the
+              menu bar for more actions.
+            </p>
+            <p>
+              <button class="btn-link wizard-open-help" type="button">Open Help in browser</button>
+            </p>
+          </section>
+
+          <section class="setup-wizard-step" data-wizard-step="9" hidden>
             <p class="setup-wizard-lead">You are ready to convert.</p>
             <p>Change any of these options later in Settings (<kbd>Ctrl</kbd>+<kbd>,</kbd>).</p>
           </section>

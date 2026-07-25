@@ -1,4 +1,4 @@
-export const SETUP_WIZARD_STEP_COUNT = 8;
+export const SETUP_WIZARD_STEP_COUNT = 10;
 
 type GPUMode = 'auto' | 'manual';
 type ThemePreference = 'system' | 'dark' | 'light' | 'custom';
@@ -25,18 +25,68 @@ export interface SetupWizardDeps {
   openHelp: () => void;
   focusFirstIn: (container: HTMLElement) => void;
   isFfmpegInstalled: () => boolean;
+  prepareAppTourSpotlight: (targetId: string) => void;
+  clearAppTourSpotlight: () => void;
 }
 
 let deps: SetupWizardDeps | null = null;
 let currentStep = 0;
 let returnFocus: HTMLElement | null = null;
+let spotlightResizeListener: (() => void) | null = null;
 
 let overlay: HTMLDivElement | null = null;
+let dialog: HTMLElement | null = null;
+let spotlightLayer: HTMLDivElement | null = null;
+let spotlightRing: HTMLDivElement | null = null;
+let calloutBody: HTMLDivElement | null = null;
 let stepLabel: HTMLSpanElement | null = null;
+let spotlightStepLabel: HTMLSpanElement | null = null;
 let backBtn: HTMLButtonElement | null = null;
 let nextBtn: HTMLButtonElement | null = null;
 let skipBtn: HTMLButtonElement | null = null;
+let spotlightBackBtn: HTMLButtonElement | null = null;
+let spotlightNextBtn: HTMLButtonElement | null = null;
 let outputPathEl: HTMLSpanElement | null = null;
+let stepTransitionBusy = false;
+let wizardCompleting = false;
+let spotlightScrollListener: (() => void) | null = null;
+let spotlightTargetObserver: ResizeObserver | null = null;
+
+const detachSpotlightTargetObserver = (): void => {
+  if (spotlightTargetObserver) {
+    spotlightTargetObserver.disconnect();
+    spotlightTargetObserver = null;
+  }
+};
+
+const resetSpotlightChromeStyles = (): void => {
+  if (spotlightRing) {
+    spotlightRing.style.top = '';
+    spotlightRing.style.left = '';
+    spotlightRing.style.width = '';
+    spotlightRing.style.height = '';
+  }
+  const callout = document.getElementById('setupWizardCallout');
+  if (callout) {
+    callout.style.top = '';
+    callout.style.left = '';
+  }
+};
+
+const scheduleSpotlightMeasure = (step: number): void => {
+  measureSpotlightLayout(step);
+  requestAnimationFrame(() => {
+    measureSpotlightLayout(step);
+    requestAnimationFrame(() => measureSpotlightLayout(step));
+  });
+};
+
+const getStepPanel = (step: number): HTMLElement | null => {
+  if (!overlay) {
+    return null;
+  }
+  return overlay.querySelector<HTMLElement>(`[data-wizard-step="${step}"]`);
+};
 
 const getStepPanels = (): HTMLElement[] => {
   if (!overlay) {
@@ -45,31 +95,180 @@ const getStepPanels = (): HTMLElement[] => {
   return Array.from(overlay.querySelectorAll<HTMLElement>('[data-wizard-step]'));
 };
 
+const isSpotlightStep = (step: number): boolean => {
+  return getStepPanel(step)?.dataset.wizardPresentation === 'spotlight';
+};
+
+const getSpotlightTargetId = (step: number): string | null => {
+  const target = getStepPanel(step)?.dataset.spotlightTarget;
+  return target && target.length > 0 ? target : null;
+};
+
+const clearSpotlightLayout = (): void => {
+  deps?.clearAppTourSpotlight();
+  detachSpotlightTargetObserver();
+  if (spotlightResizeListener) {
+    window.removeEventListener('resize', spotlightResizeListener);
+    spotlightResizeListener = null;
+  }
+  if (spotlightScrollListener) {
+    window.removeEventListener('scroll', spotlightScrollListener, true);
+    spotlightScrollListener = null;
+  }
+  overlay?.classList.remove('spotlight-mode');
+  if (spotlightLayer) {
+    spotlightLayer.hidden = true;
+    spotlightLayer.setAttribute('aria-hidden', 'true');
+  }
+  if (calloutBody) {
+    calloutBody.replaceChildren();
+  }
+  resetSpotlightChromeStyles();
+  if (dialog) {
+    dialog.hidden = false;
+    dialog.removeAttribute('aria-hidden');
+  }
+};
+
+const positionSpotlightCallout = (targetRect: DOMRect): void => {
+  const callout = document.getElementById('setupWizardCallout');
+  if (!callout) {
+    return;
+  }
+  const margin = 12;
+  const calloutRect = callout.getBoundingClientRect();
+  let top = targetRect.bottom + margin;
+  if (top + calloutRect.height > window.innerHeight - margin) {
+    top = Math.max(margin, targetRect.top - calloutRect.height - margin);
+  }
+  let left = targetRect.left + targetRect.width / 2 - calloutRect.width / 2;
+  left = Math.max(margin, Math.min(left, window.innerWidth - calloutRect.width - margin));
+  callout.style.top = `${top}px`;
+  callout.style.left = `${left}px`;
+};
+
+const appendPanelContentToCallout = (panel: HTMLElement): void => {
+  if (!calloutBody) {
+    return;
+  }
+  calloutBody.replaceChildren();
+  Array.from(panel.childNodes).forEach((node) => {
+    const clone = node.cloneNode(true);
+    if (clone instanceof HTMLElement) {
+      if (clone.id) {
+        clone.removeAttribute('id');
+      }
+      clone.querySelectorAll('[id]').forEach((el) => el.removeAttribute('id'));
+    }
+    calloutBody?.appendChild(clone);
+  });
+};
+
+const measureSpotlightLayout = (step: number): void => {
+  const targetId = getSpotlightTargetId(step);
+  if (!targetId || !spotlightRing) {
+    return;
+  }
+  const target = document.getElementById(targetId);
+  if (!target) {
+    return;
+  }
+  const pad = 10;
+  const rect = target.getBoundingClientRect();
+  spotlightRing.style.top = `${Math.max(0, rect.top - pad)}px`;
+  spotlightRing.style.left = `${Math.max(0, rect.left - pad)}px`;
+  spotlightRing.style.width = `${rect.width + pad * 2}px`;
+  spotlightRing.style.height = `${rect.height + pad * 2}px`;
+  positionSpotlightCallout(rect);
+};
+
+const layoutSpotlightForStep = (step: number): void => {
+  const targetId = getSpotlightTargetId(step);
+  if (!targetId || !calloutBody) {
+    return;
+  }
+  deps?.prepareAppTourSpotlight(targetId);
+  const target = document.getElementById(targetId);
+  if (!target) {
+    return;
+  }
+  target.scrollIntoView({ block: 'nearest', behavior: 'auto' });
+  detachSpotlightTargetObserver();
+  if (typeof ResizeObserver !== 'undefined') {
+    spotlightTargetObserver = new ResizeObserver(() => {
+      if (isSpotlightStep(currentStep)) {
+        measureSpotlightLayout(currentStep);
+      }
+    });
+    spotlightTargetObserver.observe(target);
+  }
+  scheduleSpotlightMeasure(step);
+};
+
+const showSpotlightStep = (step: number): void => {
+  const panel = getStepPanel(step);
+  if (!overlay || !spotlightLayer || !calloutBody || !panel) {
+    return;
+  }
+  overlay.classList.add('spotlight-mode');
+  if (dialog) {
+    dialog.hidden = true;
+    dialog.setAttribute('aria-hidden', 'true');
+  }
+  spotlightLayer.hidden = false;
+  spotlightLayer.removeAttribute('aria-hidden');
+  appendPanelContentToCallout(panel);
+  syncWizardControlsFromSettings();
+  layoutSpotlightForStep(step);
+  const remountSpotlight = (): void => {
+    if (isSpotlightStep(currentStep)) {
+      measureSpotlightLayout(currentStep);
+    }
+  };
+  if (!spotlightResizeListener) {
+    spotlightResizeListener = remountSpotlight;
+    window.addEventListener('resize', spotlightResizeListener);
+  }
+  if (!spotlightScrollListener) {
+    spotlightScrollListener = remountSpotlight;
+    window.addEventListener('scroll', spotlightScrollListener, true);
+  }
+  const callout = document.getElementById('setupWizardCallout');
+  if (callout && deps) {
+    deps.focusFirstIn(callout as HTMLElement);
+  }
+};
+
+const showModalStep = (): void => {
+  clearSpotlightLayout();
+};
+
 const syncWizardControlsFromSettings = (): void => {
   if (!deps || !overlay) {
     return;
   }
   const settings = deps.getSettings();
+  const scope = overlay;
 
-  overlay.querySelectorAll<HTMLButtonElement>('.wizard-theme-option').forEach((btn) => {
+  scope.querySelectorAll<HTMLButtonElement>('.wizard-theme-option').forEach((btn) => {
     const theme = btn.dataset.theme as ThemePreference | undefined;
     btn.classList.toggle('active', theme === settings.theme);
   });
 
-  overlay.querySelectorAll<HTMLButtonElement>('.wizard-style-option').forEach((btn) => {
+  scope.querySelectorAll<HTMLButtonElement>('.wizard-style-option').forEach((btn) => {
     const style = btn.dataset.style;
     btn.classList.toggle('active', style === settings.interfaceStyle);
   });
 
-  const gpuAuto = overlay.querySelector<HTMLInputElement>('#wizardGpuModeAuto');
-  const gpuManual = overlay.querySelector<HTMLInputElement>('#wizardGpuModeManual');
+  const gpuAuto = scope.querySelector<HTMLInputElement>('#wizardGpuModeAuto');
+  const gpuManual = scope.querySelector<HTMLInputElement>('#wizardGpuModeManual');
   if (gpuAuto && gpuManual) {
     gpuAuto.checked = settings.gpuMode !== 'manual';
     gpuManual.checked = settings.gpuMode === 'manual';
   }
 
-  const notifyCheck = overlay.querySelector<HTMLInputElement>('#wizardNotifyCheck');
-  const sleepCheck = overlay.querySelector<HTMLInputElement>('#wizardPreventSleepCheck');
+  const notifyCheck = scope.querySelector<HTMLInputElement>('#wizardNotifyCheck');
+  const sleepCheck = scope.querySelector<HTMLInputElement>('#wizardPreventSleepCheck');
   if (notifyCheck) {
     notifyCheck.checked = settings.notifyOnConversionComplete !== false;
   }
@@ -77,7 +276,7 @@ const syncWizardControlsFromSettings = (): void => {
     sleepCheck.checked = settings.preventSleepWhileConverting;
   }
 
-  const channelSelect = overlay.querySelector<HTMLSelectElement>('#wizardUpdateChannelSelect');
+  const channelSelect = scope.querySelector<HTMLSelectElement>('#wizardUpdateChannelSelect');
   if (channelSelect) {
     channelSelect.value = settings.updateChannel;
   }
@@ -88,10 +287,9 @@ const syncWizardControlsFromSettings = (): void => {
       : 'Same as input file';
   }
 
-  const ffmpegNote = overlay.querySelector<HTMLElement>('#wizardFfmpegNote');
-  if (ffmpegNote) {
-    ffmpegNote.hidden = deps.isFfmpegInstalled();
-  }
+  scope.querySelectorAll<HTMLElement>('.wizard-ffmpeg-note').forEach((ffmpegNote) => {
+    ffmpegNote.hidden = deps!.isFfmpegInstalled();
+  });
 };
 
 const updateStepUi = (): void => {
@@ -105,11 +303,30 @@ const updateStepUi = (): void => {
     panel.hidden = step !== currentStep;
   });
 
-  stepLabel.textContent = `Step ${currentStep + 1} of ${SETUP_WIZARD_STEP_COUNT}`;
-  backBtn.disabled = currentStep === 0;
+  const labelText = `Step ${currentStep + 1} of ${SETUP_WIZARD_STEP_COUNT}`;
+  stepLabel.textContent = labelText;
+  if (spotlightStepLabel) {
+    spotlightStepLabel.textContent = labelText;
+  }
+
   const isLast = currentStep === SETUP_WIZARD_STEP_COUNT - 1;
-  nextBtn.textContent = isLast ? 'Get started' : 'Next';
-  nextBtn.classList.toggle('btn-primary', true);
+  const nextLabel = isLast ? 'Get started' : 'Next';
+  nextBtn.textContent = nextLabel;
+  if (spotlightNextBtn) {
+    spotlightNextBtn.textContent = nextLabel;
+  }
+
+  backBtn.disabled = currentStep === 0;
+  if (spotlightBackBtn) {
+    spotlightBackBtn.disabled = currentStep === 0;
+  }
+
+  if (isSpotlightStep(currentStep)) {
+    showSpotlightStep(currentStep);
+  } else {
+    showModalStep();
+  }
+
   syncWizardControlsFromSettings();
 };
 
@@ -117,6 +334,9 @@ const closeWizard = (): void => {
   if (!overlay) {
     return;
   }
+  stepTransitionBusy = false;
+  wizardCompleting = false;
+  clearSpotlightLayout();
   overlay.classList.remove('visible');
   overlay.setAttribute('aria-hidden', 'true');
   if (returnFocus && typeof returnFocus.focus === 'function') {
@@ -126,6 +346,10 @@ const closeWizard = (): void => {
 };
 
 const completeWizard = async (): Promise<void> => {
+  if (wizardCompleting) {
+    return;
+  }
+  wizardCompleting = true;
   if (!deps) {
     closeWizard();
     return;
@@ -247,39 +471,78 @@ const bindWizardControls = (): void => {
     syncWizardControlsFromSettings();
   });
 
-  overlay.querySelector('#wizardOpenHelpBtn')?.addEventListener('click', (e) => {
-    e.preventDefault();
-    deps?.openHelp();
+  overlay.addEventListener('click', (event) => {
+    const target = event.target as HTMLElement | null;
+    if (target?.closest('.setup-wizard-step-skip')) {
+      event.preventDefault();
+      void completeWizard();
+      return;
+    }
+    if (target?.closest('.wizard-open-help')) {
+      event.preventDefault();
+      deps?.openHelp();
+    }
   });
 };
 
-const wireNavigation = (): void => {
-  backBtn?.addEventListener('click', () => {
-    if (currentStep > 0) {
-      currentStep -= 1;
-      updateStepUi();
-    }
-  });
+const goBack = (): void => {
+  if (stepTransitionBusy || wizardCompleting || currentStep <= 0) {
+    return;
+  }
+  currentStep -= 1;
+  updateStepUi();
+  focusActiveWizardSurface();
+};
 
-  nextBtn?.addEventListener('click', () => {
-    void (async () => {
+const goNext = (): void => {
+  if (stepTransitionBusy || wizardCompleting) {
+    return;
+  }
+  void (async () => {
+    stepTransitionBusy = true;
+    try {
       await persistStepPreferences();
+      if (wizardCompleting) {
+        return;
+      }
       if (currentStep >= SETUP_WIZARD_STEP_COUNT - 1) {
         await completeWizard();
         return;
       }
       currentStep += 1;
       updateStepUi();
-      const modal = overlay?.querySelector<HTMLElement>('.setup-wizard-dialog');
-      if (modal && deps) {
-        deps.focusFirstIn(modal);
-      }
-    })();
-  });
+      focusActiveWizardSurface();
+    } finally {
+      stepTransitionBusy = false;
+    }
+  })();
+};
 
+const focusActiveWizardSurface = (): void => {
+  if (!deps) {
+    return;
+  }
+  if (isSpotlightStep(currentStep)) {
+    const callout = document.getElementById('setupWizardCallout');
+    if (callout) {
+      deps.focusFirstIn(callout);
+    }
+    return;
+  }
+  const modal = overlay?.querySelector<HTMLElement>('.setup-wizard-dialog');
+  if (modal) {
+    deps.focusFirstIn(modal);
+  }
+};
+
+const wireNavigation = (): void => {
+  backBtn?.addEventListener('click', goBack);
+  nextBtn?.addEventListener('click', goNext);
   skipBtn?.addEventListener('click', () => {
     void completeWizard();
   });
+  spotlightBackBtn?.addEventListener('click', goBack);
+  spotlightNextBtn?.addEventListener('click', goNext);
 };
 
 export const initSetupWizard = (wizardDeps: SetupWizardDeps): void => {
@@ -288,10 +551,17 @@ export const initSetupWizard = (wizardDeps: SetupWizardDeps): void => {
   if (!overlay) {
     return;
   }
+  dialog = overlay.querySelector('.setup-wizard-dialog');
+  spotlightLayer = overlay.querySelector('#setupWizardSpotlightLayer');
+  spotlightRing = overlay.querySelector('#setupWizardSpotlightRing');
+  calloutBody = overlay.querySelector('#setupWizardCalloutBody');
   stepLabel = overlay.querySelector('#setupWizardStepLabel');
+  spotlightStepLabel = overlay.querySelector('#setupWizardSpotlightStepLabel');
   backBtn = overlay.querySelector('#setupWizardBackBtn');
   nextBtn = overlay.querySelector('#setupWizardNextBtn');
   skipBtn = overlay.querySelector('#setupWizardSkipBtn');
+  spotlightBackBtn = overlay.querySelector('#setupWizardSpotlightBackBtn');
+  spotlightNextBtn = overlay.querySelector('#setupWizardSpotlightNextBtn');
   outputPathEl = overlay.querySelector('#wizardOutputPath');
 
   bindWizardControls();
@@ -310,16 +580,19 @@ export const openSetupWizard = (): void => {
   if (!overlay || !deps) {
     return;
   }
+  if (overlay.classList.contains('visible')) {
+    return;
+  }
+  stepTransitionBusy = false;
+  wizardCompleting = false;
+  clearSpotlightLayout();
   returnFocus = document.activeElement as HTMLElement | null;
   currentStep = 0;
   syncWizardControlsFromSettings();
   updateStepUi();
   overlay.classList.add('visible');
   overlay.setAttribute('aria-hidden', 'false');
-  const modal = overlay.querySelector<HTMLElement>('.setup-wizard-dialog');
-  if (modal) {
-    deps.focusFirstIn(modal);
-  }
+  focusActiveWizardSurface();
 };
 
 export const maybeOpenSetupWizard = (): void => {
