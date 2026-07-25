@@ -26,7 +26,9 @@
 ### CONV2 is a quick and simple video converter using ffmpeg on the backend which features:
 
 - In-App Updates
-- Windows, MacOS, and Linux Support
+- Windows, macOS, and Linux Support
+- Native **File / Convert / Help** menus on Windows and macOS (no system-wide “Open with CONV2” file registration)
+- Multi-file **batch queue** with per-file status in the main window
 - Minimalist UI
 - Minimal Bloat (besides the part that its electron-based)
 - Quick Video Presets

@@ -56,6 +56,7 @@ import {
   normalizeUiPanels,
   normalizeTheme,
   normalizeCustomTheme,
+  normalizeSetupWizardCompleted,
   isSettingsCorrupted,
   isSettingsSchemaOutdated,
 } from './settingsSchema';
@@ -67,6 +68,7 @@ import {
   shouldRetryWithCpu,
   type QueueSnapshot,
 } from './conversionQueue';
+import { registerConversionCancelIpc } from './conversionIpc';
 import {
   installApplicationMenu,
   type AppMenuActionId,
@@ -254,6 +256,7 @@ interface AppSettings {
   showAllGpuVendors: boolean;
   notifyOnConversionComplete: boolean;
   preventSleepWhileConverting: boolean;
+  setupWizardCompleted: boolean;
   recentPresetIds: string[];
   uiPanels: UIPanelSettings;
   advancedFormatSettings: AdvancedFormatSettings;
@@ -282,6 +285,7 @@ const ALLOWED_SETTINGS_KEYS = new Set<string>([
   'showAllGpuVendors',
   'notifyOnConversionComplete',
   'preventSleepWhileConverting',
+  'setupWizardCompleted',
   'recentPresetIds',
   'uiPanels',
   'advancedFormatSettings',
@@ -307,6 +311,7 @@ const createDefaultSettings = (): AppSettings => ({
   showAllGpuVendors: false,
   notifyOnConversionComplete: true,
   preventSleepWhileConverting: false,
+  setupWizardCompleted: false,
   recentPresetIds: [],
   uiPanels: normalizeUiPanels(undefined),
   advancedFormatSettings: createDefaultAdvancedFormatSettings(),
@@ -365,6 +370,10 @@ const normalizeSettings = (value: unknown): AppSettings => {
     showAllGpuVendors: incoming.showAllGpuVendors === true,
     notifyOnConversionComplete: incoming.notifyOnConversionComplete !== false,
     preventSleepWhileConverting: incoming.preventSleepWhileConverting === true,
+    setupWizardCompleted: normalizeSetupWizardCompleted(
+      incoming.setupWizardCompleted,
+      Object.prototype.hasOwnProperty.call(incoming, 'setupWizardCompleted')
+    ),
     recentPresetIds: normalizeRecentPresetIds(incoming.recentPresetIds),
     uiPanels: normalizeUiPanels(incoming.uiPanels),
     advancedFormatSettings: normalizeAdvancedFormatSettings(incoming.advancedFormatSettings),
@@ -1027,6 +1036,13 @@ ipcMain.on('conversion-menu-state', (event: IpcMainEvent, state: unknown) => {
 });
 
 registerWindowChromeIpc(() => mainWindow, assertTrustedIpcSender);
+registerConversionCancelIpc({
+  assertTrustedIpcSender,
+  markQueueCancelled: () => {
+    queueCancelled = true;
+  },
+  cancelActiveConversion: (force) => cancelActiveConversion(!!force),
+});
 
 ipcMain.handle('select-file', async (event: IpcMainInvokeEvent) => {
   assertTrustedIpcSender(event);
@@ -1342,12 +1358,6 @@ ipcMain.handle(
   }
 );
 
-ipcMain.handle('cancel-conversion', (event: IpcMainInvokeEvent, force?: boolean) => {
-  assertTrustedIpcSender(event);
-  queueCancelled = true;
-  cancelActiveConversion(!!force);
-});
-
 ipcMain.handle('get-file-info', async (event: IpcMainInvokeEvent, filePath: string) => {
   assertTrustedIpcSender(event);
   const resolvedFilePath = resolveExistingFilePath(filePath);
@@ -1461,6 +1471,9 @@ ipcMain.handle('save-settings', (event: IpcMainInvokeEvent, newSettings: SaveSet
     syncNativeThemeSource();
   }
   if (safeIncomingSettings.updateChannel !== undefined) {
+    installWindowsJumpList(getJumpListDeps());
+  }
+  if (safeIncomingSettings.autoCheckUpdates !== undefined) {
     installWindowsJumpList(getJumpListDeps());
   }
 });

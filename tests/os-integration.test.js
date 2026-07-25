@@ -41,6 +41,18 @@ test('summarizeQueueForNotification batch outcomes', () => {
   assert.match(summary.body, /1 succeeded/);
 });
 
+test('summarizeQueueForNotification cancel with partial success', () => {
+  const summary = summarizeQueueForNotification({
+    total: 3,
+    items: [
+      { status: 'done', fileName: 'a.mp4' },
+      { status: 'cancelled', fileName: 'b.mp4' },
+      { status: 'cancelled', fileName: 'c.mp4' },
+    ],
+  });
+  assert.equal(summary.body, '1 of 3 videos converted before cancel.');
+});
+
 test('buildWindowsJumpList includes core tasks', () => {
   const categories = buildWindowsJumpList({
     pickVideoFiles: async () => [],

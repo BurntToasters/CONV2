@@ -1,4 +1,5 @@
-import { spawn, spawnSync, ChildProcess } from 'child_process';
+import { spawn, ChildProcess } from 'child_process';
+import { forceKillFfmpegProcess } from './ffmpegProcessControl';
 import * as path from 'path';
 import * as fs from 'fs';
 import * as os from 'os';
@@ -21,13 +22,6 @@ const getFFmpegPathModule = (): FFmpegPathModule => {
 
 const getFFmpegBinaryPath = (): string => getFFmpegPathModule().getFFmpegPath();
 const getFFprobeBinaryPath = (): string => getFFmpegPathModule().getFFprobePath();
-
-const getWindowsSystemBinaryPath = (binaryName: string): string => {
-  const root = process.env.SystemRoot || process.env.WINDIR || 'C:\\Windows';
-  return path.join(root, 'System32', binaryName);
-};
-
-const WINDOWS_TASKKILL_PATH = getWindowsSystemBinaryPath('taskkill.exe');
 
 const NVIDIA_DECODERS: Record<string, string> = {
   h264: 'h264_cuvid',
@@ -1022,7 +1016,7 @@ export const convertVideo = async (
     const freeBytes = dirStats.bavail * dirStats.bsize;
     if (freeBytes < inputStat.size) {
       onLog?.(
-        `Warning: Low disk space – available: ${Math.round(freeBytes / 1024 / 1024)} MB, input size: ${Math.round(inputStat.size / 1024 / 1024)} MB\n`
+        `Warning: Low disk space - available: ${Math.round(freeBytes / 1024 / 1024)} MB, input size: ${Math.round(inputStat.size / 1024 / 1024)} MB\n`
       );
     }
   } catch {
@@ -1268,40 +1262,7 @@ export const convertVideo = async (
 };
 
 const forceKillProcess = (processToKill: ChildProcess): void => {
-  if (processToKill.exitCode !== null) {
-    return;
-  }
-
-  if (process.platform === 'win32' && processToKill.pid) {
-    try {
-      spawnSync(WINDOWS_TASKKILL_PATH, ['/pid', processToKill.pid.toString(), '/t', '/f'], {
-        windowsHide: true,
-      });
-    } catch {
-      try {
-        processToKill.kill('SIGKILL');
-      } catch {
-        return;
-      }
-    }
-    return;
-  }
-
-  // POSIX: kill entire process group to reap any sub-spawned children
-  if (processToKill.pid) {
-    try {
-      process.kill(-processToKill.pid, 'SIGKILL');
-      return;
-    } catch {
-      // fall through to direct kill if group kill fails (e.g. process already exited)
-    }
-  }
-
-  try {
-    processToKill.kill('SIGKILL');
-  } catch {
-    return;
-  }
+  forceKillFfmpegProcess(processToKill);
 };
 
 export const cancelConversion = (force = false): void => {

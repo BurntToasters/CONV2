@@ -155,6 +155,7 @@ interface AppSettings {
   showAdvancedPresets: boolean;
   removeSpacesFromFilenames: boolean;
   showAllGpuVendors: boolean;
+  setupWizardCompleted: boolean;
   recentPresetIds: string[];
   uiPanels: UIPanelSettings;
   advancedFormatSettings: AdvancedFormatSettings;
@@ -431,6 +432,7 @@ const elements = {
   presetCardList: getRequiredElement<HTMLDivElement>('presetCardList'),
   gpuPanelSection: getRequiredElement<HTMLElement>('gpuPanelSection'),
   gpuPanelToggle: getRequiredElement<HTMLButtonElement>('gpuPanelToggle'),
+  gpuPanelSummary: getRequiredElement<HTMLSpanElement>('gpuPanelSummary'),
   gpuPanelBody: getRequiredElement<HTMLDivElement>('gpuPanelBody'),
   refreshGpuCapsBtn: getRequiredElement<HTMLButtonElement>('refreshGpuCapsBtn'),
   gpuModeAuto: getRequiredElement<HTMLInputElement>('gpuModeAuto'),
@@ -446,6 +448,7 @@ const elements = {
   conversionQueueList: getRequiredElement<HTMLUListElement>('conversionQueueList'),
   retryFailedQueueBtn: getRequiredElement<HTMLButtonElement>('retryFailedQueueBtn'),
   progressPercent: getRequiredElement<HTMLSpanElement>('progressPercent'),
+  progressBatchSummary: getRequiredElement<HTMLSpanElement>('progressBatchSummary'),
   progressTime: getRequiredElement<HTMLSpanElement>('progressTime'),
   progressEta: getRequiredElement<HTMLSpanElement>('progressEta'),
   progressSpeed: getRequiredElement<HTMLSpanElement>('progressSpeed'),
@@ -660,6 +663,55 @@ const pickerModel =
   (window as Window & { presetPickerModel?: PresetPickerModelApi }).presetPickerModel ||
   createFallbackPresetPickerModel();
 
+type SetupWizardApi = {
+  initSetupWizard: (deps: {
+    getSettings: () => AppSettings;
+    patchSettings: (partial: Partial<AppSettings>) => void;
+    saveSettings: (partial: Partial<AppSettings>) => Promise<void>;
+    applyTheme: () => Promise<void>;
+    applyGpuModeUi: () => void;
+    persistGpuMode: (mode: GPUMode) => Promise<void>;
+    selectOutputDirectory: () => Promise<string | undefined>;
+    openHelp: () => void;
+    focusFirstIn: (container: HTMLElement) => void;
+    isFfmpegInstalled: () => boolean;
+  }) => void;
+  maybeOpenSetupWizard: () => void;
+  openSetupWizard: () => void;
+  isSetupWizardVisible: () => boolean;
+  getSetupWizardOverlay: () => HTMLDivElement | null;
+  skipSetupWizardFromEscape: () => void;
+};
+
+type QueueSummaryApi = {
+  summarizeQueueForUiStatus: (
+    input: {
+      total: number;
+      items: Array<{
+        status: string;
+        fileName?: string;
+        error?: string;
+        usedCpuFallback?: boolean;
+      }>;
+    },
+    options?: { wasCancelled?: boolean }
+  ) => { type: 'success' | 'error' | 'warning'; message: string };
+};
+
+const getSetupWizard = (): SetupWizardApi | undefined =>
+  (window as Window & { setupWizard?: SetupWizardApi }).setupWizard;
+
+const getQueueSummary = (): QueueSummaryApi | undefined =>
+  (window as Window & { queueSummary?: QueueSummaryApi }).queueSummary;
+
+const conv2QueueUiStatus: QueueSummaryApi['summarizeQueueForUiStatus'] = (input, options) => {
+  const api = getQueueSummary();
+  if (!api) {
+    return { type: 'error', message: 'Queue summary unavailable' };
+  }
+  return api.summarizeQueueForUiStatus(input, options);
+};
+
 const normalizeRecentPresetIds = (value: unknown): string[] => {
   if (!Array.isArray(value)) {
     return [];
@@ -799,6 +851,24 @@ const getPresetSearchText = (preset: Preset): string => {
   ]
     .join(' ')
     .toLowerCase();
+};
+
+const updateGpuPanelSummary = (payload: GPUCapabilitiesPayload, codec: GPUCodec | null): void => {
+  const modeLabel = settings.gpuMode === 'manual' ? 'Manual' : 'Auto';
+  const vendorLabel = getGpuVendorLabel(payload.recommendedVendor);
+  const codecLabel = codec ? getCodecLabel(codec) : 'this preset';
+
+  if (settings.gpuMode === 'manual') {
+    elements.gpuPanelSummary.textContent = `${modeLabel} · ${getGpuVendorLabel(settings.gpuManualVendor)}`;
+    return;
+  }
+
+  if (payload.recommendedVendor === 'cpu' && payload.recommendationReason) {
+    elements.gpuPanelSummary.textContent = `Auto · CPU · ${payload.recommendationReason}`;
+    return;
+  }
+
+  elements.gpuPanelSummary.textContent = `Auto · ${vendorLabel} for ${codecLabel}`;
 };
 
 const updatePresetPanelSummary = (totalVisible: number): void => {
@@ -1331,6 +1401,7 @@ const refreshGpuPanel = async (forceRefresh: boolean): Promise<void> => {
 
     lastGpuPayload = allCodecsPayload;
     updateManualVendorDropdown(allCodecsPayload, selectedCodec);
+    updateGpuPanelSummary(summaryPayload, selectedCodec);
 
     if (token !== gpuPanelRenderToken) {
       return;
@@ -1338,6 +1409,7 @@ const refreshGpuPanel = async (forceRefresh: boolean): Promise<void> => {
 
     if (!selectedPreset || !selectedCodec) {
       renderGpuCapabilityMatrix(summaryPayload, []);
+      updateGpuPanelSummary(summaryPayload, null);
       return;
     }
 
@@ -1346,6 +1418,7 @@ const refreshGpuPanel = async (forceRefresh: boolean): Promise<void> => {
     if (token !== gpuPanelRenderToken) {
       return;
     }
+    elements.gpuPanelSummary.textContent = 'Unavailable';
     elements.gpuCapabilityMatrix.innerHTML = '';
     const empty = document.createElement('div');
     empty.className = 'preset-empty';
@@ -1609,6 +1682,9 @@ const focusFirstInteractiveElement = (container: HTMLElement): void => {
 };
 
 const getTopVisibleModal = (): HTMLDivElement | null => {
+  if (getSetupWizard()?.isSetupWizardVisible()) {
+    return getSetupWizard()?.getSetupWizardOverlay() ?? null;
+  }
   if (elements.dynamicModal.classList.contains('visible')) {
     return elements.dynamicModal;
   }
@@ -1625,7 +1701,7 @@ const getTopVisibleModal = (): HTMLDivElement | null => {
 };
 
 const trapFocusInModal = (event: KeyboardEvent, modalOverlay: HTMLDivElement): void => {
-  const modal = modalOverlay.querySelector<HTMLElement>('.modal');
+  const modal = modalOverlay.querySelector<HTMLElement>('.modal, .setup-wizard-dialog');
   if (!modal) {
     return;
   }
@@ -2507,6 +2583,7 @@ const init = async () => {
   await applyTheme();
   await applyUpdateVisibility();
   syncConversionMenuState();
+  getSetupWizard()?.maybeOpenSetupWizard();
 };
 
 const checkPlatform = async () => {
@@ -2715,6 +2792,11 @@ const setupKeyboardShortcuts = () => {
         return;
       }
       e.preventDefault();
+      const wizardOverlay = getSetupWizard()?.getSetupWizardOverlay() ?? null;
+      if (topModal === wizardOverlay) {
+        getSetupWizard()?.skipSetupWizardFromEscape();
+        return;
+      }
       if (topModal === elements.dynamicModal) {
         if (closeDynamicModal) {
           closeDynamicModal();
@@ -2749,9 +2831,31 @@ const setupKeyboardShortcuts = () => {
       return;
     }
 
+    if (
+      e.key === '/' &&
+      !e.ctrlKey &&
+      !e.metaKey &&
+      !e.altKey &&
+      !(e.target instanceof HTMLInputElement) &&
+      !(e.target instanceof HTMLTextAreaElement) &&
+      !(e.target instanceof HTMLSelectElement)
+    ) {
+      const isModalOpen =
+        (getSetupWizard()?.isSetupWizardVisible() ?? false) ||
+        elements.settingsModal.classList.contains('visible') ||
+        elements.dynamicModal.classList.contains('visible');
+      if (!isModalOpen) {
+        e.preventDefault();
+        elements.presetSearch.focus();
+        elements.presetSearch.select();
+      }
+      return;
+    }
+
     if ((e.ctrlKey || e.metaKey) && (e.key === ',' || e.code === 'Comma')) {
       e.preventDefault();
       const hasBlockingModal =
+        (getSetupWizard()?.isSetupWizardVisible() ?? false) ||
         elements.settingsModal.classList.contains('visible') ||
         elements.dynamicModal.classList.contains('visible') ||
         elements.logsModal.classList.contains('visible') ||
@@ -3633,6 +3737,32 @@ const setupEventListeners = () => {
   window.electronAPI.onGPUEncoderError((error: GPUEncoderError) => {
     showGPUErrorStatus(error);
   });
+
+  document.getElementById('replaySetupWizardBtn')?.addEventListener('click', () => {
+    getSetupWizard()?.openSetupWizard();
+  });
+
+  getSetupWizard()?.initSetupWizard({
+    getSettings: () => settings,
+    patchSettings: (partial) => {
+      Object.assign(settings, partial);
+    },
+    saveSettings: async (partial) => {
+      await window.electronAPI.saveSettings(partial as Partial<AppSettings>);
+    },
+    applyTheme,
+    applyGpuModeUi,
+    persistGpuMode,
+    selectOutputDirectory: async () => {
+      const dir = await window.electronAPI.selectOutputDirectory();
+      return dir || undefined;
+    },
+    openHelp: () => {
+      void window.electronAPI.openExternal('https://help.rosie.run/conv2/en-us/faq');
+    },
+    focusFirstIn: focusFirstInteractiveElement,
+    isFfmpegInstalled: () => ffmpegInstalled,
+  });
 };
 
 const showGPUErrorStatus = (error: GPUEncoderError): void => {
@@ -3773,7 +3903,21 @@ const renderConversionQueue = (snapshot: QueueSnapshot | null) => {
     }
     status.textContent = statusLabel;
     status.title = item.error || statusLabel;
-    li.append(name, status);
+    const statusWrap = document.createElement('div');
+    statusWrap.className = 'conversion-queue-status-wrap';
+    statusWrap.append(status);
+    if (item.status === 'failed' && !isConverting && lastQueueRunContext) {
+      const retryOne = document.createElement('button');
+      retryOne.type = 'button';
+      retryOne.className = 'btn btn-secondary btn-xs conversion-queue-retry-one';
+      retryOne.textContent = 'Retry';
+      retryOne.setAttribute('aria-label', `Retry ${item.fileName}`);
+      retryOne.addEventListener('click', () => {
+        void runConversionWorkflow([item.inputPath]);
+      });
+      statusWrap.append(retryOne);
+    }
+    li.append(name, statusWrap);
     elements.conversionQueueList.appendChild(li);
   }
 };
@@ -3855,6 +3999,7 @@ const runConversionWorkflow = async (inputPathsOverride?: string[]) => {
   elements.progressTime.textContent = '00:00:00';
   elements.progressEta.textContent = '';
   elements.progressSpeed.textContent = '';
+  elements.progressBatchSummary.textContent = '';
   renderConversionQueue(null);
 
   const totalFiles = filesToConvert.length;
@@ -3866,6 +4011,7 @@ const runConversionWorkflow = async (inputPathsOverride?: string[]) => {
     renderConversionQueue(next);
     const running = next.items.find((item) => item.status === 'running');
     if (running && next.total > 1) {
+      elements.progressBatchSummary.textContent = `File ${next.currentIndex + 1} of ${next.total}: ${running.fileName}`;
       showStatus(
         'warning',
         `Converting ${next.currentIndex + 1}/${next.total}: ${running.fileName}`
@@ -3902,8 +4048,6 @@ const runConversionWorkflow = async (inputPathsOverride?: string[]) => {
 
   const items = snapshot?.items ?? [];
   const successItems = items.filter((item) => item.status === 'done');
-  const failedCount = items.filter((item) => item.status === 'failed').length;
-  const fallbackCount = items.filter((item) => item.usedCpuFallback).length;
   const lastSuccess = [...successItems].reverse().find((item) => item.outputPath);
   if (lastSuccess?.outputPath) {
     lastOutputPath = lastSuccess.outputPath;
@@ -3911,42 +4055,20 @@ const runConversionWorkflow = async (inputPathsOverride?: string[]) => {
   }
 
   if (totalFiles === 1) {
-    const [result] = items;
-    if (result?.status === 'done' && result.usedCpuFallback) {
-      showStatus('warning', 'Conversion complete. GPU unavailable; retried with CPU.');
+    const uiStatus = conv2QueueUiStatus({ total: totalFiles, items }, { wasCancelled });
+    showStatus(uiStatus.type, uiStatus.message);
+    if (items[0]?.status === 'done') {
       elements.showInFolderBtn.classList.remove('u-hidden');
-    } else if (result?.status === 'done') {
-      showStatus('success', 'Conversion complete!');
-      elements.showInFolderBtn.classList.remove('u-hidden');
-    } else if (result?.status === 'cancelled' || wasCancelled) {
-      showStatus('warning', 'Conversion cancelled');
     } else {
-      showStatus('error', `Conversion failed: ${result?.error || 'Unknown error'}`);
+      elements.showInFolderBtn.classList.add('u-hidden');
     }
     return;
   }
 
-  const successCount = successItems.length;
+  const uiStatus = conv2QueueUiStatus({ total: totalFiles, items }, { wasCancelled });
+  showStatus(uiStatus.type, uiStatus.message);
 
-  if (wasCancelled) {
-    showStatus('warning', `Batch cancelled. ${successCount}/${totalFiles} converted.`);
-  } else if (failedCount === 0 && successCount === totalFiles) {
-    if (fallbackCount > 0) {
-      showStatus(
-        'warning',
-        `Batch complete. ${successCount}/${totalFiles} converted (${fallbackCount} CPU fallback).`
-      );
-    } else {
-      showStatus('success', `Batch complete. ${successCount}/${totalFiles} converted.`);
-    }
-  } else if (successCount === 0) {
-    showStatus('error', `Batch failed. 0/${totalFiles} converted.`);
-  } else {
-    showStatus(
-      'warning',
-      `Batch complete with errors. ${successCount}/${totalFiles} converted${fallbackCount > 0 ? ` (${fallbackCount} CPU fallback).` : '.'}`
-    );
-  }
+  const successCount = successItems.length;
 
   if (successCount > 0) {
     elements.showInFolderBtn.classList.remove('u-hidden');

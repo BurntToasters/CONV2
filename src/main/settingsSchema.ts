@@ -1,4 +1,4 @@
-export const SETTINGS_SCHEMA_VERSION = 5;
+export const SETTINGS_SCHEMA_VERSION = 6;
 export const MAX_RECENT_PRESET_IDS = 8;
 
 export type ThemePreference = 'system' | 'dark' | 'light' | 'custom';
@@ -50,6 +50,14 @@ export const normalizeUiPanels = (value: unknown): UIPanelSettings => {
     presetExpanded: incoming.presetExpanded === true,
     gpuExpanded: incoming.gpuExpanded === true,
   };
+};
+
+/** New installs default false; missing key on existing settings.json means legacy user (completed). */
+export const normalizeSetupWizardCompleted = (value: unknown, hadExplicitKey: boolean): boolean => {
+  if (typeof value === 'boolean') {
+    return value;
+  }
+  return hadExplicitKey ? false : true;
 };
 
 export const isSettingsCorrupted = (value: unknown): boolean => {

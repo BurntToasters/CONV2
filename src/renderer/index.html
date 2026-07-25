@@ -191,6 +191,7 @@
               <span class="panel-toggle-title-group">
                 <span id="gpuPanelTitle" class="panel-label">Hardware Acceleration</span>
               </span>
+              <span class="panel-summary" id="gpuPanelSummary"></span>
               <span class="panel-chevron" aria-hidden="true"></span>
             </button>
             <div class="panel-body" id="gpuPanelBody" hidden>
@@ -280,6 +281,7 @@
           </div>
           <div class="progress-info">
             <div class="progress-left">
+              <span class="progress-batch-summary" id="progressBatchSummary"></span>
               <span class="progress-percent" id="progressPercent">0%</span>
               <span class="progress-separator">&middot;</span>
               <span id="progressTime">00:00:00</span>
@@ -428,8 +430,10 @@
             role="tabpanel"
             aria-labelledby="settingsGeneralTab"
           >
+            <h3 class="settings-section-title settings-section-title-first">Appearance</h3>
+
             <div class="settings-row settings-row-appearance">
-              <span class="settings-label">Appearance</span>
+              <span class="settings-label">Theme</span>
               <div class="theme-switcher" id="themeSwitcher">
                 <button class="theme-option" data-theme="system" type="button">
                   <img
@@ -511,6 +515,18 @@
                 <button class="theme-option" data-style="glass" type="button">Glow / Glass</button>
                 <button class="theme-option" data-style="flat" type="button">Flat UI</button>
               </div>
+            </div>
+
+            <p class="settings-hint">
+              Theme and interface style apply to the main window, modals, and custom title bar on
+              Windows and macOS.
+            </p>
+
+            <div class="settings-row">
+              <span class="settings-label">Setup tour</span>
+              <button class="btn btn-secondary btn-xs" id="replaySetupWizardBtn" type="button">
+                Replay setup tour
+              </button>
             </div>
 
             <h3 class="settings-section-title">Conversion</h3>
@@ -1756,6 +1772,179 @@
       </div>
     </div>
 
+    <div class="modal-overlay setup-wizard-overlay" id="setupWizardModal" aria-hidden="true">
+      <div
+        class="modal setup-wizard-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="setupWizardTitle"
+        tabindex="-1"
+      >
+        <div class="modal-header setup-wizard-header">
+          <div>
+            <p class="setup-wizard-kicker">Welcome to CONV2</p>
+            <h2 id="setupWizardTitle">Setup tour</h2>
+          </div>
+          <span class="setup-wizard-step-label" id="setupWizardStepLabel">Step 1 of 8</span>
+        </div>
+        <div class="modal-body setup-wizard-body">
+          <section class="setup-wizard-step" data-wizard-step="0">
+            <p>
+              CONV2 is a cross-platform FFmpeg front-end for quick video, audio, and GIF
+              conversions. This short tour covers appearance, defaults, and how to convert files.
+            </p>
+            <p class="setup-wizard-muted">
+              You can replay this tour anytime from Settings, or see it again after
+              <strong>Reset settings</strong> and restart.
+            </p>
+          </section>
+
+          <section class="setup-wizard-step" data-wizard-step="1" hidden>
+            <p class="setup-wizard-lead">Pick a theme and interface style.</p>
+            <div class="setup-wizard-field">
+              <span class="settings-label">Theme</span>
+              <div class="theme-switcher setup-wizard-theme-switcher">
+                <button class="theme-option wizard-theme-option" data-theme="system" type="button">
+                  Auto
+                </button>
+                <button class="theme-option wizard-theme-option" data-theme="dark" type="button">
+                  Dark
+                </button>
+                <button class="theme-option wizard-theme-option" data-theme="light" type="button">
+                  Light
+                </button>
+                <button class="theme-option wizard-theme-option" data-theme="custom" type="button">
+                  Custom
+                </button>
+              </div>
+            </div>
+            <div class="setup-wizard-field">
+              <span class="settings-label">Interface style</span>
+              <div class="theme-switcher">
+                <button class="theme-option wizard-style-option" data-style="glass" type="button">
+                  Glow / Glass
+                </button>
+                <button class="theme-option wizard-style-option" data-style="flat" type="button">
+                  Flat UI
+                </button>
+              </div>
+            </div>
+          </section>
+
+          <section class="setup-wizard-step" data-wizard-step="2" hidden>
+            <p class="setup-wizard-lead">Choose a default output folder (optional).</p>
+            <p class="setup-wizard-muted">
+              Leave empty to save converted files next to each input file.
+            </p>
+            <div class="setup-wizard-output-row">
+              <span class="output-path setup-wizard-output-path" id="wizardOutputPath"
+                >Same as input file</span
+              >
+              <button class="btn btn-secondary btn-xs" id="wizardClearOutputBtn" type="button">
+                Use input folder
+              </button>
+              <button class="btn btn-secondary btn-xs" id="wizardChooseOutputBtn" type="button">
+                Choose folder
+              </button>
+            </div>
+          </section>
+
+          <section class="setup-wizard-step" data-wizard-step="3" hidden>
+            <p class="setup-wizard-lead">Hardware acceleration</p>
+            <p class="setup-wizard-muted">
+              <strong>Auto</strong> picks the best encoder when possible.
+              <strong>Manual</strong> lets you override the vendor on the main window GPU panel.
+            </p>
+            <div class="gpu-mode-toggle setup-wizard-gpu-toggle" role="radiogroup">
+              <label class="mode-chip">
+                <input type="radio" name="wizardGpuMode" id="wizardGpuModeAuto" value="auto" />
+                <span>Auto</span>
+              </label>
+              <label class="mode-chip">
+                <input type="radio" name="wizardGpuMode" id="wizardGpuModeManual" value="manual" />
+                <span>Manual</span>
+              </label>
+            </div>
+          </section>
+
+          <section class="setup-wizard-step" data-wizard-step="4" hidden>
+            <p class="setup-wizard-lead">Notifications and power</p>
+            <div class="settings-row setup-wizard-toggle-row">
+              <span class="settings-label">Notify when conversion completes</span>
+              <label class="toggle-switch">
+                <input type="checkbox" id="wizardNotifyCheck" />
+                <span class="toggle-slider"></span>
+              </label>
+            </div>
+            <div class="settings-row setup-wizard-toggle-row">
+              <span class="settings-label">Prevent sleep while converting</span>
+              <label class="toggle-switch">
+                <input type="checkbox" id="wizardPreventSleepCheck" />
+                <span class="toggle-slider"></span>
+              </label>
+            </div>
+          </section>
+
+          <section class="setup-wizard-step" data-wizard-step="5" hidden>
+            <p class="setup-wizard-lead">Update channel</p>
+            <p class="setup-wizard-muted">
+              Controls which releases you receive when checking for updates.
+            </p>
+            <div class="settings-row setup-wizard-channel-row">
+              <span class="settings-label">Channel</span>
+              <select id="wizardUpdateChannelSelect">
+                <option value="auto">Auto (follows version)</option>
+                <option value="stable">Stable</option>
+                <option value="beta">Beta</option>
+              </select>
+            </div>
+          </section>
+
+          <section class="setup-wizard-step" data-wizard-step="6" hidden>
+            <p class="setup-wizard-lead">How to convert</p>
+            <ul class="setup-wizard-list">
+              <li>
+                Drop files on the window or press <kbd>Ctrl</kbd>+<kbd>O</kbd> (macOS:
+                <kbd>⌘</kbd>+<kbd>O</kbd>).
+              </li>
+              <li>Pick a preset, then click <strong>Convert</strong>.</li>
+              <li>Queue multiple files; retry failures from the batch list.</li>
+              <li>
+                Use <strong>File</strong>, <strong>Convert</strong>, and <strong>Help</strong> in
+                the menu bar.
+              </li>
+            </ul>
+            <p class="setup-wizard-muted" id="wizardFfmpegNote" hidden>
+              FFmpeg was not detected yet. Install or bundle FFmpeg before converting.
+            </p>
+            <p>
+              <button class="btn-link" id="wizardOpenHelpBtn" type="button">
+                Open Help in browser
+              </button>
+            </p>
+          </section>
+
+          <section class="setup-wizard-step" data-wizard-step="7" hidden>
+            <p class="setup-wizard-lead">You are ready to convert.</p>
+            <p>Change any of these options later in Settings (<kbd>Ctrl</kbd>+<kbd>,</kbd>).</p>
+          </section>
+        </div>
+        <div class="modal-actions setup-wizard-actions">
+          <button class="btn btn-link setup-wizard-skip" id="setupWizardSkipBtn" type="button">
+            Skip tour
+          </button>
+          <div class="setup-wizard-nav">
+            <button class="btn btn-secondary btn-sm" id="setupWizardBackBtn" type="button">
+              Back
+            </button>
+            <button class="btn btn-primary btn-sm" id="setupWizardNextBtn" type="button">
+              Next
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <div class="modal-overlay" id="dynamicModal">
       <div
         class="modal"
@@ -1830,7 +2019,9 @@
     </div>
 
     <script src="exports-shim.js"></script>
+    <script src="../shared/queueSummary.js"></script>
     <script src="presetPickerModel.js"></script>
+    <script src="setupWizard.js"></script>
     <script src="renderer.js"></script>
   </body>
 </html>

@@ -16,19 +16,23 @@
 
 ## Changes in `v1.6.0-beta.2:`
 
-- **UI:** Custom title bar polish (macOS traffic-light position, title-bar inset, themed border/background); native window background stays in sync when appearance or interface style (glass/flat) changes.
-- **UI:** Theme contrast pass on settings modals, batch queue panel, and title bar actions.
-- **Docs:** Changelog and Flatpak metainfo document native menus (File / Convert / Help), CONV2 branding, batch queue, notifications, and OS integration — still **no** “Open with” / file-type registration.
+- **UI:** First-launch **setup tour** (skippable, 8 steps); **Replay setup tour** in Settings; **Reset settings** + restart shows the tour again.
+- **UI:** Custom title bar polish (macOS traffic-light inset, themed border/background); window background syncs with theme and interface style (glass/flat); modals clear the title bar on Win/macOS.
+- **UI:** Settings **Appearance** section; batch queue with clearer failures, **Retry failed**, and per-file **Retry**; live **File N of M** text during multi-file jobs.
+- **UI:** In-app batch status matches background notification copy via shared `queueSummary` helpers.
+- **UI:** GPU panel summary line for Auto mode (recommended vendor + reason); preset search focuses with `/`.
+- **OS:** Completion notifications mention click-to-reveal when an output path is available (unfocused window).
+- **Docs:** README notes native menus and batch queue (no file-type registration).
 - **Tooling:** TypeScript 7.
+
+**Setup tour (manual QA):** Skip on step 1; finish all steps; Replay from Settings; Reset settings → restart → tour shows again.
 
 ## Changes in `v1.6.0-beta.1:`
 
-- **UI:** Overhauled default Dark and Light themes (GitHub-like deep blacks/blues and layered paper whites) with neutral borders and WCAG-friendlier contrast.
-- **UI:** Custom appearance packs (Midnight Blue, High Contrast Dark); Auto / Dark / Light / Custom in Settings.
-- **UI:** Preset picker hierarchy and intent badges polished; custom title bar on Windows and macOS (Linux keeps native frame).
+- **UI:** Overhauled Dark/Light/Custom themes; preset picker polish; custom title bar on Windows and macOS.
 - **QUEUE:** Main-process batch queue with per-file status and CPU fallback in main.
-- **OS:** Taskbar/dock progress, optional completion notifications, opt-in prevent-sleep; Windows Jump List; macOS About, Open Recent, and recent-document `open-file` only.
-- **Codebase:** `gpuEncoders`, `conversionQueue`, `osIntegration`, `windowChrome`, and `applicationMenu` modules.
+- **OS:** Taskbar/dock progress, notifications, prevent-sleep; Jump List; macOS About, Open Recent, recent-document `open-file` only.
+- **Codebase:** `gpuEncoders`, `conversionQueue`, `osIntegration`, `windowChrome`, `applicationMenu`.
 
 ## Click below for the full `v1` Changelog
 

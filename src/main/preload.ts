@@ -46,6 +46,7 @@ export interface AppSettings {
   showAllGpuVendors: boolean;
   notifyOnConversionComplete: boolean;
   preventSleepWhileConverting: boolean;
+  setupWizardCompleted: boolean;
   recentPresetIds: string[];
   uiPanels: UIPanelSettings;
   advancedFormatSettings: AdvancedFormatSettings;
