@@ -5,9 +5,10 @@ import {
   dialog,
   nativeTheme,
   shell,
-  Menu,
   screen,
   IpcMainInvokeEvent,
+  IpcMainEvent,
+  FileFilter,
 } from 'electron';
 import * as path from 'path';
 import * as fs from 'fs';
@@ -37,6 +38,8 @@ import {
   checkForUpdatesSilent,
   installDownloadedUpdate,
   isUpdateDisabled,
+  isUpdateReadyToInstall,
+  onUpdateMenuStateChange,
   setUpdateChannel,
   setUpdateInstallStartingHandler,
   setUpdaterWindow,
@@ -47,13 +50,50 @@ import { normalizeFileUrl, isFrameUrlTrusted } from './ipcTrust';
 import {
   SETTINGS_SCHEMA_VERSION,
   UIPanelSettings,
+  ThemePreference,
+  CustomThemeId,
   normalizeRecentPresetIds,
   normalizeUiPanels,
+  normalizeTheme,
+  normalizeCustomTheme,
   isSettingsCorrupted,
   isSettingsSchemaOutdated,
 } from './settingsSchema';
 import { recommendGpuVendorFromAvailability } from './gpuRecommendation';
 import { mapPresetsForRenderer } from './presetProjection';
+import {
+  createEmptyQueueSnapshot,
+  runConversionQueue,
+  shouldRetryWithCpu,
+  type QueueSnapshot,
+} from './conversionQueue';
+import {
+  installApplicationMenu,
+  type AppMenuActionId,
+  type ApplicationMenuController,
+  type ConversionMenuState,
+} from './applicationMenu';
+import {
+  conversionActivityEnded,
+  conversionActivityStarted,
+  initOsIntegration,
+  installWindowsJumpList,
+  maybeNotifyConversionComplete,
+  parseConv2JumpArg,
+  registerRecentOutput,
+  runConv2JumpAction,
+  setQueueProgressScope,
+  summarizeQueueForNotification,
+  updateTaskbarProgress,
+  type JumpListDeps,
+  type OsIntegrationSettings,
+} from './osIntegration';
+import {
+  attachWindowChromeListeners,
+  getWindowChromeConstructorOptions,
+  registerWindowChromeIpc,
+  sendWindowChromeStyle,
+} from './windowChrome';
 
 if (process.platform === 'darwin') {
   const commonPaths = [
@@ -78,12 +118,106 @@ if (!app.requestSingleInstanceLock()) {
   process.exit(0);
 }
 
-app.on('second-instance', () => {
+app.setName('CONV2');
+
+app.on('second-instance', (_event, argv) => {
   if (mainWindow) {
     if (mainWindow.isMinimized()) mainWindow.restore();
     mainWindow.focus();
   }
+  const jump = parseConv2JumpArg(argv);
+  if (jump) {
+    void runConv2JumpAction(jump, getJumpListDeps());
+  }
 });
+
+const pendingOpenPaths: string[] = [];
+
+const getOsIntegrationSettings = (): OsIntegrationSettings => ({
+  preventSleepWhileConverting: settings.preventSleepWhileConverting,
+  notifyOnConversionComplete: settings.notifyOnConversionComplete,
+});
+
+const getJumpListDeps = (): JumpListDeps => ({
+  pickVideoFiles: async () => {
+    const win = mainWindow;
+    if (!win) return [];
+    return pickVideoFilesDialog(win);
+  },
+  sendMenuAction: (action, payload) => {
+    if (action === 'open-files') {
+      sendAppMenuAction('open-files', payload);
+    } else {
+      sendAppMenuAction('open-settings');
+    }
+  },
+  checkForUpdates,
+  isUpdateDisabled,
+});
+
+const ingestOpenPaths = (paths: string[]): void => {
+  const valid = paths
+    .map((entry) => resolveExistingFilePath(entry))
+    .filter((entry): entry is string => entry !== null);
+  if (valid.length === 0) {
+    return;
+  }
+  if (!mainWindow || mainWindow.webContents.isLoading()) {
+    pendingOpenPaths.push(...valid);
+    return;
+  }
+  sendAppMenuAction('open-files', { paths: valid });
+};
+
+const flushPendingOpenPaths = (): void => {
+  if (pendingOpenPaths.length === 0) {
+    return;
+  }
+  const paths = pendingOpenPaths.splice(0, pendingOpenPaths.length);
+  sendAppMenuAction('open-files', { paths });
+};
+
+const notifySingleConversionResult = async (
+  result: ConversionResult,
+  inputPath: string
+): Promise<void> => {
+  const snapshot = createEmptyQueueSnapshot();
+  snapshot.total = 1;
+  snapshot.items = [
+    {
+      id: 'single',
+      inputPath,
+      fileName: path.basename(inputPath),
+      status: result.success
+        ? 'done'
+        : result.error === 'Conversion cancelled'
+          ? 'cancelled'
+          : 'failed',
+      error: result.error,
+      outputPath: result.outputPath || undefined,
+    },
+  ];
+  const summary = summarizeQueueForNotification(snapshot);
+  const revealOutputPath = result.success ? result.outputPath : undefined;
+  await maybeNotifyConversionComplete(summary, getOsIntegrationSettings(), () => mainWindow, {
+    revealOutputPath,
+  });
+};
+
+const resolveRevealOutputPath = (snapshot: QueueSnapshot): string | undefined => {
+  const successes = snapshot.items.filter(
+    (item) => item.status === 'done' && item.outputPath && item.outputPath.length > 0
+  );
+  const last = successes[successes.length - 1];
+  return last?.outputPath;
+};
+
+if (process.platform === 'darwin') {
+  app.on('open-file', (event, filePath) => {
+    event.preventDefault();
+    ingestOpenPaths([filePath]);
+  });
+}
 
 let isConversionActive = false;
 let isUpdateInstallInProgress = false;
@@ -106,7 +240,8 @@ interface AppSettings {
   gpu: GPUVendor;
   gpuMode: GPUMode;
   gpuManualVendor: GPUVendor;
-  theme: 'system' | 'dark' | 'light';
+  theme: ThemePreference;
+  customTheme: CustomThemeId;
   interfaceStyle: 'glass' | 'flat';
   showDebugOutput: boolean;
   autoCheckUpdates: boolean;
@@ -117,6 +252,8 @@ interface AppSettings {
   showAdvancedPresets: boolean;
   removeSpacesFromFilenames: boolean;
   showAllGpuVendors: boolean;
+  notifyOnConversionComplete: boolean;
+  preventSleepWhileConverting: boolean;
   recentPresetIds: string[];
   uiPanels: UIPanelSettings;
   advancedFormatSettings: AdvancedFormatSettings;
@@ -132,6 +269,7 @@ const ALLOWED_SETTINGS_KEYS = new Set<string>([
   'gpuMode',
   'gpuManualVendor',
   'theme',
+  'customTheme',
   'interfaceStyle',
   'showDebugOutput',
   'autoCheckUpdates',
@@ -142,6 +280,8 @@ const ALLOWED_SETTINGS_KEYS = new Set<string>([
   'showAdvancedPresets',
   'removeSpacesFromFilenames',
   'showAllGpuVendors',
+  'notifyOnConversionComplete',
+  'preventSleepWhileConverting',
   'recentPresetIds',
   'uiPanels',
   'advancedFormatSettings',
@@ -154,6 +294,7 @@ const createDefaultSettings = (): AppSettings => ({
   gpuMode: 'auto',
   gpuManualVendor: 'cpu',
   theme: 'system',
+  customTheme: 'midnight-blue',
   interfaceStyle: 'glass',
   showDebugOutput: false,
   autoCheckUpdates: true,
@@ -164,6 +305,8 @@ const createDefaultSettings = (): AppSettings => ({
   showAdvancedPresets: false,
   removeSpacesFromFilenames: false,
   showAllGpuVendors: false,
+  notifyOnConversionComplete: true,
+  preventSleepWhileConverting: false,
   recentPresetIds: [],
   uiPanels: normalizeUiPanels(undefined),
   advancedFormatSettings: createDefaultAdvancedFormatSettings(),
@@ -185,10 +328,6 @@ const normalizeGpuVendor = (value: unknown): GPUVendor => {
     value === 'cpu'
     ? value
     : 'cpu';
-};
-
-const normalizeTheme = (value: unknown): AppSettings['theme'] => {
-  return value === 'dark' || value === 'light' || value === 'system' ? value : 'system';
 };
 
 const normalizeSettings = (value: unknown): AppSettings => {
@@ -213,6 +352,7 @@ const normalizeSettings = (value: unknown): AppSettings => {
     gpuMode: normalizedMode,
     gpuManualVendor: normalizedManualVendor,
     theme: normalizeTheme(incoming.theme ?? defaults.theme),
+    customTheme: normalizeCustomTheme(incoming.customTheme ?? defaults.customTheme),
     interfaceStyle: incoming.interfaceStyle === 'flat' ? 'flat' : 'glass',
     showDebugOutput: incoming.showDebugOutput === true,
     autoCheckUpdates: incoming.autoCheckUpdates !== false,
@@ -223,6 +363,8 @@ const normalizeSettings = (value: unknown): AppSettings => {
     showAdvancedPresets: incoming.showAdvancedPresets === true,
     removeSpacesFromFilenames: incoming.removeSpacesFromFilenames === true,
     showAllGpuVendors: incoming.showAllGpuVendors === true,
+    notifyOnConversionComplete: incoming.notifyOnConversionComplete !== false,
+    preventSleepWhileConverting: incoming.preventSleepWhileConverting === true,
     recentPresetIds: normalizeRecentPresetIds(incoming.recentPresetIds),
     uiPanels: normalizeUiPanels(incoming.uiPanels),
     advancedFormatSettings: normalizeAdvancedFormatSettings(incoming.advancedFormatSettings),
@@ -409,6 +551,98 @@ const assertTrustedIpcSender = (event: IpcMainInvokeEvent): void => {
 
 let mainWindow: BrowserWindow | null = null;
 let settings: AppSettings = createDefaultSettings();
+let queueCancelled = false;
+let latestQueueSnapshot: QueueSnapshot = createEmptyQueueSnapshot();
+let conversionMenuState: ConversionMenuState = { converting: false, hasOutput: false };
+let applicationMenuController: ApplicationMenuController | null = null;
+
+const VIDEO_FILE_DIALOG_FILTERS: FileFilter[] = [
+  {
+    name: 'Video Files',
+    extensions: ['mp4', 'mkv', 'avi', 'mov', 'wmv', 'flv', 'webm', 'm4v', 'mpeg', 'mpg', '3gp'],
+  },
+  { name: 'All Files', extensions: ['*'] },
+];
+
+const pickVideoFilesDialog = async (win: BrowserWindow): Promise<string[]> => {
+  const result = await dialog.showOpenDialog(win, {
+    properties: ['openFile', 'multiSelections'],
+    filters: VIDEO_FILE_DIALOG_FILTERS,
+  });
+  return result.canceled ? [] : result.filePaths;
+};
+
+const sendAppMenuAction = (action: AppMenuActionId, payload?: { paths?: string[] }): void => {
+  mainWindow?.webContents.send('app-menu-action', { action, payload });
+};
+
+const refreshApplicationMenuState = (): void => {
+  applicationMenuController?.refresh();
+};
+
+const ensureApplicationMenu = (): void => {
+  if (applicationMenuController) {
+    applicationMenuController.refresh();
+    return;
+  }
+  applicationMenuController = installApplicationMenu(
+    {
+      getMainWindow: () => mainWindow,
+      sendMenuAction: sendAppMenuAction,
+      pickVideoFiles: async () => {
+        const win = mainWindow;
+        if (!win) return [];
+        return pickVideoFilesDialog(win);
+      },
+      checkForUpdates,
+      installDownloadedUpdate,
+      isUpdateReadyToInstall,
+      isUpdateDisabled,
+      getConversionMenuState: () => conversionMenuState,
+    },
+    onUpdateMenuStateChange
+  );
+  installWindowsJumpList(getJumpListDeps());
+};
+
+const resolveResolvedThemeId = (): string => {
+  if (settings.theme === 'custom') {
+    return settings.customTheme;
+  }
+  if (settings.theme === 'system') {
+    return nativeTheme.shouldUseDarkColors ? 'dark' : 'light';
+  }
+  return settings.theme;
+};
+
+const resolveWindowBackgroundColor = (): string => {
+  const themeId = resolveResolvedThemeId();
+  switch (themeId) {
+    case 'light':
+      return '#f6f8fa';
+    case 'midnight-blue':
+      return '#0a0e17';
+    case 'high-contrast-dark':
+      return '#000000';
+    case 'dark':
+    default:
+      return '#010409';
+  }
+};
+
+const syncNativeThemeSource = (): void => {
+  if (settings.theme === 'system') {
+    nativeTheme.themeSource = 'system';
+  } else if (settings.theme === 'light') {
+    nativeTheme.themeSource = 'light';
+  } else {
+    // dark + custom packs use dark chrome
+    nativeTheme.themeSource = 'dark';
+  }
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.setBackgroundColor(resolveWindowBackgroundColor());
+  }
+};
 
 const getSettingsPath = (): string => {
   const userDataPath = app.getPath('userData');
@@ -588,7 +822,7 @@ const getLicensesFilePath = (): string | null => {
 };
 
 const createWindow = (): void => {
-  Menu.setApplicationMenu(null);
+  ensureApplicationMenu();
   const rendererEntryPath = path.join(__dirname, '../renderer/index.html');
   trustedRendererUrl = normalizeFileUrl(pathToFileURL(rendererEntryPath).toString());
 
@@ -609,6 +843,8 @@ const createWindow = (): void => {
     ...positionOpts,
     minWidth: 600,
     minHeight: 500,
+    backgroundColor: resolveWindowBackgroundColor(),
+    ...getWindowChromeConstructorOptions(),
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -618,6 +854,8 @@ const createWindow = (): void => {
     icon: path.join(__dirname, '../../assets/icon.png'),
     show: false,
   });
+
+  attachWindowChromeListeners(mainWindow);
 
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
     try {
@@ -639,6 +877,17 @@ const createWindow = (): void => {
   });
 
   mainWindow.loadFile(rendererEntryPath);
+
+  mainWindow.webContents.once('did-finish-load', () => {
+    setTimeout(() => {
+      sendWindowChromeStyle(mainWindow!);
+    }, 0);
+    flushPendingOpenPaths();
+    const jump = parseConv2JumpArg(process.argv);
+    if (jump) {
+      void runConv2JumpAction(jump, getJumpListDeps());
+    }
+  });
 
   if (isRuntimeSmoke) {
     mainWindow.webContents.once('did-finish-load', () => {
@@ -716,7 +965,9 @@ const createWindow = (): void => {
 };
 
 app.whenReady().then(() => {
+  initOsIntegration();
   loadSettings();
+  syncNativeThemeSource();
   setUpdateInstallStartingHandler(prepareForUpdateInstall);
   nativeTheme.on('updated', handleNativeThemeUpdated);
   createWindow();
@@ -760,21 +1011,28 @@ process.on('unhandledRejection', (reason) => {
   console.error('Unhandled rejection:', reason);
 });
 
+ipcMain.on('conversion-menu-state', (event: IpcMainEvent, state: unknown) => {
+  if (!isTrustedIpcSender(event as IpcMainInvokeEvent)) {
+    return;
+  }
+  if (!state || typeof state !== 'object') {
+    return;
+  }
+  const record = state as Record<string, unknown>;
+  conversionMenuState = {
+    converting: record.converting === true,
+    hasOutput: record.hasOutput === true,
+  };
+  refreshApplicationMenuState();
+});
+
+registerWindowChromeIpc(() => mainWindow, assertTrustedIpcSender);
+
 ipcMain.handle('select-file', async (event: IpcMainInvokeEvent) => {
   assertTrustedIpcSender(event);
   const win = mainWindow;
   if (!win) return [];
-  const result = await dialog.showOpenDialog(win, {
-    properties: ['openFile', 'multiSelections'],
-    filters: [
-      {
-        name: 'Video Files',
-        extensions: ['mp4', 'mkv', 'avi', 'mov', 'wmv', 'flv', 'webm', 'm4v', 'mpeg', 'mpg', '3gp'],
-      },
-      { name: 'All Files', extensions: ['*'] },
-    ],
-  });
-  return result.canceled ? [] : result.filePaths;
+  return pickVideoFilesDialog(win);
 });
 
 ipcMain.handle('select-output-directory', async (event: IpcMainInvokeEvent) => {
@@ -786,6 +1044,154 @@ ipcMain.handle('select-output-directory', async (event: IpcMainInvokeEvent) => {
   });
   return result.canceled ? null : result.filePaths[0];
 });
+
+const performSingleConversion = async (
+  inputPath: string,
+  presetId: string,
+  gpuOverride: GPUVendor | undefined,
+  options?: {
+    suppressGpuErrorEvent?: boolean;
+    removeSpacesFromFilenames?: boolean;
+    outputDirectory?: string;
+    showDebugOutput?: boolean;
+    emitCompleteEvent?: boolean;
+  }
+): Promise<ConversionResult> => {
+  const resolvedInputPath = resolveExistingFilePath(inputPath);
+  if (!resolvedInputPath) {
+    return { success: false, outputPath: '', error: 'Invalid input file path' };
+  }
+
+  const suppressGpuErrorEvent = options?.suppressGpuErrorEvent === true;
+  const showDebugOutput = options?.showDebugOutput ?? settings.showDebugOutput;
+  const emitCompleteEvent = options?.emitCompleteEvent !== false;
+
+  const preset = getPresetById(presetId);
+  if (!preset) {
+    return { success: false, outputPath: '', error: 'Invalid preset selected' };
+  }
+
+  const requestedGpu =
+    gpuOverride === undefined ? settings.gpuManualVendor : normalizeGpuVendor(gpuOverride);
+  const codec = getPresetGpuCodec(preset, {
+    advancedFormatSettings: settings.advancedFormatSettings,
+  });
+  const effectiveGpu =
+    requestedGpu === 'apple' && codec === 'av1'
+      ? 'cpu'
+      : requestedGpu === 'amd' && process.platform === 'linux'
+        ? 'cpu'
+        : requestedGpu;
+
+  const conversionAbortController = new AbortController();
+  activeConversionAbortController = conversionAbortController;
+  try {
+    if (codec !== null && effectiveGpu !== 'cpu') {
+      const encoderCheck = await checkGPUEncoderSupport(
+        effectiveGpu,
+        codec,
+        conversionAbortController.signal
+      );
+      if (conversionAbortController.signal.aborted) {
+        return { success: false, outputPath: '', error: 'Conversion cancelled' };
+      }
+      if (!encoderCheck.available && encoderCheck.error) {
+        if (!suppressGpuErrorEvent) {
+          mainWindow?.webContents.send('gpu-encoder-error', encoderCheck.error);
+        }
+        return {
+          success: false,
+          outputPath: '',
+          error: encoderCheck.error.message,
+          retryWithCpuSuggested: encoderCheck.error.canRetryWithCPU,
+        };
+      }
+    }
+
+    const outputDir =
+      resolveExistingDirectoryPath(options?.outputDirectory) ??
+      resolveExistingDirectoryPath(settings.outputDirectory) ??
+      path.dirname(resolvedInputPath);
+
+    let result: ConversionResult;
+    try {
+      result = await convertVideo(
+        resolvedInputPath,
+        outputDir,
+        preset,
+        effectiveGpu,
+        (progress) => {
+          updateTaskbarProgress(progress, () => mainWindow);
+          mainWindow?.webContents.send('conversion-progress', progress);
+        },
+        showDebugOutput
+          ? (message) => {
+              mainWindow?.webContents.send('conversion-log', redactPaths(message));
+            }
+          : undefined,
+        {
+          removeSpacesFromOutputName:
+            options?.removeSpacesFromFilenames ?? settings.removeSpacesFromFilenames,
+          useCpuDecodingWhenGpu: settings.useCpuDecodingWhenGpu,
+          advancedFormatSettings: settings.advancedFormatSettings,
+          signal: conversionAbortController.signal,
+        }
+      );
+    } catch (err) {
+      result = {
+        success: false,
+        outputPath: '',
+        error: err instanceof Error ? err.message : String(err),
+      };
+    }
+
+    if (!result.success && result.error && effectiveGpu !== 'cpu' && codec !== null) {
+      const gpuError = parseGPUError(result.error, effectiveGpu, codec);
+      if (gpuError) {
+        result.retryWithCpuSuggested = gpuError.canRetryWithCPU;
+        if (!suppressGpuErrorEvent) {
+          mainWindow?.webContents.send('gpu-encoder-error', gpuError);
+        }
+      }
+    }
+
+    if (result.success && settings.moveOriginalToTrashOnSuccess) {
+      try {
+        await shell.trashItem(resolvedInputPath);
+        if (showDebugOutput) {
+          mainWindow?.webContents.send(
+            'conversion-log',
+            redactPaths(`Moved original file to trash: ${resolvedInputPath}\n`)
+          );
+        }
+      } catch (trashError) {
+        if (showDebugOutput) {
+          const errorMessage =
+            trashError instanceof Error ? trashError.message : String(trashError);
+          mainWindow?.webContents.send(
+            'conversion-log',
+            redactPaths(`Failed to move original file to trash: ${errorMessage}\n`)
+          );
+        }
+      }
+    }
+
+    const resultForRenderer: ConversionResult = result.error
+      ? { ...result, error: redactPaths(result.error) }
+      : result;
+    if (emitCompleteEvent) {
+      mainWindow?.webContents.send('conversion-complete', resultForRenderer);
+    }
+    if (result.success && result.outputPath) {
+      registerRecentOutput(result.outputPath);
+    }
+    return resultForRenderer;
+  } finally {
+    if (activeConversionAbortController === conversionAbortController) {
+      activeConversionAbortController = null;
+    }
+  }
+};
 
 ipcMain.handle(
   'start-conversion',
@@ -802,19 +1208,6 @@ ipcMain.handle(
     }
   ): Promise<ConversionResult> => {
     assertTrustedIpcSender(event);
-    const resolvedInputPath = resolveExistingFilePath(inputPath);
-    if (!resolvedInputPath) {
-      const invalidInputResult: ConversionResult = {
-        success: false,
-        outputPath: '',
-        error: 'Invalid input file path',
-      };
-      mainWindow?.webContents.send('conversion-complete', invalidInputResult);
-      return invalidInputResult;
-    }
-
-    const suppressGpuErrorEvent = options?.suppressGpuErrorEvent === true;
-    const showDebugOutput = options?.showDebugOutput ?? settings.showDebugOutput;
     if (isConversionActive) {
       const busyResult: ConversionResult = {
         success: false,
@@ -825,146 +1218,133 @@ ipcMain.handle(
       return busyResult;
     }
 
-    const preset = getPresetById(presetId);
-    if (!preset) {
-      const invalidPresetResult: ConversionResult = {
-        success: false,
-        outputPath: '',
-        error: 'Invalid preset selected',
-      };
-      mainWindow?.webContents.send('conversion-complete', invalidPresetResult);
-      return invalidPresetResult;
+    isConversionActive = true;
+    setQueueProgressScope(null);
+    conversionActivityStarted(getOsIntegrationSettings());
+    try {
+      const result = await performSingleConversion(inputPath, presetId, gpuOverride, options);
+      await notifySingleConversionResult(result, inputPath);
+      return result;
+    } finally {
+      isConversionActive = false;
+      conversionActivityEnded(() => mainWindow);
+    }
+  }
+);
+
+ipcMain.handle(
+  'start-conversion-queue',
+  async (
+    event: IpcMainInvokeEvent,
+    payload: {
+      inputPaths: string[];
+      presetId: string;
+      gpu: GPUVendor;
+      removeSpacesFromFilenames?: boolean;
+      outputDirectory?: string;
+      showDebugOutput?: boolean;
+    }
+  ): Promise<QueueSnapshot> => {
+    assertTrustedIpcSender(event);
+    if (isConversionActive) {
+      const busy = createEmptyQueueSnapshot();
+      busy.items = (payload.inputPaths || []).map((inputPath, index) => ({
+        id: `busy-${index}`,
+        inputPath,
+        fileName: path.basename(inputPath),
+        status: 'failed' as const,
+        error: 'Another conversion is already in progress',
+      }));
+      busy.total = busy.items.length;
+      mainWindow?.webContents.send('conversion-queue-updated', busy);
+      return busy;
     }
 
-    const requestedGpu =
-      gpuOverride === undefined ? settings.gpuManualVendor : normalizeGpuVendor(gpuOverride);
+    const inputPaths = Array.isArray(payload?.inputPaths)
+      ? payload.inputPaths.filter((entry) => typeof entry === 'string' && entry.length > 0)
+      : [];
+    if (inputPaths.length === 0) {
+      const empty = createEmptyQueueSnapshot();
+      mainWindow?.webContents.send('conversion-queue-updated', empty);
+      return empty;
+    }
+
+    const preset = getPresetById(payload.presetId);
+    if (!preset) {
+      const invalid = createEmptyQueueSnapshot();
+      invalid.presetId = payload.presetId;
+      invalid.total = inputPaths.length;
+      invalid.items = inputPaths.map((inputPath, index) => ({
+        id: `invalid-${index}`,
+        inputPath,
+        fileName: path.basename(inputPath),
+        status: 'failed' as const,
+        error: 'Invalid preset selected',
+      }));
+      mainWindow?.webContents.send('conversion-queue-updated', invalid);
+      return invalid;
+    }
+
     const codec = getPresetGpuCodec(preset, {
       advancedFormatSettings: settings.advancedFormatSettings,
     });
-    const effectiveGpu =
-      requestedGpu === 'apple' && codec === 'av1'
-        ? 'cpu'
-        : requestedGpu === 'amd' && process.platform === 'linux'
-          ? 'cpu'
-          : requestedGpu;
 
     isConversionActive = true;
-    const conversionAbortController = new AbortController();
-    activeConversionAbortController = conversionAbortController;
+    queueCancelled = false;
+    setQueueProgressScope(null);
+    conversionActivityStarted(getOsIntegrationSettings());
     try {
-      if (codec !== null && effectiveGpu !== 'cpu') {
-        const encoderCheck = await checkGPUEncoderSupport(
-          effectiveGpu,
-          codec,
-          conversionAbortController.signal
-        );
-        if (conversionAbortController.signal.aborted) {
-          const canceledResult: ConversionResult = {
-            success: false,
-            outputPath: '',
-            error: 'Conversion cancelled',
-          };
-          mainWindow?.webContents.send('conversion-complete', canceledResult);
-          return canceledResult;
-        }
-        if (!encoderCheck.available && encoderCheck.error) {
-          if (!suppressGpuErrorEvent) {
-            mainWindow?.webContents.send('gpu-encoder-error', encoderCheck.error);
-          }
-          const unsupportedEncoderResult: ConversionResult = {
-            success: false,
-            outputPath: '',
-            error: encoderCheck.error.message,
-            retryWithCpuSuggested: encoderCheck.error.canRetryWithCPU,
-          };
-          mainWindow?.webContents.send('conversion-complete', unsupportedEncoderResult);
-          return unsupportedEncoderResult;
-        }
-      }
-
-      const requestedOutputDir =
-        resolveExistingDirectoryPath(options?.outputDirectory) ??
-        resolveExistingDirectoryPath(settings.outputDirectory) ??
-        path.dirname(resolvedInputPath);
-      const outputDir = requestedOutputDir;
-      let result: ConversionResult;
-      try {
-        result = await convertVideo(
-          resolvedInputPath,
-          outputDir,
-          preset,
-          effectiveGpu,
-          (progress) => {
+      const snapshot = await runConversionQueue(
+        {
+          inputPaths,
+          presetId: payload.presetId,
+          gpu: normalizeGpuVendor(payload.gpu),
+          removeSpacesFromFilenames: payload.removeSpacesFromFilenames,
+          outputDirectory: payload.outputDirectory,
+          showDebugOutput: payload.showDebugOutput,
+        },
+        {
+          onSnapshot: (next) => {
+            latestQueueSnapshot = next;
+            mainWindow?.webContents.send('conversion-queue-updated', next);
+          },
+          onProgressScope: (fileIndex, fileCount) => {
+            setQueueProgressScope({ fileIndex, fileCount });
+          },
+          onProgress: (progress) => {
+            updateTaskbarProgress(progress, () => mainWindow);
             mainWindow?.webContents.send('conversion-progress', progress);
           },
-          showDebugOutput
-            ? (message) => {
-                mainWindow?.webContents.send('conversion-log', redactPaths(message));
-              }
-            : undefined,
-          {
-            removeSpacesFromOutputName:
-              options?.removeSpacesFromFilenames ?? settings.removeSpacesFromFilenames,
-            useCpuDecodingWhenGpu: settings.useCpuDecodingWhenGpu,
-            advancedFormatSettings: settings.advancedFormatSettings,
-            signal: conversionAbortController.signal,
-          }
-        );
-      } catch (err) {
-        result = {
-          success: false,
-          outputPath: '',
-          error: err instanceof Error ? err.message : String(err),
-        };
-      }
-
-      if (!result.success && result.error && effectiveGpu !== 'cpu' && codec !== null) {
-        const gpuError = parseGPUError(result.error, effectiveGpu, codec);
-        if (gpuError) {
-          result.retryWithCpuSuggested = gpuError.canRetryWithCPU;
-          if (!suppressGpuErrorEvent) {
-            mainWindow?.webContents.send('gpu-encoder-error', gpuError);
-          }
+          onLog: (message) => {
+            mainWindow?.webContents.send('conversion-log', redactPaths(message));
+          },
+          convertOne: async ({ inputPath, presetId, gpu, options }) =>
+            performSingleConversion(inputPath, presetId, gpu, {
+              ...options,
+              emitCompleteEvent: false,
+            }),
+          shouldRetryWithCpu,
+          hasVideoCodec: codec !== null,
+          isCancelled: () => queueCancelled,
         }
-      }
-
-      if (result.success && settings.moveOriginalToTrashOnSuccess) {
-        try {
-          await shell.trashItem(resolvedInputPath);
-          if (showDebugOutput) {
-            mainWindow?.webContents.send(
-              'conversion-log',
-              redactPaths(`Moved original file to trash: ${resolvedInputPath}\n`)
-            );
-          }
-        } catch (trashError) {
-          if (showDebugOutput) {
-            const errorMessage =
-              trashError instanceof Error ? trashError.message : String(trashError);
-            mainWindow?.webContents.send(
-              'conversion-log',
-              redactPaths(`Failed to move original file to trash: ${errorMessage}\n`)
-            );
-          }
-        }
-      }
-
-      const resultForRenderer: ConversionResult = result.error
-        ? { ...result, error: redactPaths(result.error) }
-        : result;
-      mainWindow?.webContents.send('conversion-complete', resultForRenderer);
-      return resultForRenderer;
+      );
+      latestQueueSnapshot = snapshot;
+      const summary = summarizeQueueForNotification(snapshot);
+      await maybeNotifyConversionComplete(summary, getOsIntegrationSettings(), () => mainWindow, {
+        revealOutputPath: resolveRevealOutputPath(snapshot),
+      });
+      return snapshot;
     } finally {
-      if (activeConversionAbortController === conversionAbortController) {
-        activeConversionAbortController = null;
-      }
       isConversionActive = false;
+      queueCancelled = false;
+      conversionActivityEnded(() => mainWindow);
     }
   }
 );
 
 ipcMain.handle('cancel-conversion', (event: IpcMainInvokeEvent, force?: boolean) => {
   assertTrustedIpcSender(event);
+  queueCancelled = true;
   cancelActiveConversion(!!force);
 });
 
@@ -1074,6 +1454,15 @@ ipcMain.handle('save-settings', (event: IpcMainInvokeEvent, newSettings: SaveSet
     setUseSystemFFmpeg(settings.useSystemFFmpeg);
     clearFFmpegCaches();
   }
+  if (safeIncomingSettings.theme !== undefined || safeIncomingSettings.customTheme !== undefined) {
+    syncNativeThemeSource();
+  }
+  if (safeIncomingSettings.interfaceStyle !== undefined) {
+    syncNativeThemeSource();
+  }
+  if (safeIncomingSettings.updateChannel !== undefined) {
+    installWindowsJumpList(getJumpListDeps());
+  }
 });
 
 ipcMain.handle('check-for-updates', (event: IpcMainInvokeEvent) => {
@@ -1143,6 +1532,7 @@ ipcMain.handle('reset-settings', (event: IpcMainInvokeEvent) => {
   setUseSystemFFmpeg(settings.useSystemFFmpeg);
   clearFFmpegCaches();
   saveSettings();
+  syncNativeThemeSource();
   return settings;
 });
 

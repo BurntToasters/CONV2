@@ -37,6 +37,26 @@ let downloadedUpdateVersion: string | null = null;
 let updateInstallInProgress = false;
 let updateInstallStartingHandler: UpdateInstallStartingHandler | null = null;
 
+type UpdateMenuStateListener = () => void;
+const updateMenuStateListeners = new Set<UpdateMenuStateListener>();
+
+const notifyUpdateMenuStateChange = (): void => {
+  for (const listener of updateMenuStateListeners) {
+    listener();
+  }
+};
+
+export const isUpdateReadyToInstall = (): boolean => {
+  return updateDownloadedReady && !updateInstallInProgress && !updatesDisabled;
+};
+
+export const onUpdateMenuStateChange = (listener: UpdateMenuStateListener): (() => void) => {
+  updateMenuStateListeners.add(listener);
+  return () => {
+    updateMenuStateListeners.delete(listener);
+  };
+};
+
 const getWindowsSystemBinaryPath = (binaryName: string): string => {
   const root = process.env.SystemRoot || process.env.WINDIR || 'C:\\Windows';
   return path.join(root, 'System32', binaryName);
@@ -115,6 +135,7 @@ const beginUpdateCheck = (mode: UpdateCheckMode): boolean => {
     return false;
   }
   updateDownloadedReady = false;
+  notifyUpdateMenuStateChange();
   activeCheckMode = mode;
   updateCheckInFlight = true;
   return true;
@@ -303,6 +324,7 @@ export const initUpdater = (window: BrowserWindow): void => {
   autoUpdater.on('update-downloaded', (info: UpdateInfo) => {
     updateDownloadedReady = true;
     downloadedUpdateVersion = info.version;
+    notifyUpdateMenuStateChange();
     const windowRef = getMainWindow();
     if (!windowRef) {
       return;
@@ -415,6 +437,7 @@ export const installDownloadedUpdate = async (): Promise<void> => {
   }
 
   updateInstallInProgress = true;
+  notifyUpdateMenuStateChange();
   sendStatusToWindow('Restarting to install update...');
   sendUpdateStateToWindow({
     phase: 'installing',
@@ -427,6 +450,7 @@ export const installDownloadedUpdate = async (): Promise<void> => {
     autoUpdater.quitAndInstall(false, true);
   } catch (err) {
     updateInstallInProgress = false;
+    notifyUpdateMenuStateChange();
     const error = err instanceof Error ? err : new Error(String(err));
     sendStatusToWindow(`Update error: ${error.message}`);
     sendUpdateStateToWindow({

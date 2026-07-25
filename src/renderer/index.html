@@ -13,13 +13,15 @@
     <link rel="stylesheet" href="settings.css" />
   </head>
   <body>
-    <div class="app">
-      <header>
-        <div class="logo">
-          <img src="../../assets/icon.png" alt="CONV2" />
-          <h1>CONV2</h1>
+    <div class="app-shell">
+      <header class="titlebar" id="titlebar" data-custom-titlebar="false">
+        <div class="titlebar-drag titlebar-leading">
+          <div class="logo">
+            <img src="../../assets/icon.png" alt="" aria-hidden="true" />
+            <h1>CONV2</h1>
+          </div>
         </div>
-        <div class="header-actions">
+        <div class="titlebar-actions">
           <button class="btn btn-secondary btn-xs support-btn" id="supportBtn" title="Support">
             <img src="../../assets/twemoji/2764.svg" alt="" aria-hidden="true" class="btn-icon" />
             Support
@@ -29,9 +31,63 @@
             <span class="update-badge u-hidden" id="updateBadge">1</span>
           </button>
         </div>
+        <div class="titlebar-window-controls u-hidden" id="windowControls">
+          <button
+            type="button"
+            class="window-control"
+            id="windowMinimizeBtn"
+            aria-label="Minimize window"
+          >
+            <svg viewBox="0 0 10 1" aria-hidden="true">
+              <rect width="10" height="1" fill="currentColor" />
+            </svg>
+          </button>
+          <button
+            type="button"
+            class="window-control"
+            id="windowMaximizeBtn"
+            aria-label="Maximize window"
+          >
+            <svg class="window-control-icon-maximize" viewBox="0 0 10 10" aria-hidden="true">
+              <rect
+                x="0.5"
+                y="0.5"
+                width="9"
+                height="9"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1"
+              />
+            </svg>
+            <svg
+              class="window-control-icon-restore u-hidden"
+              viewBox="0 0 10 10"
+              aria-hidden="true"
+            >
+              <path d="M2.5 2.5h5v5H2.5z" fill="none" stroke="currentColor" stroke-width="1" />
+              <path d="M3.5 0.5h5v5H7.5" fill="none" stroke="currentColor" stroke-width="1" />
+            </svg>
+          </button>
+          <button
+            type="button"
+            class="window-control window-control-close"
+            id="windowCloseBtn"
+            aria-label="Close window"
+          >
+            <svg viewBox="0 0 10 10" aria-hidden="true">
+              <path
+                d="M1 1l8 8M9 1L1 9"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.2"
+                stroke-linecap="round"
+              />
+            </svg>
+          </button>
+        </div>
       </header>
 
-      <div class="workspace">
+      <div class="app">
         <div class="ffmpeg-warning u-hidden" id="ffmpegWarning">
           <h3>FFmpeg Not Found</h3>
           <p>Please install FFmpeg and add it to your system PATH to use CONV2.</p>
@@ -233,6 +289,19 @@
               <span id="progressEta"></span>
             </div>
           </div>
+          <div class="conversion-queue" id="conversionQueue" hidden>
+            <div class="conversion-queue-header">
+              <span>Queue</span>
+              <button
+                type="button"
+                class="btn btn-secondary btn-xs u-hidden"
+                id="retryFailedQueueBtn"
+              >
+                Retry failed
+              </button>
+            </div>
+            <ul class="conversion-queue-list" id="conversionQueueList"></ul>
+          </div>
         </div>
 
         <div class="status-row">
@@ -282,22 +351,22 @@
             </button>
           </div>
         </div>
-      </div>
 
-      <div class="keyboard-hints">
-        <span class="kbd">
-          <span class="kbd-key">Ctrl</span>
-          <span class="kbd-key">O</span>
-          <span class="kbd-action">Open</span>
-        </span>
-        <span class="kbd">
-          <span class="kbd-key">Enter</span>
-          <span class="kbd-action">Convert</span>
-        </span>
-        <span class="kbd">
-          <span class="kbd-key">Esc</span>
-          <span class="kbd-action">Close</span>
-        </span>
+        <div class="keyboard-hints">
+          <span class="kbd">
+            <span class="kbd-key">Ctrl</span>
+            <span class="kbd-key">O</span>
+            <span class="kbd-action">Open</span>
+          </span>
+          <span class="kbd">
+            <span class="kbd-key">Enter</span>
+            <span class="kbd-action">Convert</span>
+          </span>
+          <span class="kbd">
+            <span class="kbd-key">Esc</span>
+            <span class="kbd-action">Close</span>
+          </span>
+        </div>
       </div>
     </div>
 
@@ -362,7 +431,7 @@
             <div class="settings-row settings-row-appearance">
               <span class="settings-label">Appearance</span>
               <div class="theme-switcher" id="themeSwitcher">
-                <button class="theme-option" data-theme="system">
+                <button class="theme-option" data-theme="system" type="button">
                   <img
                     src="../../assets/twemoji/1f4bb.svg"
                     alt=""
@@ -371,7 +440,7 @@
                   />
                   Auto
                 </button>
-                <button class="theme-option" data-theme="dark">
+                <button class="theme-option" data-theme="dark" type="button">
                   <img
                     src="../../assets/twemoji/1f319.svg"
                     alt=""
@@ -380,7 +449,7 @@
                   />
                   Dark
                 </button>
-                <button class="theme-option" data-theme="light">
+                <button class="theme-option" data-theme="light" type="button">
                   <img
                     src="../../assets/twemoji/2600.svg"
                     alt=""
@@ -389,21 +458,62 @@
                   />
                   Light
                 </button>
+                <button class="theme-option" data-theme="custom" type="button">Custom</button>
               </div>
               <select id="themeSelect" class="u-hidden">
-                <option value="system">System</option>
+                <option value="system">Auto</option>
                 <option value="dark">Dark</option>
                 <option value="light">Light</option>
+                <option value="custom">Custom</option>
               </select>
+            </div>
+
+            <div class="settings-row settings-row-appearance" id="customThemeRow" hidden>
+              <span class="settings-label">Custom theme</span>
+              <div
+                class="theme-swatch-gallery"
+                id="customThemeGallery"
+                role="listbox"
+                aria-label="Custom themes"
+              >
+                <button
+                  type="button"
+                  class="theme-swatch"
+                  data-custom-theme="midnight-blue"
+                  role="option"
+                  title="Midnight Blue"
+                >
+                  <span
+                    class="theme-swatch-preview theme-swatch-midnight"
+                    aria-hidden="true"
+                  ></span>
+                  <span class="theme-swatch-label">Midnight Blue</span>
+                </button>
+                <button
+                  type="button"
+                  class="theme-swatch"
+                  data-custom-theme="high-contrast-dark"
+                  role="option"
+                  title="High Contrast Dark"
+                >
+                  <span
+                    class="theme-swatch-preview theme-swatch-contrast"
+                    aria-hidden="true"
+                  ></span>
+                  <span class="theme-swatch-label">High Contrast</span>
+                </button>
+              </div>
             </div>
 
             <div class="settings-row settings-row-appearance">
               <span class="settings-label">Interface Style</span>
               <div class="theme-switcher" id="uiStyleSwitcher">
-                <button class="theme-option" data-style="glass">Glow / Glass</button>
-                <button class="theme-option" data-style="flat">Flat UI</button>
+                <button class="theme-option" data-style="glass" type="button">Glow / Glass</button>
+                <button class="theme-option" data-style="flat" type="button">Flat UI</button>
               </div>
             </div>
+
+            <h3 class="settings-section-title">Conversion</h3>
 
             <div class="settings-row">
               <span class="settings-label">Output</span>
@@ -429,8 +539,11 @@
                 <span class="toggle-slider"></span>
               </label>
             </div>
+            <p class="settings-hint">
+              Decode on CPU while encoding on the GPU. Can help when hardware decode is unstable.
+            </p>
 
-            <div class="settings-row settings-row-last-in-group">
+            <div class="settings-row">
               <span class="settings-label" id="advancedPresetsLabel">Advanced Presets</span>
               <label class="toggle-switch">
                 <input
@@ -441,8 +554,11 @@
                 <span class="toggle-slider"></span>
               </label>
             </div>
+            <p class="settings-hint">
+              Show extra formats and presets (including advanced GIF options).
+            </p>
 
-            <div class="settings-row settings-row-last-in-group">
+            <div class="settings-row">
               <span class="settings-label" id="removeSpacesLabel"
                 >Remove Spaces in Output Names</span
               >
@@ -465,6 +581,48 @@
                 <span class="toggle-slider"></span>
               </label>
             </div>
+            <p class="settings-hint">
+              Moves the source file to the system trash after a successful conversion.
+            </p>
+
+            <h3 class="settings-section-title">Notifications &amp; power</h3>
+
+            <div class="settings-row">
+              <span class="settings-label" id="notifyOnConversionCompleteLabel"
+                >Notify when conversion completes</span
+              >
+              <label class="toggle-switch">
+                <input
+                  type="checkbox"
+                  id="notifyOnConversionCompleteCheck"
+                  aria-labelledby="notifyOnConversionCompleteLabel"
+                />
+                <span class="toggle-slider"></span>
+              </label>
+            </div>
+            <p class="settings-hint">
+              Shows a system notification when a conversion finishes while CONV2 is in the
+              background.
+            </p>
+
+            <div class="settings-row">
+              <span class="settings-label" id="preventSleepWhileConvertingLabel"
+                >Prevent sleep while converting</span
+              >
+              <label class="toggle-switch">
+                <input
+                  type="checkbox"
+                  id="preventSleepWhileConvertingCheck"
+                  aria-labelledby="preventSleepWhileConvertingLabel"
+                />
+                <span class="toggle-slider"></span>
+              </label>
+            </div>
+            <p class="settings-hint">
+              Keeps the system awake during an active conversion (recommended on laptops).
+            </p>
+
+            <h3 class="settings-section-title">Updates</h3>
 
             <div class="settings-row">
               <span class="settings-label" id="autoCheckUpdatesLabel">Auto-check updates</span>

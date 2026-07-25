@@ -141,13 +141,16 @@ interface AppSettings {
   gpu: GPUVendor;
   gpuMode: GPUMode;
   gpuManualVendor: GPUVendor;
-  theme: 'system' | 'dark' | 'light';
+  theme: 'system' | 'dark' | 'light' | 'custom';
+  customTheme: 'midnight-blue' | 'high-contrast-dark';
   interfaceStyle: 'glass' | 'flat';
   showDebugOutput: boolean;
   autoCheckUpdates: boolean;
   useSystemFFmpeg: boolean;
   useCpuDecodingWhenGpu: boolean;
   moveOriginalToTrashOnSuccess: boolean;
+  notifyOnConversionComplete: boolean;
+  preventSleepWhileConverting: boolean;
   updateChannel: 'auto' | 'stable' | 'beta';
   showAdvancedPresets: boolean;
   removeSpacesFromFilenames: boolean;
@@ -155,6 +158,24 @@ interface AppSettings {
   recentPresetIds: string[];
   uiPanels: UIPanelSettings;
   advancedFormatSettings: AdvancedFormatSettings;
+}
+
+interface QueueItemSnapshot {
+  id: string;
+  inputPath: string;
+  fileName: string;
+  status: 'pending' | 'running' | 'done' | 'failed' | 'cancelled';
+  error?: string;
+  outputPath?: string;
+  usedCpuFallback?: boolean;
+}
+
+interface QueueSnapshot {
+  active: boolean;
+  presetId: string;
+  currentIndex: number;
+  total: number;
+  items: QueueItemSnapshot[];
 }
 
 interface VideoInfo {
@@ -180,13 +201,6 @@ interface ConversionResult {
   outputPath: string;
   error?: string;
   retryWithCpuSuggested?: boolean;
-}
-
-interface BatchConversionOptions {
-  gpu: GPUVendor;
-  removeSpacesFromFilenames: boolean;
-  outputDirectory: string;
-  showDebugOutput: boolean;
 }
 
 interface ModalOptions {
@@ -341,6 +355,17 @@ let lastGpuPayload: GPUCapabilitiesPayload | null = null;
 const gpuCapabilitiesCache = new Map<string, GPUCapabilitiesPayload>();
 let gpuPanelRenderToken = 0;
 
+type QueueRunContext = {
+  presetId: string;
+  gpu: GPUVendor;
+  removeSpacesFromFilenames: boolean;
+  outputDirectory: string;
+  showDebugOutput: boolean;
+};
+
+let lastQueueRunContext: QueueRunContext | null = null;
+let lastQueueDisplaySnapshot: QueueSnapshot | null = null;
+
 const getAvailableVendors = (payload: GPUCapabilitiesPayload): GPUVendor[] => {
   return GPU_VENDORS.filter((vendor) => {
     if (vendor === 'cpu') return true;
@@ -417,6 +442,9 @@ const elements = {
   cancelBtn: getRequiredElement<HTMLButtonElement>('cancelBtn'),
   progressContainer: getRequiredElement<HTMLDivElement>('progressContainer'),
   progressFill: getRequiredElement<HTMLDivElement>('progressFill'),
+  conversionQueue: getRequiredElement<HTMLDivElement>('conversionQueue'),
+  conversionQueueList: getRequiredElement<HTMLUListElement>('conversionQueueList'),
+  retryFailedQueueBtn: getRequiredElement<HTMLButtonElement>('retryFailedQueueBtn'),
   progressPercent: getRequiredElement<HTMLSpanElement>('progressPercent'),
   progressTime: getRequiredElement<HTMLSpanElement>('progressTime'),
   progressEta: getRequiredElement<HTMLSpanElement>('progressEta'),
@@ -425,6 +453,11 @@ const elements = {
   showInFolderBtn: getRequiredElement<HTMLButtonElement>('showInFolderBtn'),
   settingsBtn: getRequiredElement<HTMLButtonElement>('settingsBtn'),
   supportBtn: getRequiredElement<HTMLButtonElement>('supportBtn'),
+  titlebar: getRequiredElement<HTMLElement>('titlebar'),
+  windowControls: getRequiredElement<HTMLDivElement>('windowControls'),
+  windowMinimizeBtn: getRequiredElement<HTMLButtonElement>('windowMinimizeBtn'),
+  windowMaximizeBtn: getRequiredElement<HTMLButtonElement>('windowMaximizeBtn'),
+  windowCloseBtn: getRequiredElement<HTMLButtonElement>('windowCloseBtn'),
   settingsModal: getRequiredElement<HTMLDivElement>('settingsModal'),
   settingsGeneralTab: getRequiredElement<HTMLButtonElement>('settingsGeneralTab'),
   settingsAdvancedFormatsTab: getRequiredElement<HTMLButtonElement>('settingsAdvancedFormatsTab'),
@@ -473,6 +506,8 @@ const elements = {
   outputPath: getRequiredElement<HTMLSpanElement>('outputPath'),
   themeSelect: getRequiredElement<HTMLSelectElement>('themeSelect'),
   themeSwitcher: getRequiredElement<HTMLDivElement>('themeSwitcher'),
+  customThemeRow: getRequiredElement<HTMLDivElement>('customThemeRow'),
+  customThemeGallery: getRequiredElement<HTMLDivElement>('customThemeGallery'),
   uiStyleSwitcher: getRequiredElement<HTMLDivElement>('uiStyleSwitcher'),
   resetSettingsBtn: getRequiredElement<HTMLButtonElement>('resetSettingsBtn'),
   checkUpdateBtn: getRequiredElement<HTMLButtonElement>('checkUpdateBtn'),
@@ -494,6 +529,12 @@ const elements = {
   useCpuDecodingWhenGpuCheck: getRequiredElement<HTMLInputElement>('useCpuDecodingWhenGpuCheck'),
   moveOriginalToTrashOnSuccessCheck: getRequiredElement<HTMLInputElement>(
     'moveOriginalToTrashOnSuccessCheck'
+  ),
+  notifyOnConversionCompleteCheck: getRequiredElement<HTMLInputElement>(
+    'notifyOnConversionCompleteCheck'
+  ),
+  preventSleepWhileConvertingCheck: getRequiredElement<HTMLInputElement>(
+    'preventSleepWhileConvertingCheck'
   ),
   showLogsBtn: getRequiredElement<HTMLButtonElement>('showLogsBtn'),
   logsModal: getRequiredElement<HTMLDivElement>('logsModal'),
@@ -838,7 +879,7 @@ const renderPresetPaneGroups = (
 
   if (totalVisible === 0) {
     const empty = document.createElement('div');
-    empty.className = 'preset-empty';
+    empty.className = 'preset-empty preset-empty-state';
     empty.textContent =
       presetSearchAllFormats || !elements.presetSearch.value.trim()
         ? 'No presets match your filters.'
@@ -935,6 +976,23 @@ const renderPresetPicker = (): void => {
       }
       return sortPresets(left, right);
     });
+
+    if (visibleSorted.length === 0) {
+      elements.presetCountLabel.textContent = '0 presets';
+      updatePresetPanelSummary(0);
+      elements.presetParentList.innerHTML = '';
+      elements.presetCardList.innerHTML = '';
+      const empty = document.createElement('div');
+      empty.className = 'preset-empty preset-empty-state';
+      const hasHiddenAdvanced =
+        !settings.showAdvancedPresets && presets.some((preset) => preset.isAdvanced);
+      empty.textContent = hasHiddenAdvanced
+        ? 'No presets visible. Turn on Advanced presets in Settings to see more formats.'
+        : 'No presets available.';
+      elements.presetCardList.appendChild(empty);
+      elements.presetSelectionPreview.innerHTML = '';
+      return;
+    }
 
     const visiblePickerPresets: PresetPickerModelPreset[] = visibleSorted.map((preset) => ({
       id: preset.id,
@@ -1504,6 +1562,9 @@ const setSettingsPanel = (
     const isActive = panel.id === panelId;
     panel.classList.toggle('is-active', isActive);
     panel.hidden = !isActive;
+    if (isActive) {
+      panel.scrollTop = 0;
+    }
   });
 
   settingsTabButtons.forEach((tab) => {
@@ -1945,6 +2006,8 @@ const openSettingsModal = (): void => {
   modalReturnFocus = document.activeElement as HTMLElement | null;
   setSettingsPanel('settingsGeneralPanel');
   setAdvancedFormatControlValues(settings.advancedFormatSettings);
+  updateThemeSwitcher();
+  updateUiStyleSwitcher();
   elements.settingsModal.classList.add('visible');
   focusFirstInteractiveElement(elements.settingsModal);
 };
@@ -2243,6 +2306,143 @@ const closeCreditsModal = (): void => {
   }
 };
 
+let conversionMenuStateTimer: ReturnType<typeof setTimeout> | null = null;
+
+const syncConversionMenuState = (): void => {
+  if (conversionMenuStateTimer) {
+    clearTimeout(conversionMenuStateTimer);
+  }
+  conversionMenuStateTimer = setTimeout(() => {
+    conversionMenuStateTimer = null;
+    window.electronAPI.setConversionMenuState({
+      converting: isConverting || conversionStarting,
+      hasOutput: Boolean(lastOutputPath),
+    });
+  }, 0);
+};
+
+const hasBlockingModalForShortcuts = (): boolean => {
+  return (
+    elements.settingsModal.classList.contains('visible') ||
+    elements.dynamicModal.classList.contains('visible') ||
+    elements.logsModal.classList.contains('visible') ||
+    elements.creditsModal.classList.contains('visible')
+  );
+};
+
+const openLogsModal = (): void => {
+  if (!settings.showDebugOutput) {
+    return;
+  }
+  flushLogBuffer();
+  modalReturnFocus = document.activeElement as HTMLElement | null;
+  elements.logsModal.classList.add('visible');
+  focusFirstInteractiveElement(elements.logsModal);
+};
+
+const handleAppMenuAction = (event: { action: string; payload?: { paths?: string[] } }): void => {
+  switch (event.action) {
+    case 'open-settings':
+      if (!hasBlockingModalForShortcuts()) {
+        openSettingsModal();
+      }
+      break;
+    case 'open-files':
+      if (getTopVisibleModal()) {
+        return;
+      }
+      if (event.payload?.paths && event.payload.paths.length > 0) {
+        void handleFileSelect(event.payload.paths);
+      }
+      break;
+    case 'start-conversion':
+      if (
+        !hasBlockingModalForShortcuts() &&
+        selectedFiles.length > 0 &&
+        !isConverting &&
+        !elements.convertBtn.disabled
+      ) {
+        startConversion();
+      }
+      break;
+    case 'cancel-conversion':
+      void cancelConversion();
+      break;
+    case 'show-logs':
+      openLogsModal();
+      break;
+    case 'open-credits':
+      void openCreditsModal();
+      break;
+    case 'show-in-folder':
+      if (lastOutputPath) {
+        void window.electronAPI.openPath(lastOutputPath);
+      }
+      break;
+    default:
+      break;
+  }
+};
+
+const setupAppMenuActions = (): void => {
+  window.electronAPI.onAppMenuAction(handleAppMenuAction);
+};
+
+const updateWindowMaximizeUi = (maximized: boolean): void => {
+  const maxIcon = elements.windowMaximizeBtn.querySelector('.window-control-icon-maximize');
+  const restoreIcon = elements.windowMaximizeBtn.querySelector('.window-control-icon-restore');
+  maxIcon?.classList.toggle('u-hidden', maximized);
+  restoreIcon?.classList.toggle('u-hidden', !maximized);
+  elements.windowMaximizeBtn.setAttribute(
+    'aria-label',
+    maximized ? 'Restore window' : 'Maximize window'
+  );
+};
+
+const applyWindowChromeStyle = (payload: { platform: string; customTitleBar: boolean }): void => {
+  const root = document.documentElement;
+  root.dataset.platform = payload.platform;
+  if (payload.customTitleBar) {
+    root.dataset.customTitlebar = 'true';
+    elements.titlebar.dataset.customTitlebar = 'true';
+  } else {
+    delete root.dataset.customTitlebar;
+    elements.titlebar.dataset.customTitlebar = 'false';
+  }
+
+  const showWinControls = payload.platform === 'win32' && payload.customTitleBar;
+  elements.windowControls.classList.toggle('u-hidden', !showWinControls);
+  if (showWinControls) {
+    void window.electronAPI.isWindowMaximized().then(updateWindowMaximizeUi);
+  }
+};
+
+const setupWindowChrome = (): void => {
+  window.electronAPI.onWindowChromeStyle(applyWindowChromeStyle);
+  window.electronAPI.onWindowMaximizedChanged(updateWindowMaximizeUi);
+
+  elements.windowMinimizeBtn.addEventListener('click', () => {
+    void window.electronAPI.minimizeWindow();
+  });
+  elements.windowMaximizeBtn.addEventListener('click', () => {
+    void window.electronAPI.toggleMaximizeWindow();
+  });
+  elements.windowCloseBtn.addEventListener('click', () => {
+    void window.electronAPI.closeWindow();
+  });
+
+  elements.titlebar.addEventListener('dblclick', (event) => {
+    if (document.documentElement.dataset.platform !== 'win32') {
+      return;
+    }
+    const target = event.target as HTMLElement | null;
+    if (target?.closest('button')) {
+      return;
+    }
+    void window.electronAPI.toggleMaximizeWindow();
+  });
+};
+
 const TIER_LABEL_TO_KEY: Record<string, string> = {
   'best quality': 'bestQuality',
   quality: 'quality',
@@ -2295,15 +2495,18 @@ const init = async () => {
   convertBtnOriginalHTML = elements.convertBtn.innerHTML;
   checkUpdateDefaultHTML = elements.checkUpdateBtn.innerHTML;
   tagAdvancedTierCards();
+  setupWindowChrome();
   await checkFFmpeg();
   await checkPlatform();
   await loadSettings();
   setupEventListeners();
   setupKeyboardShortcuts();
+  setupAppMenuActions();
   await loadPresets();
   await loadVersion();
   await applyTheme();
   await applyUpdateVisibility();
+  syncConversionMenuState();
 };
 
 const checkPlatform = async () => {
@@ -2363,6 +2566,10 @@ const loadSettings = async () => {
   presetSearchAllFormats = false;
   elements.presetSearchAllCheck.checked = false;
   elements.themeSelect.value = settings.theme;
+  if (!settings.customTheme) {
+    settings.customTheme = 'midnight-blue';
+  }
+  updateCustomThemeUi();
   elements.debugOutputCheck.checked = settings.showDebugOutput;
   elements.advancedPresetsCheck.checked = settings.showAdvancedPresets;
   elements.removeSpacesCheck.checked = settings.removeSpacesFromFilenames;
@@ -2370,6 +2577,8 @@ const loadSettings = async () => {
   elements.useSystemFFmpegCheck.checked = settings.useSystemFFmpeg;
   elements.useCpuDecodingWhenGpuCheck.checked = settings.useCpuDecodingWhenGpu;
   elements.moveOriginalToTrashOnSuccessCheck.checked = settings.moveOriginalToTrashOnSuccess;
+  elements.notifyOnConversionCompleteCheck.checked = settings.notifyOnConversionComplete !== false;
+  elements.preventSleepWhileConvertingCheck.checked = settings.preventSleepWhileConverting === true;
   elements.showAllGpuVendorsCheck.checked = settings.showAllGpuVendors;
   elements.updateChannelSelect.value = settings.updateChannel;
   setSettingsPanel('settingsGeneralPanel');
@@ -2431,6 +2640,25 @@ const applyUpdateVisibility = async () => {
   }
 };
 
+const resolveActiveThemeAttribute = async (): Promise<string> => {
+  if (settings.theme === 'custom') {
+    return settings.customTheme || 'midnight-blue';
+  }
+  if (settings.theme === 'system') {
+    return window.electronAPI.getSystemTheme();
+  }
+  return settings.theme;
+};
+
+const updateCustomThemeUi = () => {
+  const isCustom = settings.theme === 'custom';
+  elements.customThemeRow.hidden = !isCustom;
+  elements.customThemeGallery.querySelectorAll('.theme-swatch').forEach((btn) => {
+    const id = (btn as HTMLElement).dataset.customTheme;
+    btn.classList.toggle('active', isCustom && id === settings.customTheme);
+  });
+};
+
 const updateThemeSwitcher = () => {
   const switcher = document.getElementById('themeSwitcher');
   if (!switcher) return;
@@ -2439,6 +2667,7 @@ const updateThemeSwitcher = () => {
     const btnTheme = (btn as HTMLElement).dataset.theme;
     btn.classList.toggle('active', btnTheme === settings.theme);
   });
+  updateCustomThemeUi();
 };
 
 const updateUiStyleSwitcher = () => {
@@ -2452,12 +2681,8 @@ const updateUiStyleSwitcher = () => {
 };
 
 const applyTheme = async () => {
-  if (settings.theme === 'system') {
-    const systemTheme = await window.electronAPI.getSystemTheme();
-    document.documentElement.setAttribute('data-theme', systemTheme);
-  } else {
-    document.documentElement.setAttribute('data-theme', settings.theme);
-  }
+  const themeAttr = await resolveActiveThemeAttribute();
+  document.documentElement.setAttribute('data-theme', themeAttr);
 
   const style = settings.interfaceStyle === 'flat' ? 'flat' : 'glass';
   document.documentElement.setAttribute('data-ui-style', style);
@@ -2466,7 +2691,7 @@ const applyTheme = async () => {
   updateUiStyleSwitcher();
 
   if (!themeListenerRegistered) {
-    window.electronAPI.onThemeChange((theme) => {
+    window.electronAPI.onThemeChange(async (theme) => {
       if (settings.theme === 'system') {
         document.documentElement.setAttribute('data-theme', theme);
       }
@@ -2869,6 +3094,33 @@ const setupEventListeners = () => {
     });
   });
 
+  elements.customThemeGallery?.querySelectorAll('.theme-swatch').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const customTheme = (btn as HTMLElement).dataset.customTheme as AppSettings['customTheme'];
+      if (!customTheme) return;
+      const previousTheme = settings.theme;
+      const previousCustom = settings.customTheme;
+      await persistSettingsChange(
+        () => {
+          settings.theme = 'custom';
+          settings.customTheme = customTheme;
+          elements.themeSelect.value = 'custom';
+        },
+        () => {
+          settings.theme = previousTheme;
+          settings.customTheme = previousCustom;
+          elements.themeSelect.value = previousTheme;
+        },
+        { theme: 'custom', customTheme },
+        'Failed to save custom theme',
+        async () => {
+          await applyTheme();
+          updateThemeSwitcher();
+        }
+      );
+    });
+  });
+
   elements.uiStyleSwitcher?.querySelectorAll('.theme-option').forEach((btn) => {
     btn.addEventListener('click', async () => {
       const uiStyle = (btn as HTMLElement).dataset.style as AppSettings['interfaceStyle'];
@@ -3030,6 +3282,38 @@ const setupEventListeners = () => {
     );
   });
 
+  elements.notifyOnConversionCompleteCheck.addEventListener('change', async () => {
+    const nextValue = elements.notifyOnConversionCompleteCheck.checked;
+    const previousValue = settings.notifyOnConversionComplete;
+    await persistSettingsChange(
+      () => {
+        settings.notifyOnConversionComplete = nextValue;
+      },
+      () => {
+        settings.notifyOnConversionComplete = previousValue;
+        elements.notifyOnConversionCompleteCheck.checked = previousValue;
+      },
+      { notifyOnConversionComplete: nextValue },
+      'Failed to save notification setting'
+    );
+  });
+
+  elements.preventSleepWhileConvertingCheck.addEventListener('change', async () => {
+    const nextValue = elements.preventSleepWhileConvertingCheck.checked;
+    const previousValue = settings.preventSleepWhileConverting;
+    await persistSettingsChange(
+      () => {
+        settings.preventSleepWhileConverting = nextValue;
+      },
+      () => {
+        settings.preventSleepWhileConverting = previousValue;
+        elements.preventSleepWhileConvertingCheck.checked = previousValue;
+      },
+      { preventSleepWhileConverting: nextValue },
+      'Failed to save prevent-sleep setting'
+    );
+  });
+
   elements.showAllGpuVendorsCheck.addEventListener('change', async () => {
     const nextValue = elements.showAllGpuVendorsCheck.checked;
     const previousValue = settings.showAllGpuVendors;
@@ -3071,6 +3355,19 @@ const setupEventListeners = () => {
     }
   });
 
+  elements.retryFailedQueueBtn.addEventListener('click', () => {
+    if (isConverting || !lastQueueDisplaySnapshot || !lastQueueRunContext) {
+      return;
+    }
+    const failedPaths = lastQueueDisplaySnapshot.items
+      .filter((item) => item.status === 'failed')
+      .map((item) => item.inputPath);
+    if (failedPaths.length === 0) {
+      return;
+    }
+    void runConversionWorkflow(failedPaths);
+  });
+
   elements.showInFolderBtn?.addEventListener('click', () => {
     if (lastOutputPath) {
       window.electronAPI.openPath(lastOutputPath);
@@ -3092,10 +3389,7 @@ const setupEventListeners = () => {
   });
 
   elements.showLogsBtn.addEventListener('click', () => {
-    flushLogBuffer();
-    modalReturnFocus = document.activeElement as HTMLElement | null;
-    elements.logsModal.classList.add('visible');
-    focusFirstInteractiveElement(elements.logsModal);
+    openLogsModal();
   });
 
   elements.closeLogs.addEventListener('click', () => {
@@ -3433,103 +3727,55 @@ const resolvePreferredGpuVendor = async (
   };
 };
 
-const shouldRetryWithCpu = (
-  result: ConversionResult,
-  attemptedGpu: GPUVendor,
-  codec: GPUCodec | null
-): boolean => {
-  if (attemptedGpu === 'cpu' || codec === null || result.success) {
-    return false;
-  }
-  if (result.error === 'Conversion cancelled') {
-    return false;
-  }
-  const message = (result.error || '').toLowerCase();
-  const inputErrorMarkers = [
-    'error opening input',
-    'no such file or directory',
-    'invalid data found when processing input',
-    'moov atom not found',
-    'permission denied',
-  ];
-  if (inputErrorMarkers.some((marker) => message.includes(marker))) {
-    return false;
-  }
-  if (result.retryWithCpuSuggested === true) {
-    return true;
-  }
-  const gpuMarkers = [
-    'nvenc',
-    'amf init',
-    'amf failed',
-    'amf error',
-    'amf encoder',
-    'qsv',
-    'videotoolbox',
-    'no capable devices found',
-    'cannot load nvencode',
-    'hardware acceleration',
-    'gpu',
-  ];
-  return gpuMarkers.some((marker) => message.includes(marker));
-};
-
-const runSingleConversion = async (
-  inputPath: string,
-  presetId: string,
-  fileIndex: number,
-  totalFiles: number,
-  batchOptions: BatchConversionOptions,
-  codec: GPUCodec | null
-): Promise<ConversionResult & { usedCpuFallback?: boolean }> => {
-  conversionStartTime = Date.now();
-  elements.progressFill.style.width = '0%';
-  elements.progressFill.setAttribute('aria-valuenow', '0');
-  elements.progressPercent.textContent = '0%';
-  elements.progressTime.textContent = '00:00:00';
-  elements.progressEta.textContent = '';
-  elements.progressSpeed.textContent = '';
-
-  const fileName = getFileName(inputPath);
-  if (totalFiles > 1) {
-    showStatus('warning', `Converting ${fileIndex + 1}/${totalFiles}: ${fileName}`);
+const renderConversionQueue = (snapshot: QueueSnapshot | null) => {
+  if (snapshot && snapshot.total > 1) {
+    lastQueueDisplaySnapshot = snapshot;
   }
 
-  if (batchOptions.showDebugOutput && totalFiles > 1) {
-    appendLogMessage(`\n=== [${fileIndex + 1}/${totalFiles}] ${fileName} ===\n`);
-  }
+  const display =
+    snapshot ?? (!isConverting && lastQueueDisplaySnapshot ? lastQueueDisplaySnapshot : null);
 
-  const firstAttempt = await window.electronAPI.startConversion(
-    inputPath,
-    presetId,
-    batchOptions.gpu,
-    {
-      suppressGpuErrorEvent: true,
-      removeSpacesFromFilenames: batchOptions.removeSpacesFromFilenames,
-      outputDirectory: batchOptions.outputDirectory,
-      showDebugOutput: batchOptions.showDebugOutput,
+  const showBatchUi =
+    display &&
+    (display.total > 1 ||
+      display.items.some((item) => item.status === 'failed' || item.status === 'cancelled'));
+
+  if (!showBatchUi || !display) {
+    elements.conversionQueue.hidden = true;
+    elements.conversionQueueList.innerHTML = '';
+    elements.retryFailedQueueBtn.classList.add('u-hidden');
+    if (snapshot === null && isConverting) {
+      lastQueueDisplaySnapshot = null;
     }
+    return;
+  }
+
+  elements.conversionQueue.hidden = false;
+  elements.conversionQueueList.innerHTML = '';
+  const failedCount = display.items.filter((item) => item.status === 'failed').length;
+  elements.retryFailedQueueBtn.classList.toggle(
+    'u-hidden',
+    isConverting || failedCount === 0 || !lastQueueRunContext
   );
 
-  if (!cancelRequested && shouldRetryWithCpu(firstAttempt, batchOptions.gpu, codec)) {
-    const fileNameForStatus = getFileName(inputPath);
-    showStatus('warning', `GPU path failed for ${fileNameForStatus}. Retrying with CPU...`);
-    if (batchOptions.showDebugOutput) {
-      appendLogMessage(`[GPU fallback] Retry with CPU for ${fileNameForStatus}\n`);
+  for (const item of display.items) {
+    const li = document.createElement('li');
+    li.className = `conversion-queue-item is-${item.status}`;
+    const name = document.createElement('span');
+    name.className = 'conversion-queue-name';
+    name.textContent = item.fileName;
+    name.title = item.error ? `${item.fileName}: ${item.error}` : item.fileName;
+    const status = document.createElement('span');
+    status.className = 'conversion-queue-status';
+    let statusLabel = item.status === 'done' && item.usedCpuFallback ? 'done (cpu)' : item.status;
+    if (item.status === 'failed' && item.error) {
+      statusLabel = item.error.length > 48 ? `${item.error.slice(0, 45)}…` : item.error;
     }
-    const retryResult = await window.electronAPI.startConversion(inputPath, presetId, 'cpu', {
-      suppressGpuErrorEvent: true,
-      removeSpacesFromFilenames: batchOptions.removeSpacesFromFilenames,
-      outputDirectory: batchOptions.outputDirectory,
-      showDebugOutput: batchOptions.showDebugOutput,
-    });
-    return {
-      ...retryResult,
-      usedCpuFallback: true,
-    };
+    status.textContent = statusLabel;
+    status.title = item.error || statusLabel;
+    li.append(name, status);
+    elements.conversionQueueList.appendChild(li);
   }
-
-  return firstAttempt;
 };
 
 const finishConversionUi = () => {
@@ -3540,14 +3786,22 @@ const finishConversionUi = () => {
   elements.convertBtn.classList.remove('converting');
   elements.convertBtn.disabled = !ffmpegInstalled || selectedFiles.length === 0;
   elements.cancelBtn.classList.add('u-hidden');
+  syncConversionMenuState();
 };
 
-const runConversionWorkflow = async () => {
+const runConversionWorkflow = async (inputPathsOverride?: string[]) => {
   await waitForAdvancedSettingsIdle();
 
-  if (selectedFiles.length === 0) return;
+  const filesToConvert =
+    inputPathsOverride && inputPathsOverride.length > 0
+      ? [...inputPathsOverride]
+      : [...selectedFiles];
 
-  const presetId = selectedPresetId;
+  if (filesToConvert.length === 0) return;
+
+  const presetId = inputPathsOverride
+    ? (lastQueueRunContext?.presetId ?? selectedPresetId)
+    : selectedPresetId;
   if (!presetId) {
     showStatus('error', 'Select a conversion preset first');
     return;
@@ -3563,18 +3817,28 @@ const runConversionWorkflow = async () => {
   } catch {}
 
   let resolvedGpuVendor: GPUVendor = 'cpu';
-  let codecForRetry: GPUCodec | null = null;
-  try {
-    const resolvedGpu = await resolvePreferredGpuVendor(preset);
-    resolvedGpuVendor = resolvedGpu.gpu;
-    codecForRetry = resolvedGpu.codec;
-  } catch {
-    resolvedGpuVendor = 'cpu';
-    codecForRetry = null;
+  if (inputPathsOverride && lastQueueRunContext) {
+    resolvedGpuVendor = lastQueueRunContext.gpu;
+  } else {
+    try {
+      const resolvedGpu = await resolvePreferredGpuVendor(preset);
+      resolvedGpuVendor = resolvedGpu.gpu;
+    } catch {
+      resolvedGpuVendor = 'cpu';
+    }
   }
+
+  lastQueueRunContext = {
+    presetId,
+    gpu: resolvedGpuVendor,
+    removeSpacesFromFilenames: settings.removeSpacesFromFilenames,
+    outputDirectory: settings.outputDirectory,
+    showDebugOutput: settings.showDebugOutput,
+  };
 
   isConverting = true;
   cancelRequested = false;
+  syncConversionMenuState();
   elements.convertBtn.classList.add('converting');
   elements.cancelBtn.classList.remove('u-hidden');
   elements.progressContainer.classList.add('visible');
@@ -3584,70 +3848,77 @@ const runConversionWorkflow = async () => {
   pendingLogBuffer = '';
   elements.logsContent.textContent = '';
   hideStatus();
+  conversionStartTime = Date.now();
+  elements.progressFill.style.width = '0%';
+  elements.progressFill.setAttribute('aria-valuenow', '0');
+  elements.progressPercent.textContent = '0%';
+  elements.progressTime.textContent = '00:00:00';
+  elements.progressEta.textContent = '';
+  elements.progressSpeed.textContent = '';
+  renderConversionQueue(null);
 
-  const batchOptions: BatchConversionOptions = {
-    gpu: resolvedGpuVendor,
-    removeSpacesFromFilenames: settings.removeSpacesFromFilenames,
-    outputDirectory: settings.outputDirectory,
-    showDebugOutput: settings.showDebugOutput,
-  };
-
-  const filesToConvert = [...selectedFiles];
   const totalFiles = filesToConvert.length;
-  const results: Array<ConversionResult & { inputPath: string; usedCpuFallback?: boolean }> = [];
   let unexpectedError: string | null = null;
+  let snapshot: QueueSnapshot | null = null;
+
+  const unsubQueue = window.electronAPI.onConversionQueueUpdated((next) => {
+    snapshot = next;
+    renderConversionQueue(next);
+    const running = next.items.find((item) => item.status === 'running');
+    if (running && next.total > 1) {
+      showStatus(
+        'warning',
+        `Converting ${next.currentIndex + 1}/${next.total}: ${running.fileName}`
+      );
+    }
+  });
 
   try {
-    for (let fileIndex = 0; fileIndex < totalFiles; fileIndex += 1) {
-      if (cancelRequested) {
-        break;
-      }
-
-      const inputPath = filesToConvert[fileIndex];
-      const result = await runSingleConversion(
-        inputPath,
-        presetId,
-        fileIndex,
-        totalFiles,
-        batchOptions,
-        codecForRetry
-      );
-      results.push({ inputPath, ...result });
-
-      if (result.usedCpuFallback && batchOptions.gpu !== 'cpu') {
-        batchOptions.gpu = 'cpu';
-      }
-
-      if (result.success) {
-        lastOutputPath = result.outputPath;
-      }
-
-      if (!result.success && result.error === 'Conversion cancelled') {
-        cancelRequested = true;
-        break;
-      }
-    }
+    snapshot = await window.electronAPI.startConversionQueue({
+      inputPaths: filesToConvert,
+      presetId: lastQueueRunContext.presetId,
+      gpu: lastQueueRunContext.gpu,
+      removeSpacesFromFilenames: lastQueueRunContext.removeSpacesFromFilenames,
+      outputDirectory: lastQueueRunContext.outputDirectory,
+      showDebugOutput: lastQueueRunContext.showDebugOutput,
+    });
+    renderConversionQueue(snapshot);
   } catch (err) {
     unexpectedError = err instanceof Error ? err.message : String(err);
+  } finally {
+    unsubQueue();
   }
 
-  const wasCancelled = cancelRequested;
+  const wasCancelled =
+    cancelRequested || snapshot?.items.some((item) => item.status === 'cancelled');
   finishConversionUi();
+  renderConversionQueue(null);
+
   if (unexpectedError) {
     showStatus('error', `Conversion failed: ${unexpectedError}`);
     elements.showInFolderBtn.classList.add('u-hidden');
     return;
   }
 
+  const items = snapshot?.items ?? [];
+  const successItems = items.filter((item) => item.status === 'done');
+  const failedCount = items.filter((item) => item.status === 'failed').length;
+  const fallbackCount = items.filter((item) => item.usedCpuFallback).length;
+  const lastSuccess = [...successItems].reverse().find((item) => item.outputPath);
+  if (lastSuccess?.outputPath) {
+    lastOutputPath = lastSuccess.outputPath;
+    syncConversionMenuState();
+  }
+
   if (totalFiles === 1) {
-    const [result] = results;
-    if (result?.success && result.usedCpuFallback) {
+    const [result] = items;
+    if (result?.status === 'done' && result.usedCpuFallback) {
       showStatus('warning', 'Conversion complete. GPU unavailable; retried with CPU.');
       elements.showInFolderBtn.classList.remove('u-hidden');
-    } else if (result?.success) {
+    } else if (result?.status === 'done') {
       showStatus('success', 'Conversion complete!');
       elements.showInFolderBtn.classList.remove('u-hidden');
-    } else if (result?.error === 'Conversion cancelled' || wasCancelled) {
+    } else if (result?.status === 'cancelled' || wasCancelled) {
       showStatus('warning', 'Conversion cancelled');
     } else {
       showStatus('error', `Conversion failed: ${result?.error || 'Unknown error'}`);
@@ -3655,13 +3926,11 @@ const runConversionWorkflow = async () => {
     return;
   }
 
-  const successCount = results.filter((result) => result.success).length;
-  const failedCount = results.length - successCount;
-  const fallbackCount = results.filter((result) => result.usedCpuFallback).length;
+  const successCount = successItems.length;
 
   if (wasCancelled) {
     showStatus('warning', `Batch cancelled. ${successCount}/${totalFiles} converted.`);
-  } else if (failedCount === 0) {
+  } else if (failedCount === 0 && successCount === totalFiles) {
     if (fallbackCount > 0) {
       showStatus(
         'warning',
@@ -3703,6 +3972,7 @@ const startConversion = (): void => {
     })
     .finally(() => {
       conversionStarting = false;
+      syncConversionMenuState();
       if (!isConverting) {
         elements.convertBtn.disabled = !ffmpegInstalled || selectedFiles.length === 0;
       }

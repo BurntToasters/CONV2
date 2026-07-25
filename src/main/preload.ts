@@ -32,7 +32,8 @@ export interface AppSettings {
   gpu: GPUVendor;
   gpuMode: GPUMode;
   gpuManualVendor: GPUVendor;
-  theme: 'system' | 'dark' | 'light';
+  theme: 'system' | 'dark' | 'light' | 'custom';
+  customTheme: 'midnight-blue' | 'high-contrast-dark';
   interfaceStyle: 'glass' | 'flat';
   showDebugOutput: boolean;
   autoCheckUpdates: boolean;
@@ -43,9 +44,31 @@ export interface AppSettings {
   showAdvancedPresets: boolean;
   removeSpacesFromFilenames: boolean;
   showAllGpuVendors: boolean;
+  notifyOnConversionComplete: boolean;
+  preventSleepWhileConverting: boolean;
   recentPresetIds: string[];
   uiPanels: UIPanelSettings;
   advancedFormatSettings: AdvancedFormatSettings;
+}
+
+export type QueueItemStatus = 'pending' | 'running' | 'done' | 'failed' | 'cancelled';
+
+export interface QueueItemSnapshot {
+  id: string;
+  inputPath: string;
+  fileName: string;
+  status: QueueItemStatus;
+  error?: string;
+  outputPath?: string;
+  usedCpuFallback?: boolean;
+}
+
+export interface QueueSnapshot {
+  active: boolean;
+  presetId: string;
+  currentIndex: number;
+  total: number;
+  items: QueueItemSnapshot[];
 }
 
 export type SaveSettingsPayload = Omit<Partial<AppSettings>, 'uiPanels'> & {
@@ -121,6 +144,30 @@ export interface UpdateStatePayload {
   percent?: number;
 }
 
+export type AppMenuActionId =
+  | 'open-settings'
+  | 'open-files'
+  | 'start-conversion'
+  | 'cancel-conversion'
+  | 'show-logs'
+  | 'open-credits'
+  | 'show-in-folder';
+
+export interface AppMenuActionEvent {
+  action: AppMenuActionId;
+  payload?: { paths?: string[] };
+}
+
+export interface ConversionMenuStatePayload {
+  converting: boolean;
+  hasOutput: boolean;
+}
+
+export interface WindowChromeStylePayload {
+  platform: string;
+  customTitleBar: boolean;
+}
+
 const subscribe = <T>(channel: string, callback: (payload: T) => void): (() => void) => {
   const listener = (_event: IpcRendererEvent, payload: T) => callback(payload);
   ipcRenderer.on(channel, listener);
@@ -146,6 +193,14 @@ contextBridge.exposeInMainWorld('electronAPI', {
     options?: StartConversionOptions
   ): Promise<ConversionResult> =>
     ipcRenderer.invoke('start-conversion', inputPath, presetId, gpu, options),
+  startConversionQueue: (payload: {
+    inputPaths: string[];
+    presetId: string;
+    gpu: GPUVendor;
+    removeSpacesFromFilenames?: boolean;
+    outputDirectory?: string;
+    showDebugOutput?: boolean;
+  }): Promise<QueueSnapshot> => ipcRenderer.invoke('start-conversion-queue', payload),
   cancelConversion: (force?: boolean): Promise<void> =>
     ipcRenderer.invoke('cancel-conversion', force),
   onConversionProgress: (callback: (progress: ConversionProgress) => void): (() => void) =>
@@ -154,6 +209,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     subscribe('conversion-log', callback),
   onConversionComplete: (callback: (result: ConversionResult) => void): (() => void) =>
     subscribe('conversion-complete', callback),
+  onConversionQueueUpdated: (callback: (snapshot: QueueSnapshot) => void): (() => void) =>
+    subscribe('conversion-queue-updated', callback),
   onGPUEncoderError: (callback: (error: GPUEncoderError) => void): (() => void) =>
     subscribe('gpu-encoder-error', callback),
 
@@ -198,6 +255,20 @@ contextBridge.exposeInMainWorld('electronAPI', {
   onThemeChange: (callback: (theme: 'dark' | 'light') => void): (() => void) =>
     subscribe('theme-changed', callback),
 
+  onAppMenuAction: (callback: (event: AppMenuActionEvent) => void): (() => void) =>
+    subscribe('app-menu-action', callback),
+  setConversionMenuState: (state: ConversionMenuStatePayload): void =>
+    ipcRenderer.send('conversion-menu-state', state),
+
+  minimizeWindow: (): Promise<void> => ipcRenderer.invoke('window-minimize'),
+  toggleMaximizeWindow: (): Promise<void> => ipcRenderer.invoke('window-toggle-maximize'),
+  closeWindow: (): Promise<void> => ipcRenderer.invoke('window-close'),
+  isWindowMaximized: (): Promise<boolean> => ipcRenderer.invoke('window-is-maximized'),
+  onWindowChromeStyle: (callback: (payload: WindowChromeStylePayload) => void): (() => void) =>
+    subscribe('window-chrome-style', callback),
+  onWindowMaximizedChanged: (callback: (maximized: boolean) => void): (() => void) =>
+    subscribe('window-maximized-changed', callback),
+
   // Reset & Restart
   resetSettings: (): Promise<AppSettings> => ipcRenderer.invoke('reset-settings'),
   restartApp: (): Promise<void> => ipcRenderer.invoke('restart-app'),
@@ -219,10 +290,19 @@ declare global {
         gpu: GPUVendor,
         options?: StartConversionOptions
       ) => Promise<ConversionResult>;
+      startConversionQueue: (payload: {
+        inputPaths: string[];
+        presetId: string;
+        gpu: GPUVendor;
+        removeSpacesFromFilenames?: boolean;
+        outputDirectory?: string;
+        showDebugOutput?: boolean;
+      }) => Promise<QueueSnapshot>;
       cancelConversion: (force?: boolean) => Promise<void>;
       onConversionProgress: (callback: (progress: ConversionProgress) => void) => () => void;
       onConversionLog: (callback: (message: string) => void) => () => void;
       onConversionComplete: (callback: (result: ConversionResult) => void) => () => void;
+      onConversionQueueUpdated: (callback: (snapshot: QueueSnapshot) => void) => () => void;
       onGPUEncoderError: (callback: (error: GPUEncoderError) => void) => () => void;
       getPresets: () => Promise<RendererPreset[]>;
       getGpuCapabilities: (requestedCodec?: GPUCodec | null) => Promise<GPUCapabilitiesPayload>;
@@ -243,6 +323,14 @@ declare global {
       openExternal: (url: string) => Promise<void>;
       getSystemTheme: () => Promise<'dark' | 'light'>;
       onThemeChange: (callback: (theme: 'dark' | 'light') => void) => () => void;
+      onAppMenuAction: (callback: (event: AppMenuActionEvent) => void) => () => void;
+      setConversionMenuState: (state: ConversionMenuStatePayload) => void;
+      minimizeWindow: () => Promise<void>;
+      toggleMaximizeWindow: () => Promise<void>;
+      closeWindow: () => Promise<void>;
+      isWindowMaximized: () => Promise<boolean>;
+      onWindowChromeStyle: (callback: (payload: WindowChromeStylePayload) => void) => () => void;
+      onWindowMaximizedChanged: (callback: (maximized: boolean) => void) => () => void;
       resetSettings: () => Promise<AppSettings>;
       restartApp: () => Promise<void>;
       getLicenses: () => Promise<Record<string, unknown> | null>;

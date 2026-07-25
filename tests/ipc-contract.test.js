@@ -27,7 +27,11 @@ const preloadOns = new Set([
 ]);
 
 // main uses ipcMain.handle('channel', ...) for invoke targets
-const mainHandles = extractAll(mainSrc, /ipcMain\.handle\(\s*['"]([a-z0-9-]+)['"]/gi);
+const windowChromeSrc = fs.readFileSync(path.join(ROOT, 'src/main/windowChrome.ts'), 'utf8');
+const mainHandles = new Set([
+  ...extractAll(mainSrc, /ipcMain\.handle\(\s*['"]([a-z0-9-]+)['"]/gi),
+  ...extractAll(windowChromeSrc, /ipcMain\.handle\(\s*['"]([a-z0-9-]+)['"]/gi),
+]);
 
 // main emits one-way events via webContents.send('channel', ...) or window.webContents.send
 const mainSends = new Set();
@@ -42,6 +46,11 @@ let u;
 const sendRegex2 = /\.webContents\.send\(\s*['"]([a-z0-9-]+)['"]/gi;
 while ((u = sendRegex2.exec(updaterSrc)) !== null) {
   mainSends.add(u[1]);
+}
+let w;
+const sendRegex3 = /\.webContents\.send\(\s*['"]([a-z0-9-]+)['"]/gi;
+while ((w = sendRegex3.exec(windowChromeSrc)) !== null) {
+  mainSends.add(w[1]);
 }
 
 test('preload declares at least one invoke channel and one event channel', () => {
