@@ -56,17 +56,20 @@ import {
   normalizeUiPanels,
   normalizeTheme,
   normalizeCustomTheme,
+  normalizeSetupWizardCompleted,
   isSettingsCorrupted,
   isSettingsSchemaOutdated,
 } from './settingsSchema';
 import { recommendGpuVendorFromAvailability } from './gpuRecommendation';
 import { mapPresetsForRenderer } from './presetProjection';
 import {
+  MAX_QUEUE_ITEMS,
   createEmptyQueueSnapshot,
   runConversionQueue,
   shouldRetryWithCpu,
   type QueueSnapshot,
 } from './conversionQueue';
+import { registerConversionCancelIpc } from './conversionIpc';
 import {
   installApplicationMenu,
   type AppMenuActionId,
@@ -254,6 +257,7 @@ interface AppSettings {
   showAllGpuVendors: boolean;
   notifyOnConversionComplete: boolean;
   preventSleepWhileConverting: boolean;
+  setupWizardCompleted: boolean;
   recentPresetIds: string[];
   uiPanels: UIPanelSettings;
   advancedFormatSettings: AdvancedFormatSettings;
@@ -282,6 +286,7 @@ const ALLOWED_SETTINGS_KEYS = new Set<string>([
   'showAllGpuVendors',
   'notifyOnConversionComplete',
   'preventSleepWhileConverting',
+  'setupWizardCompleted',
   'recentPresetIds',
   'uiPanels',
   'advancedFormatSettings',
@@ -307,6 +312,7 @@ const createDefaultSettings = (): AppSettings => ({
   showAllGpuVendors: false,
   notifyOnConversionComplete: true,
   preventSleepWhileConverting: false,
+  setupWizardCompleted: false,
   recentPresetIds: [],
   uiPanels: normalizeUiPanels(undefined),
   advancedFormatSettings: createDefaultAdvancedFormatSettings(),
@@ -365,6 +371,10 @@ const normalizeSettings = (value: unknown): AppSettings => {
     showAllGpuVendors: incoming.showAllGpuVendors === true,
     notifyOnConversionComplete: incoming.notifyOnConversionComplete !== false,
     preventSleepWhileConverting: incoming.preventSleepWhileConverting === true,
+    setupWizardCompleted: normalizeSetupWizardCompleted(
+      incoming.setupWizardCompleted,
+      Object.prototype.hasOwnProperty.call(incoming, 'setupWizardCompleted')
+    ),
     recentPresetIds: normalizeRecentPresetIds(incoming.recentPresetIds),
     uiPanels: normalizeUiPanels(incoming.uiPanels),
     advancedFormatSettings: normalizeAdvancedFormatSettings(incoming.advancedFormatSettings),
@@ -701,18 +711,25 @@ const loadSettings = (): void => {
   }
 };
 
+/**
+ * Writes JSON via temp file + fsync + rename so a crash or full disk mid-write
+ * can never leave a truncated file where the app expects valid state.
+ */
+const writeJsonAtomic = (filePath: string, value: unknown): void => {
+  const tmpPath = filePath + '.tmp';
+  fs.writeFileSync(tmpPath, JSON.stringify(value, null, 2));
+  const fd = fs.openSync(tmpPath, 'r+');
+  try {
+    fs.fsyncSync(fd);
+  } finally {
+    fs.closeSync(fd);
+  }
+  fs.renameSync(tmpPath, filePath);
+};
+
 const saveSettings = (): void => {
   try {
-    const settingsPath = getSettingsPath();
-    const tmpPath = settingsPath + '.tmp';
-    fs.writeFileSync(tmpPath, JSON.stringify(settings, null, 2));
-    const fd = fs.openSync(tmpPath, 'r+');
-    try {
-      fs.fsyncSync(fd);
-    } finally {
-      fs.closeSync(fd);
-    }
-    fs.renameSync(tmpPath, settingsPath);
+    writeJsonAtomic(getSettingsPath(), settings);
   } catch (err) {
     console.error('Failed to save settings:', err);
   }
@@ -795,7 +812,7 @@ const saveWindowState = (): void => {
       y: bounds.y,
       isMaximized,
     };
-    fs.writeFileSync(getWindowStatePath(), JSON.stringify(state, null, 2));
+    writeJsonAtomic(getWindowStatePath(), state);
   } catch (err) {
     console.error('Failed to save window state:', err);
   }
@@ -1027,6 +1044,13 @@ ipcMain.on('conversion-menu-state', (event: IpcMainEvent, state: unknown) => {
 });
 
 registerWindowChromeIpc(() => mainWindow, assertTrustedIpcSender);
+registerConversionCancelIpc({
+  assertTrustedIpcSender,
+  markQueueCancelled: () => {
+    queueCancelled = true;
+  },
+  cancelActiveConversion: (force) => cancelActiveConversion(!!force),
+});
 
 ipcMain.handle('select-file', async (event: IpcMainInvokeEvent) => {
   assertTrustedIpcSender(event);
@@ -1246,9 +1270,16 @@ ipcMain.handle(
     }
   ): Promise<QueueSnapshot> => {
     assertTrustedIpcSender(event);
+
+    // Validate the payload before touching any of its fields: a malformed
+    // request must not be able to throw out of the IPC handler.
+    const inputPaths = Array.isArray(payload?.inputPaths)
+      ? payload.inputPaths.filter((entry) => typeof entry === 'string' && entry.length > 0)
+      : [];
+
     if (isConversionActive) {
       const busy = createEmptyQueueSnapshot();
-      busy.items = (payload.inputPaths || []).map((inputPath, index) => ({
+      busy.items = inputPaths.slice(0, MAX_QUEUE_ITEMS).map((inputPath, index) => ({
         id: `busy-${index}`,
         inputPath,
         fileName: path.basename(inputPath),
@@ -1260,13 +1291,24 @@ ipcMain.handle(
       return busy;
     }
 
-    const inputPaths = Array.isArray(payload?.inputPaths)
-      ? payload.inputPaths.filter((entry) => typeof entry === 'string' && entry.length > 0)
-      : [];
     if (inputPaths.length === 0) {
       const empty = createEmptyQueueSnapshot();
       mainWindow?.webContents.send('conversion-queue-updated', empty);
       return empty;
+    }
+
+    if (inputPaths.length > MAX_QUEUE_ITEMS) {
+      const tooMany = createEmptyQueueSnapshot();
+      tooMany.total = inputPaths.length;
+      tooMany.items = inputPaths.slice(0, MAX_QUEUE_ITEMS).map((inputPath, index) => ({
+        id: `too-many-${index}`,
+        inputPath,
+        fileName: path.basename(inputPath),
+        status: 'failed' as const,
+        error: `A single batch is limited to ${MAX_QUEUE_ITEMS} files`,
+      }));
+      mainWindow?.webContents.send('conversion-queue-updated', tooMany);
+      return tooMany;
     }
 
     const preset = getPresetById(payload.presetId);
@@ -1341,12 +1383,6 @@ ipcMain.handle(
     }
   }
 );
-
-ipcMain.handle('cancel-conversion', (event: IpcMainInvokeEvent, force?: boolean) => {
-  assertTrustedIpcSender(event);
-  queueCancelled = true;
-  cancelActiveConversion(!!force);
-});
 
 ipcMain.handle('get-file-info', async (event: IpcMainInvokeEvent, filePath: string) => {
   assertTrustedIpcSender(event);
@@ -1463,6 +1499,9 @@ ipcMain.handle('save-settings', (event: IpcMainInvokeEvent, newSettings: SaveSet
   if (safeIncomingSettings.updateChannel !== undefined) {
     installWindowsJumpList(getJumpListDeps());
   }
+  if (safeIncomingSettings.autoCheckUpdates !== undefined) {
+    installWindowsJumpList(getJumpListDeps());
+  }
 });
 
 ipcMain.handle('check-for-updates', (event: IpcMainInvokeEvent) => {
@@ -1495,7 +1534,7 @@ ipcMain.handle('get-platform', (event: IpcMainInvokeEvent) => {
   return process.platform;
 });
 
-ipcMain.handle('open-path', async (event: IpcMainInvokeEvent, filePath: string) => {
+ipcMain.handle('reveal-path', async (event: IpcMainInvokeEvent, filePath: string) => {
   assertTrustedIpcSender(event);
   const resolvedPath = resolveAbsolutePath(filePath);
   if (!resolvedPath || !fs.existsSync(resolvedPath)) {

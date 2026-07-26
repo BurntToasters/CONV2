@@ -11,7 +11,9 @@ const FLATPAK_RUNTIMES = [
   'org.electronjs.Electron2.BaseApp',
 ];
 
-const SDK_EXTENSIONS = ['org.freedesktop.Sdk.Extension.node22'];
+// Must match the sdk-extensions entry in com.burnttoasters.conv2.yml and the
+// Node major in package.json "engines". tests/packaging-parity.test.js enforces it.
+const SDK_EXTENSIONS = ['org.freedesktop.Sdk.Extension.node24'];
 
 function run(cmd, opts = {}) {
   console.log(`\n> ${cmd}`);

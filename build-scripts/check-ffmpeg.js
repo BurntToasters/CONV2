@@ -312,26 +312,63 @@ function validateTargets(targets, requireChecksums = false) {
   }
 }
 
-const {
-  targets,
-  generateChecksums: shouldGenerate,
-  requireChecksums,
-} = parseArgs(process.argv.slice(2));
-if (shouldGenerate) {
-  if (process.env.FFMPEG_ALLOW_CHECKSUM_GENERATION !== '1') {
-    console.error(
-      '\nRefusing to overwrite the FFmpeg checksum manifest without explicit approval.\n' +
-        'Review the new binaries against an independent trusted source, then run\n' +
-        'FFMPEG_ALLOW_CHECKSUM_GENERATION=1 npm run ffmpeg:checksums:generate.'
-    );
-    process.exit(1);
+/** Expected SHA-256 values for a target, keyed by binary name.
+ * Returns null when the manifest has no entry for the target.
+ * @param {string} platform
+ * @param {string} arch
+ * @returns {Record<string, string> | null}
+ */
+function getExpectedChecksums(platform, arch) {
+  const manifest = loadChecksums();
+  const entry = manifest?.[`${platform}:${arch}`];
+  if (!entry?.binaries) {
+    return null;
   }
-  validateTargets(targets, requireChecksums);
-  generateChecksumManifest(targets);
-} else {
-  validateTargets(targets, requireChecksums);
+  const expected = {};
+  for (const [binaryName, binaryEntry] of Object.entries(entry.binaries)) {
+    if (binaryEntry?.sha256) {
+      expected[binaryName] = binaryEntry.sha256;
+    }
+  }
+  return Object.keys(expected).length > 0 ? expected : null;
 }
-const checksumNote = loadChecksums() ? ' (checksums verified)' : ' (no checksum manifest found)';
-console.log(
-  `FFmpeg/ffprobe prebuild check passed for: ${targets.map((t) => `${t.platform}:${t.arch}`).join(', ')}${checksumNote}`
-);
+
+function main() {
+  const {
+    targets,
+    generateChecksums: shouldGenerate,
+    requireChecksums,
+  } = parseArgs(process.argv.slice(2));
+  if (shouldGenerate) {
+    if (process.env.FFMPEG_ALLOW_CHECKSUM_GENERATION !== '1') {
+      console.error(
+        '\nRefusing to overwrite the FFmpeg checksum manifest without explicit approval.\n' +
+          'Review the new binaries against an independent trusted source, then run\n' +
+          'FFMPEG_ALLOW_CHECKSUM_GENERATION=1 npm run ffmpeg:checksums:generate.'
+      );
+      process.exit(1);
+    }
+    validateTargets(targets, requireChecksums);
+    generateChecksumManifest(targets);
+  } else {
+    validateTargets(targets, requireChecksums);
+  }
+  const checksumNote = loadChecksums() ? ' (checksums verified)' : ' (no checksum manifest found)';
+  console.log(
+    `FFmpeg/ffprobe prebuild check passed for: ${targets.map((t) => `${t.platform}:${t.arch}`).join(', ')}${checksumNote}`
+  );
+}
+
+if (require.main === module) {
+  main();
+}
+
+module.exports = {
+  REQUIRED_BINARIES,
+  computeSha256,
+  getExpectedChecksums,
+  loadChecksums,
+  normalizeArch,
+  normalizePlatform,
+  parseTarget,
+};

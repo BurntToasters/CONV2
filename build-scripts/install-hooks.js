@@ -13,7 +13,7 @@ if (!fs.existsSync(gitDir) || !fs.existsSync(hooksDir)) {
 try {
   execSync('git config core.hooksPath .husky', {
     cwd: repoRoot,
-    stdio: 'ignore'
+    stdio: 'ignore',
   });
   console.log('Configured Git hooks path: .husky');
 } catch (error) {

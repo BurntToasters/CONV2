@@ -111,6 +111,7 @@ function runSyntaxChecks() {
   const files = [
     ...collectScriptFiles(path.join(process.cwd(), 'src')),
     ...collectScriptFiles(path.join(process.cwd(), 'build-scripts')),
+    ...collectScriptFiles(path.join(process.cwd(), 'build')),
   ];
   const uniqueFiles = Array.from(new Set(files)).sort();
 
@@ -242,7 +243,10 @@ function runConfigChecks() {
     const metainfoRaw = fs.readFileSync(metainfoPath, 'utf8');
     const metainfoDoc = parseXmlStrict(metainfoRaw);
     const releases = metainfoDoc.getElementsByTagName('releases');
-    assertConfig(releases.length === 1, 'metainfo.xml: must contain exactly one <releases> element');
+    assertConfig(
+      releases.length === 1,
+      'metainfo.xml: must contain exactly one <releases> element'
+    );
     const releaseNodes = releases[0].getElementsByTagName('release');
     assertConfig(releaseNodes.length >= 1, 'metainfo.xml: <releases> must contain a <release>');
   } catch (error) {
@@ -257,31 +261,41 @@ function runConfigChecks() {
   }
 }
 
-printBanner('CONV2 Full Test Suite');
+// `--checks-only` runs just the static syntax/config gates. CI already runs
+// compile, unit tests, format, and typecheck as dedicated jobs, so this avoids
+// duplicating them while still enforcing the config contract.
+const checksOnly = process.argv.includes('--checks-only');
+
+printBanner(checksOnly ? 'CONV2 Config & Syntax Checks' : 'CONV2 Full Test Suite');
 
 function run() {
-  const compileResult = runCommand('compile', 'npm run compile');
-  results.compile.status = compileResult.ok ? 'passed' : 'failed';
+  if (!checksOnly) {
+    const compileResult = runCommand('compile', 'npm run compile');
+    results.compile.status = compileResult.ok ? 'passed' : 'failed';
 
-  const unitResult = runCommand('unit', 'npm run tests:node', parseUnitTests);
-  results.unit.status = unitResult.ok ? 'passed' : 'failed';
+    const unitResult = runCommand('unit', 'npm run tests:node', parseUnitTests);
+    results.unit.status = unitResult.ok ? 'passed' : 'failed';
 
-  const formatResult = runCommand('format', 'npm run format:check');
-  results.format.status = formatResult.ok ? 'passed' : 'failed';
+    const formatResult = runCommand('format', 'npm run format:check');
+    results.format.status = formatResult.ok ? 'passed' : 'failed';
 
-  const typecheckResult = runCommand('typecheck', 'npm run typecheck');
-  results.typecheck.status = typecheckResult.ok ? 'passed' : 'failed';
+    const typecheckResult = runCommand('typecheck', 'npm run typecheck');
+    results.typecheck.status = typecheckResult.ok ? 'passed' : 'failed';
+  }
 
   runSyntaxChecks();
   runConfigChecks();
 
   printBanner('SUMMARY');
 
-  const summaryLines = [
+  const fullSuiteLines = [
     `${colors.bold}Compile:${colors.reset}   ${results.compile.status === 'passed' ? colors.green + '✓ PASS' : colors.red + '✗ FAIL'}${colors.reset}`,
     `${colors.bold}Unit:${colors.reset}      ${results.unit.status === 'passed' ? colors.green + '✓ PASS' : colors.red + '✗ FAIL'}${colors.reset} (${results.unit.passed} passed${results.unit.failed > 0 ? `, ${results.unit.failed} failed` : ''})`,
     `${colors.bold}Format:${colors.reset}    ${results.format.status === 'passed' ? colors.green + '✓ PASS' : colors.red + '✗ FAIL'}${colors.reset}`,
     `${colors.bold}Typecheck:${colors.reset} ${results.typecheck.status === 'passed' ? colors.green + '✓ PASS' : colors.red + '✗ FAIL'}${colors.reset}`,
+  ];
+  const summaryLines = [
+    ...(checksOnly ? [] : fullSuiteLines),
     `${colors.bold}Syntax:${colors.reset}    ${results.syntax.status === 'passed' ? colors.green + '✓ PASS' : colors.red + '✗ FAIL'}${colors.reset} (${results.syntax.checked} checked${results.syntax.failed > 0 ? `, ${results.syntax.failed} failed` : ''})`,
     `${colors.bold}Config:${colors.reset}    ${results.config.status === 'passed' ? colors.green + '✓ PASS' : colors.red + '✗ FAIL'}${colors.reset} (${results.config.checks} checks${results.config.failed > 0 ? `, ${results.config.failed} failed` : ''})`,
   ];
@@ -303,7 +317,8 @@ function run() {
     }
   }
 
-  const allPassed = Object.values(results).every((r) => r.status === 'passed');
+  const relevantResults = checksOnly ? [results.syntax, results.config] : Object.values(results);
+  const allPassed = relevantResults.every((r) => r.status === 'passed');
   console.log('');
   if (allPassed) {
     console.log(`${colors.green}${colors.bold}✓ All checks passed!${colors.reset}`);

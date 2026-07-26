@@ -68,6 +68,32 @@ test('runConversionQueue sequential statuses and cpu fallback', async () => {
   assert.ok(snapshots.length >= 3);
 });
 
+test('runConversionQueue cancels pending items when isCancelled before next file', async () => {
+  let index = 0;
+  const result = await runConversionQueue(
+    {
+      inputPaths: ['/tmp/a.mp4', '/tmp/b.mp4'],
+      presetId: 'h264-quality',
+      gpu: 'cpu',
+      showDebugOutput: false,
+    },
+    {
+      onSnapshot: () => {},
+      onProgress: () => {},
+      convertOne: async () => {
+        index += 1;
+        return { success: true, outputPath: `/out/${index}.mp4` };
+      },
+      shouldRetryWithCpu,
+      hasVideoCodec: true,
+      isCancelled: () => index >= 1,
+    }
+  );
+
+  assert.equal(result.items[0].status, 'done');
+  assert.equal(result.items[1].status, 'cancelled');
+});
+
 test('runConversionQueue cancels remainder after a cancelled item', async () => {
   let index = 0;
   const result = await runConversionQueue(

@@ -22,6 +22,7 @@
       <li>Batch conversion queue with per-file status, CPU fallback, and retry for failed items</li>
       <li>Drag and drop multi-file selection</li>
       <li>Real-time progress with ETA, speed, and taskbar/dock integration</li>
+      <li>Skippable first-launch setup tour; replay from Settings</li>
       <li>Dark, Light, and Custom theme packs; optional completion notifications</li>
       <li>Native menus on Windows and macOS; custom title bar on Windows and macOS</li>
       <li>Configurable output directory and in-app updates (stable/beta channels)</li>
@@ -60,7 +61,7 @@
 
   <releases>
 
-    <release version="1.6.0-beta.1" date="2026-07-25"/>
+    <release version="1.6.0-beta.2" date="2026-07-26"/>
 
   </releases>
 

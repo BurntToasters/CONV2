@@ -4,19 +4,29 @@
 const { execFileSync } = require('node:child_process');
 
 const TRUSTED_RELEASE_REFS = new Set(['refs/heads/main', 'refs/heads/beta']);
+// Release-candidate branches (next-1.6.0, next-1.7.0, ...) are first-party and
+// have access to the download secret, so they get the same real-payload rigor.
+const TRUSTED_RELEASE_REF_PATTERNS = [/^refs\/heads\/next-[\w.-]+$/];
+
+function isTrustedReleaseRef(ref) {
+  if (!ref) {
+    return false;
+  }
+  return TRUSTED_RELEASE_REFS.has(ref) || TRUSTED_RELEASE_REF_PATTERNS.some((rx) => rx.test(ref));
+}
 
 function requiresRealPayload(env = process.env) {
   if (env.REQUIRE_FFMPEG_PAYLOAD === '1') {
     return true;
   }
-  return env.GITHUB_EVENT_NAME === 'push' && TRUSTED_RELEASE_REFS.has(env.GITHUB_REF || '');
+  return env.GITHUB_EVENT_NAME === 'push' && isTrustedReleaseRef(env.GITHUB_REF || '');
 }
 
 function run(env = process.env) {
   if (!env.FFMPEG_DL_SERVER?.trim()) {
     if (requiresRealPayload(env)) {
       throw new Error(
-        'FFMPEG_DL_SERVER is required for package smoke on trusted main/beta pushes.'
+        'FFMPEG_DL_SERVER is required for package smoke on trusted main/beta/next-* pushes.'
       );
     }
     console.warn(
@@ -53,4 +63,4 @@ if (require.main === module) {
   }
 }
 
-module.exports = { requiresRealPayload, run };
+module.exports = { isTrustedReleaseRef, requiresRealPayload, run };

@@ -757,6 +757,7 @@ a:hover {
 }
 
 .panel-toggle-title-group {
+  flex-shrink: 0;
   min-width: 0;
   display: flex;
   flex-direction: column;
@@ -780,14 +781,16 @@ a:hover {
 }
 
 .panel-summary {
-  margin-left: auto;
+  flex: 1 1 0%;
   min-width: 0;
+  margin-left: auto;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   color: var(--text-secondary);
   font-size: 11px;
   line-height: 1.3;
+  padding-right: 2px;
 }
 
 .panel-chevron {
@@ -1414,12 +1417,30 @@ select option {
   margin-top: 10px;
   display: flex;
   gap: 8px;
+  flex-wrap: wrap;
 }
 
 .convert-section .btn-primary {
   flex: 1;
   padding: 10px 24px;
   font-size: var(--text-base);
+}
+
+/* Standing reminder that successful conversions delete the source file. */
+.trash-original-notice {
+  flex-basis: 100%;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 2px 0 0;
+  font-size: var(--text-sm);
+  color: var(--error);
+}
+
+.trash-original-notice-icon {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
 }
 
 .progress-container {
@@ -1645,6 +1666,186 @@ select option {
   z-index: 130;
 }
 
+#setupWizardModal {
+  z-index: 140;
+}
+
+.setup-wizard-dialog {
+  width: min(520px, 100%);
+  max-height: min(90vh, 720px);
+  display: flex;
+  flex-direction: column;
+  pointer-events: auto;
+}
+
+.setup-wizard-dialog[hidden] {
+  display: none !important;
+}
+
+.setup-wizard-spotlight-layer[hidden] {
+  display: none !important;
+}
+
+.setup-wizard-header {
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.setup-wizard-kicker {
+  margin: 0 0 4px;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+}
+
+.setup-wizard-step-label {
+  font-size: 13px;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.setup-wizard-body {
+  overflow-y: auto;
+  flex: 1;
+}
+
+.setup-wizard-lead {
+  margin-top: 0;
+  font-weight: 600;
+}
+
+.setup-wizard-muted {
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+.setup-wizard-field {
+  margin-bottom: 14px;
+}
+
+.setup-wizard-field .theme-switcher {
+  margin-top: 6px;
+}
+
+.setup-wizard-output-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.setup-wizard-output-path {
+  flex: 1 1 100%;
+  word-break: break-all;
+}
+
+.setup-wizard-toggle-row,
+.setup-wizard-channel-row {
+  margin: 8px 0;
+}
+
+.setup-wizard-list {
+  margin: 0;
+  padding-left: 1.2rem;
+}
+
+.setup-wizard-list li {
+  margin-bottom: 8px;
+}
+
+.setup-wizard-actions {
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.setup-wizard-nav {
+  display: flex;
+  gap: 8px;
+  margin-left: auto;
+}
+
+.setup-wizard-skip {
+  margin-right: auto;
+}
+
+.setup-wizard-overlay.spotlight-mode {
+  background: transparent;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  /* Keep overlay receiving events so the tour blocks the main UI. */
+  pointer-events: auto;
+  align-items: stretch;
+  justify-content: stretch;
+  padding: 0;
+}
+
+.setup-wizard-spotlight-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 1;
+  pointer-events: auto;
+}
+
+.setup-wizard-spotlight-ring {
+  position: fixed;
+  border-radius: var(--radius-md);
+  box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.62);
+  border: 2px solid color-mix(in srgb, var(--accent) 70%, transparent);
+  pointer-events: none;
+  z-index: 2;
+  transition:
+    top 0.2s ease,
+    left 0.2s ease,
+    width 0.2s ease,
+    height 0.2s ease;
+}
+
+.setup-wizard-callout {
+  position: fixed;
+  z-index: 3;
+  width: min(420px, calc(100vw - 24px));
+  max-height: min(70vh, 480px);
+  overflow: auto;
+  pointer-events: auto;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 16px 18px;
+  box-shadow: var(--shadow-lg);
+}
+
+.setup-wizard-callout-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+
+.setup-wizard-callout-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.setup-wizard-step-skip-row {
+  margin: 14px 0 0;
+  text-align: left;
+}
+
+[data-ui-style='flat'] #setupWizardModal .modal {
+  border-width: 2px;
+}
+
 .modal-overlay.visible {
   display: flex;
 }
@@ -1846,8 +2047,10 @@ select option {
   }
 
   .panel-summary {
-    width: calc(100% - 22px);
+    flex: 1 1 100%;
+    width: auto;
     margin-left: 0;
+    text-align: left;
   }
 
   .preset-search-row {
@@ -2100,6 +2303,25 @@ select option {
   color: var(--error);
 }
 
+.conversion-queue-item.is-failed .conversion-queue-status {
+  color: var(--error);
+  text-transform: none;
+  font-weight: 600;
+  letter-spacing: 0;
+}
+
+.conversion-queue-item.is-cancelled .conversion-queue-status {
+  color: var(--warning, var(--text-muted));
+}
+
+html[data-custom-titlebar='true'] .modal-overlay {
+  padding-top: var(--titlebar-height);
+}
+
+html[data-custom-titlebar='true'] .settings-modal.modal {
+  max-height: calc(85vh - var(--titlebar-height));
+}
+
 .conversion-queue-error {
   display: block;
   font-size: var(--text-xs);
@@ -2111,6 +2333,30 @@ select option {
   max-width: 100%;
 }
 
+.conversion-queue-status-wrap {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  justify-content: flex-end;
+}
+
+.conversion-queue-retry-one {
+  flex-shrink: 0;
+}
+
+.progress-batch-summary {
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+  max-width: 55%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.progress-batch-summary:empty {
+  display: none;
+}
+
 .settings-section-title {
   font-size: var(--text-sm);
   font-weight: 600;
@@ -2120,6 +2366,12 @@ select option {
   margin: 4px 0 0;
   padding-top: 8px;
   border-top: 1px solid var(--border-subtle);
+}
+
+.settings-section-title-first {
+  margin-top: 0;
+  border-top: none;
+  padding-top: 0;
 }
 
 .settings-section-title:first-child {
@@ -2141,14 +2393,6 @@ select option {
 
 .conversion-queue-item.is-done .conversion-queue-status {
   color: var(--success);
-}
-
-.conversion-queue-item.is-failed .conversion-queue-status {
-  color: var(--error);
-}
-
-.conversion-queue-item.is-cancelled .conversion-queue-status {
-  color: var(--warning);
 }
 
 /* Preset hierarchy polish */

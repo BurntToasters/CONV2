@@ -155,6 +155,7 @@ interface AppSettings {
   showAdvancedPresets: boolean;
   removeSpacesFromFilenames: boolean;
   showAllGpuVendors: boolean;
+  setupWizardCompleted: boolean;
   recentPresetIds: string[];
   uiPanels: UIPanelSettings;
   advancedFormatSettings: AdvancedFormatSettings;
@@ -431,6 +432,7 @@ const elements = {
   presetCardList: getRequiredElement<HTMLDivElement>('presetCardList'),
   gpuPanelSection: getRequiredElement<HTMLElement>('gpuPanelSection'),
   gpuPanelToggle: getRequiredElement<HTMLButtonElement>('gpuPanelToggle'),
+  gpuPanelSummary: getRequiredElement<HTMLSpanElement>('gpuPanelSummary'),
   gpuPanelBody: getRequiredElement<HTMLDivElement>('gpuPanelBody'),
   refreshGpuCapsBtn: getRequiredElement<HTMLButtonElement>('refreshGpuCapsBtn'),
   gpuModeAuto: getRequiredElement<HTMLInputElement>('gpuModeAuto'),
@@ -446,6 +448,7 @@ const elements = {
   conversionQueueList: getRequiredElement<HTMLUListElement>('conversionQueueList'),
   retryFailedQueueBtn: getRequiredElement<HTMLButtonElement>('retryFailedQueueBtn'),
   progressPercent: getRequiredElement<HTMLSpanElement>('progressPercent'),
+  progressBatchSummary: getRequiredElement<HTMLSpanElement>('progressBatchSummary'),
   progressTime: getRequiredElement<HTMLSpanElement>('progressTime'),
   progressEta: getRequiredElement<HTMLSpanElement>('progressEta'),
   progressSpeed: getRequiredElement<HTMLSpanElement>('progressSpeed'),
@@ -530,6 +533,7 @@ const elements = {
   moveOriginalToTrashOnSuccessCheck: getRequiredElement<HTMLInputElement>(
     'moveOriginalToTrashOnSuccessCheck'
   ),
+  trashOriginalNotice: getRequiredElement<HTMLParagraphElement>('trashOriginalNotice'),
   notifyOnConversionCompleteCheck: getRequiredElement<HTMLInputElement>(
     'notifyOnConversionCompleteCheck'
   ),
@@ -659,6 +663,59 @@ const createFallbackPresetPickerModel = (): PresetPickerModelApi => {
 const pickerModel =
   (window as Window & { presetPickerModel?: PresetPickerModelApi }).presetPickerModel ||
   createFallbackPresetPickerModel();
+
+type SetupWizardApi = {
+  initSetupWizard: (deps: {
+    getSettings: () => AppSettings;
+    patchSettings: (partial: Partial<AppSettings>) => void;
+    saveSettings: (partial: Partial<AppSettings>) => Promise<void>;
+    applyTheme: () => Promise<void>;
+    applyGpuModeUi: () => void;
+    persistGpuMode: (mode: GPUMode) => Promise<void>;
+    selectOutputDirectory: () => Promise<string | undefined>;
+    openHelp: () => void;
+    focusFirstIn: (container: HTMLElement) => void;
+    isFfmpegInstalled: () => boolean;
+    prepareAppTourSpotlight: (targetId: string) => void;
+    clearAppTourSpotlight: () => void;
+  }) => void;
+  maybeOpenSetupWizard: () => void;
+  openSetupWizard: () => void;
+  isSetupWizardVisible: () => boolean;
+  getSetupWizardOverlay: () => HTMLDivElement | null;
+  skipSetupWizardFromEscape: () => void;
+};
+
+type QueueSummaryApi = {
+  summarizeQueueForUiStatus: (
+    input: {
+      total: number;
+      items: Array<{
+        status: string;
+        fileName?: string;
+        error?: string;
+        usedCpuFallback?: boolean;
+      }>;
+    },
+    options?: { wasCancelled?: boolean }
+  ) => { type: 'success' | 'error' | 'warning'; message: string };
+};
+
+const getSetupWizard = (): SetupWizardApi | undefined =>
+  (window as Window & { setupWizard?: SetupWizardApi }).setupWizard;
+
+const isSetupWizardBlockingUi = (): boolean => getSetupWizard()?.isSetupWizardVisible() ?? false;
+
+const getQueueSummary = (): QueueSummaryApi | undefined =>
+  (window as Window & { queueSummary?: QueueSummaryApi }).queueSummary;
+
+const conv2QueueUiStatus: QueueSummaryApi['summarizeQueueForUiStatus'] = (input, options) => {
+  const api = getQueueSummary();
+  if (!api) {
+    return { type: 'error', message: 'Queue summary unavailable' };
+  }
+  return api.summarizeQueueForUiStatus(input, options);
+};
 
 const normalizeRecentPresetIds = (value: unknown): string[] => {
   if (!Array.isArray(value)) {
@@ -799,6 +856,24 @@ const getPresetSearchText = (preset: Preset): string => {
   ]
     .join(' ')
     .toLowerCase();
+};
+
+const updateGpuPanelSummary = (payload: GPUCapabilitiesPayload, codec: GPUCodec | null): void => {
+  const modeLabel = settings.gpuMode === 'manual' ? 'Manual' : 'Auto';
+  const vendorLabel = getGpuVendorLabel(payload.recommendedVendor);
+  const codecLabel = codec ? getCodecLabel(codec) : 'this preset';
+
+  if (settings.gpuMode === 'manual') {
+    elements.gpuPanelSummary.textContent = `${modeLabel} · ${getGpuVendorLabel(settings.gpuManualVendor)}`;
+    return;
+  }
+
+  if (payload.recommendedVendor === 'cpu' && payload.recommendationReason) {
+    elements.gpuPanelSummary.textContent = `Auto · CPU · ${payload.recommendationReason}`;
+    return;
+  }
+
+  elements.gpuPanelSummary.textContent = `Auto · ${vendorLabel} for ${codecLabel}`;
 };
 
 const updatePresetPanelSummary = (totalVisible: number): void => {
@@ -1307,6 +1382,14 @@ const persistSettingsChange = async (
   }
 };
 
+/** Keeps the destructive-action reminder next to Convert in sync with settings. */
+const updateTrashOriginalNotice = (): void => {
+  elements.trashOriginalNotice.classList.toggle(
+    'u-hidden',
+    settings.moveOriginalToTrashOnSuccess !== true
+  );
+};
+
 const applyGpuModeUi = (): void => {
   elements.gpuManualRow.hidden = settings.gpuMode !== 'manual';
   elements.gpuModeAuto.checked = settings.gpuMode !== 'manual';
@@ -1331,6 +1414,7 @@ const refreshGpuPanel = async (forceRefresh: boolean): Promise<void> => {
 
     lastGpuPayload = allCodecsPayload;
     updateManualVendorDropdown(allCodecsPayload, selectedCodec);
+    updateGpuPanelSummary(summaryPayload, selectedCodec);
 
     if (token !== gpuPanelRenderToken) {
       return;
@@ -1338,6 +1422,7 @@ const refreshGpuPanel = async (forceRefresh: boolean): Promise<void> => {
 
     if (!selectedPreset || !selectedCodec) {
       renderGpuCapabilityMatrix(summaryPayload, []);
+      updateGpuPanelSummary(summaryPayload, null);
       return;
     }
 
@@ -1346,6 +1431,7 @@ const refreshGpuPanel = async (forceRefresh: boolean): Promise<void> => {
     if (token !== gpuPanelRenderToken) {
       return;
     }
+    elements.gpuPanelSummary.textContent = 'Unavailable';
     elements.gpuCapabilityMatrix.innerHTML = '';
     const empty = document.createElement('div');
     empty.className = 'preset-empty';
@@ -1609,6 +1695,9 @@ const focusFirstInteractiveElement = (container: HTMLElement): void => {
 };
 
 const getTopVisibleModal = (): HTMLDivElement | null => {
+  if (getSetupWizard()?.isSetupWizardVisible()) {
+    return getSetupWizard()?.getSetupWizardOverlay() ?? null;
+  }
   if (elements.dynamicModal.classList.contains('visible')) {
     return elements.dynamicModal;
   }
@@ -1625,11 +1714,16 @@ const getTopVisibleModal = (): HTMLDivElement | null => {
 };
 
 const trapFocusInModal = (event: KeyboardEvent, modalOverlay: HTMLDivElement): void => {
-  const modal = modalOverlay.querySelector<HTMLElement>('.modal');
-  if (!modal) {
+  let container: HTMLElement | null = null;
+  if (modalOverlay.id === 'setupWizardModal' && modalOverlay.classList.contains('spotlight-mode')) {
+    container = modalOverlay.querySelector<HTMLElement>('.setup-wizard-callout');
+  } else {
+    container = modalOverlay.querySelector<HTMLElement>('.setup-wizard-dialog, .modal');
+  }
+  if (!container || container.hidden) {
     return;
   }
-  const focusables = getFocusableElements(modal);
+  const focusables = getFocusableElements(container);
   if (focusables.length === 0) {
     return;
   }
@@ -1637,13 +1731,13 @@ const trapFocusInModal = (event: KeyboardEvent, modalOverlay: HTMLDivElement): v
   const last = focusables[focusables.length - 1];
   const active = document.activeElement as HTMLElement | null;
   if (event.shiftKey) {
-    if (active === first || !active || !modal.contains(active)) {
+    if (active === first || !active || !container.contains(active)) {
       event.preventDefault();
       last.focus();
     }
     return;
   }
-  if (active === last || !active || !modal.contains(active)) {
+  if (active === last || !active || !container.contains(active)) {
     event.preventDefault();
     first.focus();
   }
@@ -2000,6 +2094,9 @@ const waitForAdvancedSettingsIdle = async (): Promise<void> => {
 };
 
 const openSettingsModal = (): void => {
+  if (isSetupWizardBlockingUi()) {
+    return;
+  }
   if (elements.settingsModal.classList.contains('visible')) {
     return;
   }
@@ -2270,6 +2367,9 @@ const renderLicenses = (entries: LicenseDisplayEntry[]): void => {
 };
 
 const openCreditsModal = async (): Promise<void> => {
+  if (isSetupWizardBlockingUi()) {
+    return;
+  }
   if (elements.settingsModal.classList.contains('visible')) {
     await closeSettingsModal();
   }
@@ -2323,6 +2423,7 @@ const syncConversionMenuState = (): void => {
 
 const hasBlockingModalForShortcuts = (): boolean => {
   return (
+    isSetupWizardBlockingUi() ||
     elements.settingsModal.classList.contains('visible') ||
     elements.dynamicModal.classList.contains('visible') ||
     elements.logsModal.classList.contains('visible') ||
@@ -2331,6 +2432,9 @@ const hasBlockingModalForShortcuts = (): boolean => {
 };
 
 const openLogsModal = (): void => {
+  if (isSetupWizardBlockingUi()) {
+    return;
+  }
   if (!settings.showDebugOutput) {
     return;
   }
@@ -2376,7 +2480,7 @@ const handleAppMenuAction = (event: { action: string; payload?: { paths?: string
       break;
     case 'show-in-folder':
       if (lastOutputPath) {
-        void window.electronAPI.openPath(lastOutputPath);
+        void window.electronAPI.revealPath(lastOutputPath);
       }
       break;
     default:
@@ -2507,6 +2611,7 @@ const init = async () => {
   await applyTheme();
   await applyUpdateVisibility();
   syncConversionMenuState();
+  getSetupWizard()?.maybeOpenSetupWizard();
 };
 
 const checkPlatform = async () => {
@@ -2577,6 +2682,7 @@ const loadSettings = async () => {
   elements.useSystemFFmpegCheck.checked = settings.useSystemFFmpeg;
   elements.useCpuDecodingWhenGpuCheck.checked = settings.useCpuDecodingWhenGpu;
   elements.moveOriginalToTrashOnSuccessCheck.checked = settings.moveOriginalToTrashOnSuccess;
+  updateTrashOriginalNotice();
   elements.notifyOnConversionCompleteCheck.checked = settings.notifyOnConversionComplete !== false;
   elements.preventSleepWhileConvertingCheck.checked = settings.preventSleepWhileConverting === true;
   elements.showAllGpuVendorsCheck.checked = settings.showAllGpuVendors;
@@ -2715,6 +2821,11 @@ const setupKeyboardShortcuts = () => {
         return;
       }
       e.preventDefault();
+      const wizardOverlay = getSetupWizard()?.getSetupWizardOverlay() ?? null;
+      if (topModal === wizardOverlay) {
+        getSetupWizard()?.skipSetupWizardFromEscape();
+        return;
+      }
       if (topModal === elements.dynamicModal) {
         if (closeDynamicModal) {
           closeDynamicModal();
@@ -2749,14 +2860,27 @@ const setupKeyboardShortcuts = () => {
       return;
     }
 
+    if (
+      e.key === '/' &&
+      !e.ctrlKey &&
+      !e.metaKey &&
+      !e.altKey &&
+      !(e.target instanceof HTMLInputElement) &&
+      !(e.target instanceof HTMLTextAreaElement) &&
+      !(e.target instanceof HTMLSelectElement)
+    ) {
+      const isModalOpen = hasBlockingModalForShortcuts();
+      if (!isModalOpen) {
+        e.preventDefault();
+        elements.presetSearch.focus();
+        elements.presetSearch.select();
+      }
+      return;
+    }
+
     if ((e.ctrlKey || e.metaKey) && (e.key === ',' || e.code === 'Comma')) {
       e.preventDefault();
-      const hasBlockingModal =
-        elements.settingsModal.classList.contains('visible') ||
-        elements.dynamicModal.classList.contains('visible') ||
-        elements.logsModal.classList.contains('visible') ||
-        elements.creditsModal.classList.contains('visible');
-      if (!hasBlockingModal) {
+      if (!hasBlockingModalForShortcuts()) {
         openSettingsModal();
       }
       return;
@@ -2771,11 +2895,7 @@ const setupKeyboardShortcuts = () => {
       ) {
         return;
       }
-      const isModalOpen =
-        elements.settingsModal.classList.contains('visible') ||
-        elements.dynamicModal.classList.contains('visible') ||
-        elements.logsModal.classList.contains('visible') ||
-        elements.creditsModal.classList.contains('visible');
+      const isModalOpen = hasBlockingModalForShortcuts();
       if (
         !isModalOpen &&
         selectedFiles.length > 0 &&
@@ -3269,17 +3389,44 @@ const setupEventListeners = () => {
   elements.moveOriginalToTrashOnSuccessCheck.addEventListener('change', async () => {
     const nextValue = elements.moveOriginalToTrashOnSuccessCheck.checked;
     const previousValue = settings.moveOriginalToTrashOnSuccess;
-    await persistSettingsChange(
-      () => {
-        settings.moveOriginalToTrashOnSuccess = nextValue;
+
+    const persist = () =>
+      persistSettingsChange(
+        () => {
+          settings.moveOriginalToTrashOnSuccess = nextValue;
+        },
+        () => {
+          settings.moveOriginalToTrashOnSuccess = previousValue;
+          elements.moveOriginalToTrashOnSuccessCheck.checked = previousValue;
+          updateTrashOriginalNotice();
+        },
+        { moveOriginalToTrashOnSuccess: nextValue },
+        'Failed to save trash-on-success setting',
+        () => {
+          updateTrashOriginalNotice();
+        }
+      );
+
+    // Turning it off is always safe; turning it on deletes source files.
+    if (!nextValue) {
+      await persist();
+      return;
+    }
+
+    showModal({
+      title: 'Trash originals after conversion?',
+      message:
+        'Every successful conversion, including each file in a batch, will move the source file to the system trash. Files stay recoverable until the trash is emptied.',
+      confirmText: 'Enable',
+      cancelText: 'Keep originals',
+      confirmClass: 'btn-danger',
+      onConfirm: () => {
+        void persist();
       },
-      () => {
-        settings.moveOriginalToTrashOnSuccess = previousValue;
+      onCancel: () => {
         elements.moveOriginalToTrashOnSuccessCheck.checked = previousValue;
       },
-      { moveOriginalToTrashOnSuccess: nextValue },
-      'Failed to save trash-on-success setting'
-    );
+    });
   });
 
   elements.notifyOnConversionCompleteCheck.addEventListener('change', async () => {
@@ -3370,7 +3517,7 @@ const setupEventListeners = () => {
 
   elements.showInFolderBtn?.addEventListener('click', () => {
     if (lastOutputPath) {
-      window.electronAPI.openPath(lastOutputPath);
+      window.electronAPI.revealPath(lastOutputPath);
     }
   });
 
@@ -3633,6 +3780,48 @@ const setupEventListeners = () => {
   window.electronAPI.onGPUEncoderError((error: GPUEncoderError) => {
     showGPUErrorStatus(error);
   });
+
+  document.getElementById('replaySetupWizardBtn')?.addEventListener('click', () => {
+    void (async () => {
+      if (elements.settingsModal.classList.contains('visible')) {
+        await closeSettingsModal();
+      }
+      getSetupWizard()?.openSetupWizard();
+    })();
+  });
+
+  getSetupWizard()?.initSetupWizard({
+    getSettings: () => settings,
+    patchSettings: (partial) => {
+      Object.assign(settings, partial);
+    },
+    saveSettings: async (partial) => {
+      await window.electronAPI.saveSettings(partial as Partial<AppSettings>);
+    },
+    applyTheme,
+    applyGpuModeUi,
+    persistGpuMode,
+    selectOutputDirectory: async () => {
+      const dir = await window.electronAPI.selectOutputDirectory();
+      return dir || undefined;
+    },
+    openHelp: () => {
+      void window.electronAPI.openExternal('https://help.rosie.run/conv2/en-us/faq');
+    },
+    focusFirstIn: focusFirstInteractiveElement,
+    isFfmpegInstalled: () => ffmpegInstalled,
+    prepareAppTourSpotlight: (targetId) => {
+      applyPanelCollapseUi();
+      if (targetId === 'mainOptionsPanel') {
+        elements.presetPanelBody.hidden = false;
+        elements.presetPanelToggle.setAttribute('aria-expanded', 'true');
+        elements.presetPanelSection.classList.add('is-expanded');
+      }
+    },
+    clearAppTourSpotlight: () => {
+      applyPanelCollapseUi();
+    },
+  });
 };
 
 const showGPUErrorStatus = (error: GPUEncoderError): void => {
@@ -3727,6 +3916,58 @@ const resolvePreferredGpuVendor = async (
   };
 };
 
+/** Everything that affects how a single queue row is drawn. */
+const queueRowSignature = (item: QueueItemSnapshot): string =>
+  [
+    item.status,
+    item.error ?? '',
+    item.usedCpuFallback ? '1' : '0',
+    item.fileName,
+    isConverting ? '1' : '0',
+    lastQueueRunContext ? '1' : '0',
+  ].join('\u0001');
+
+const fillQueueRow = (li: HTMLLIElement, item: QueueItemSnapshot): void => {
+  li.className = `conversion-queue-item is-${item.status}`;
+  const name = document.createElement('span');
+  name.className = 'conversion-queue-name';
+  name.textContent = item.fileName;
+  name.title = item.error ? `${item.fileName}: ${item.error}` : item.fileName;
+  const status = document.createElement('span');
+  status.className = 'conversion-queue-status';
+  let statusLabel = item.status === 'done' && item.usedCpuFallback ? 'done (cpu)' : item.status;
+  if (item.status === 'failed' && item.error) {
+    statusLabel = item.error.length > 48 ? `${item.error.slice(0, 45)}…` : item.error;
+  }
+  status.textContent = statusLabel;
+  status.title = item.error || statusLabel;
+  const statusWrap = document.createElement('div');
+  statusWrap.className = 'conversion-queue-status-wrap';
+  statusWrap.append(status);
+  if (item.status === 'failed' && !isConverting && lastQueueRunContext) {
+    const retryOne = document.createElement('button');
+    retryOne.type = 'button';
+    retryOne.className = 'btn btn-secondary btn-xs conversion-queue-retry-one';
+    retryOne.textContent = 'Retry';
+    retryOne.setAttribute('aria-label', `Retry ${item.fileName}`);
+    retryOne.addEventListener('click', () => {
+      void runConversionWorkflow([item.inputPath]);
+    });
+    statusWrap.append(retryOne);
+  }
+  li.replaceChildren(name, statusWrap);
+};
+
+// Rows are cached by item id so a snapshot only repaints the rows that changed.
+// A full rebuild would be O(files) per snapshot, i.e. O(files²) per batch.
+const renderedQueueRows = new Map<string, { li: HTMLLIElement; signature: string }>();
+let renderedQueueKey = '';
+
+const resetQueueRowCache = (): void => {
+  renderedQueueRows.clear();
+  renderedQueueKey = '';
+};
+
 const renderConversionQueue = (snapshot: QueueSnapshot | null) => {
   if (snapshot && snapshot.total > 1) {
     lastQueueDisplaySnapshot = snapshot;
@@ -3742,7 +3983,8 @@ const renderConversionQueue = (snapshot: QueueSnapshot | null) => {
 
   if (!showBatchUi || !display) {
     elements.conversionQueue.hidden = true;
-    elements.conversionQueueList.innerHTML = '';
+    elements.conversionQueueList.replaceChildren();
+    resetQueueRowCache();
     elements.retryFailedQueueBtn.classList.add('u-hidden');
     if (snapshot === null && isConverting) {
       lastQueueDisplaySnapshot = null;
@@ -3751,30 +3993,34 @@ const renderConversionQueue = (snapshot: QueueSnapshot | null) => {
   }
 
   elements.conversionQueue.hidden = false;
-  elements.conversionQueueList.innerHTML = '';
   const failedCount = display.items.filter((item) => item.status === 'failed').length;
   elements.retryFailedQueueBtn.classList.toggle(
     'u-hidden',
     isConverting || failedCount === 0 || !lastQueueRunContext
   );
 
-  for (const item of display.items) {
-    const li = document.createElement('li');
-    li.className = `conversion-queue-item is-${item.status}`;
-    const name = document.createElement('span');
-    name.className = 'conversion-queue-name';
-    name.textContent = item.fileName;
-    name.title = item.error ? `${item.fileName}: ${item.error}` : item.fileName;
-    const status = document.createElement('span');
-    status.className = 'conversion-queue-status';
-    let statusLabel = item.status === 'done' && item.usedCpuFallback ? 'done (cpu)' : item.status;
-    if (item.status === 'failed' && item.error) {
-      statusLabel = item.error.length > 48 ? `${item.error.slice(0, 45)}…` : item.error;
+  const nextKey = display.items.map((item) => item.id).join('\u0001');
+  if (nextKey !== renderedQueueKey) {
+    resetQueueRowCache();
+    const fragment = document.createDocumentFragment();
+    for (const item of display.items) {
+      const li = document.createElement('li');
+      fillQueueRow(li, item);
+      renderedQueueRows.set(item.id, { li, signature: queueRowSignature(item) });
+      fragment.appendChild(li);
     }
-    status.textContent = statusLabel;
-    status.title = item.error || statusLabel;
-    li.append(name, status);
-    elements.conversionQueueList.appendChild(li);
+    elements.conversionQueueList.replaceChildren(fragment);
+    renderedQueueKey = nextKey;
+    return;
+  }
+
+  for (const item of display.items) {
+    const cached = renderedQueueRows.get(item.id);
+    if (!cached) continue;
+    const signature = queueRowSignature(item);
+    if (signature === cached.signature) continue;
+    fillQueueRow(cached.li, item);
+    cached.signature = signature;
   }
 };
 
@@ -3855,6 +4101,7 @@ const runConversionWorkflow = async (inputPathsOverride?: string[]) => {
   elements.progressTime.textContent = '00:00:00';
   elements.progressEta.textContent = '';
   elements.progressSpeed.textContent = '';
+  elements.progressBatchSummary.textContent = '';
   renderConversionQueue(null);
 
   const totalFiles = filesToConvert.length;
@@ -3866,6 +4113,7 @@ const runConversionWorkflow = async (inputPathsOverride?: string[]) => {
     renderConversionQueue(next);
     const running = next.items.find((item) => item.status === 'running');
     if (running && next.total > 1) {
+      elements.progressBatchSummary.textContent = `File ${next.currentIndex + 1} of ${next.total}: ${running.fileName}`;
       showStatus(
         'warning',
         `Converting ${next.currentIndex + 1}/${next.total}: ${running.fileName}`
@@ -3902,8 +4150,6 @@ const runConversionWorkflow = async (inputPathsOverride?: string[]) => {
 
   const items = snapshot?.items ?? [];
   const successItems = items.filter((item) => item.status === 'done');
-  const failedCount = items.filter((item) => item.status === 'failed').length;
-  const fallbackCount = items.filter((item) => item.usedCpuFallback).length;
   const lastSuccess = [...successItems].reverse().find((item) => item.outputPath);
   if (lastSuccess?.outputPath) {
     lastOutputPath = lastSuccess.outputPath;
@@ -3911,42 +4157,20 @@ const runConversionWorkflow = async (inputPathsOverride?: string[]) => {
   }
 
   if (totalFiles === 1) {
-    const [result] = items;
-    if (result?.status === 'done' && result.usedCpuFallback) {
-      showStatus('warning', 'Conversion complete. GPU unavailable; retried with CPU.');
+    const uiStatus = conv2QueueUiStatus({ total: totalFiles, items }, { wasCancelled });
+    showStatus(uiStatus.type, uiStatus.message);
+    if (items[0]?.status === 'done') {
       elements.showInFolderBtn.classList.remove('u-hidden');
-    } else if (result?.status === 'done') {
-      showStatus('success', 'Conversion complete!');
-      elements.showInFolderBtn.classList.remove('u-hidden');
-    } else if (result?.status === 'cancelled' || wasCancelled) {
-      showStatus('warning', 'Conversion cancelled');
     } else {
-      showStatus('error', `Conversion failed: ${result?.error || 'Unknown error'}`);
+      elements.showInFolderBtn.classList.add('u-hidden');
     }
     return;
   }
 
-  const successCount = successItems.length;
+  const uiStatus = conv2QueueUiStatus({ total: totalFiles, items }, { wasCancelled });
+  showStatus(uiStatus.type, uiStatus.message);
 
-  if (wasCancelled) {
-    showStatus('warning', `Batch cancelled. ${successCount}/${totalFiles} converted.`);
-  } else if (failedCount === 0 && successCount === totalFiles) {
-    if (fallbackCount > 0) {
-      showStatus(
-        'warning',
-        `Batch complete. ${successCount}/${totalFiles} converted (${fallbackCount} CPU fallback).`
-      );
-    } else {
-      showStatus('success', `Batch complete. ${successCount}/${totalFiles} converted.`);
-    }
-  } else if (successCount === 0) {
-    showStatus('error', `Batch failed. 0/${totalFiles} converted.`);
-  } else {
-    showStatus(
-      'warning',
-      `Batch complete with errors. ${successCount}/${totalFiles} converted${fallbackCount > 0 ? ` (${fallbackCount} CPU fallback).` : '.'}`
-    );
-  }
+  const successCount = successItems.length;
 
   if (successCount > 0) {
     elements.showInFolderBtn.classList.remove('u-hidden');

@@ -10,6 +10,7 @@ import {
 import * as path from 'path';
 import type { ConversionProgress } from './ffmpeg';
 import type { QueueSnapshot } from './conversionQueue';
+import { summarizeQueueForNotification as buildQueueNotification } from '../shared/queueSummary';
 
 export interface OsIntegrationSettings {
   preventSleepWhileConverting: boolean;
@@ -46,46 +47,11 @@ export const computeOverallProgress = (
 
 export const summarizeQueueForNotification = (
   snapshot: QueueSnapshot
-): { title: string; body: string } => {
-  const total = snapshot.total || snapshot.items.length;
-  const done = snapshot.items.filter((item) => item.status === 'done').length;
-  const failed = snapshot.items.filter((item) => item.status === 'failed').length;
-  const cancelled = snapshot.items.filter((item) => item.status === 'cancelled').length;
-
-  if (total <= 1) {
-    const item = snapshot.items[0];
-    if (item?.status === 'done') {
-      return { title: 'Conversion complete', body: item.fileName || 'Your video is ready.' };
-    }
-    if (item?.status === 'cancelled') {
-      return { title: 'Conversion cancelled', body: item.fileName || 'Conversion was cancelled.' };
-    }
-    return {
-      title: 'Conversion failed',
-      body: item?.error || item?.fileName || 'Conversion did not complete.',
-    };
-  }
-
-  if (cancelled > 0 && done > 0) {
-    return {
-      title: 'Batch cancelled',
-      body: `${done} of ${total} videos converted before cancel.`,
-    };
-  }
-  if (cancelled > 0 && done === 0) {
-    return { title: 'Batch cancelled', body: 'No videos were converted.' };
-  }
-  if (failed === 0 && done === total) {
-    return { title: 'Batch complete', body: `All ${total} videos converted successfully.` };
-  }
-  if (done === 0) {
-    return { title: 'Batch failed', body: `None of the ${total} videos converted.` };
-  }
-  return {
-    title: 'Batch finished',
-    body: `${done} succeeded, ${failed} failed (${total} total).`,
-  };
-};
+): { title: string; body: string } =>
+  buildQueueNotification({
+    total: snapshot.total,
+    items: snapshot.items,
+  });
 
 export const initOsIntegration = (): void => {
   if (process.platform === 'win32') {
@@ -185,9 +151,15 @@ export const maybeNotifyConversionComplete = async (
     return;
   }
 
+  const revealPath = options?.revealOutputPath;
+  const body =
+    revealPath && revealPath.length > 0
+      ? `${summary.body}\nClick to show output in folder.`
+      : summary.body;
+
   const notification = new Notification({
     title: summary.title,
-    body: summary.body,
+    body,
     silent: false,
   });
   notification.on('click', () => {

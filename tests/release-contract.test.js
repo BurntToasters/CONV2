@@ -15,10 +15,11 @@ test('conversion IPC returns the redacted result', () => {
 });
 
 test('conversion cancellation aborts preflight as well as FFmpeg', () => {
-  const source = read('src/main/main.ts');
-  assert.match(source, /activeConversionAbortController\?\.abort\(\)/);
-  assert.match(source, /signal: conversionAbortController\.signal/);
-  assert.match(source, /cancelActiveConversion\(!!force\)/);
+  const mainSource = read('src/main/main.ts');
+  const conversionIpcSource = read('src/main/conversionIpc.ts');
+  assert.match(mainSource, /activeConversionAbortController\?\.abort\(\)/);
+  assert.match(mainSource, /signal: conversionAbortController\.signal/);
+  assert.match(mainSource + conversionIpcSource, /cancelActiveConversion\(!!force\)/);
 });
 
 test('renderer locks conversion startup before asynchronous preparation', () => {
@@ -82,7 +83,9 @@ test('stable release metadata is internally aligned', () => {
   assert.equal(lockfile.version, packageJson.version);
   assert.match(metainfo, new RegExp(`<release version="${versionPattern}"`));
   assert.match(changelog, new RegExp(String.raw`## Changes in \`v${versionPattern}:\``));
-  assert.doesNotMatch(changelog, /This is a Beta build/);
+  if (!packageJson.version.includes('-beta') && !packageJson.version.includes('-alpha')) {
+    assert.doesNotMatch(changelog, /This is a Beta build/);
+  }
   assert.match(changelog, /CONV2-Win-x64-Setup\.exe/);
   const downloadsSection = changelog.split(/^## Changes in /m, 1)[0];
   const downloadVersions = [...downloadsSection.matchAll(/releases\/download\/v([^/]+)\//g)].map(
@@ -94,4 +97,23 @@ test('stable release metadata is internally aligned', () => {
     [packageJson.version],
     'every changelog download URL must use the package version'
   );
+});
+
+const UNICODE_DASH = /[\u2013\u2014]/;
+
+test('user-facing UI copy does not use en or em dashes', () => {
+  const paths = [
+    'src/renderer/index.html',
+    'src/renderer/setupWizard.ts',
+    'src/renderer/renderer.ts',
+    'src/main/gpuRecommendation.ts',
+  ];
+  for (const relativePath of paths) {
+    const source = read(relativePath);
+    assert.equal(
+      UNICODE_DASH.test(source),
+      false,
+      `${relativePath} must not contain en dash (U+2013) or em dash (U+2014)`
+    );
+  }
 });

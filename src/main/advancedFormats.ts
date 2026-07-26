@@ -337,7 +337,11 @@ export const normalizeGifTierSettings = (
   return {
     fps: clampInteger(incoming.fps, 1, 60, fallback.fps),
     maxDimension: clampInteger(incoming.maxDimension, 160, 2160, fallback.maxDimension),
-    maxColors: clampInteger(incoming.maxColors, 2, 256, fallback.maxColors),
+    // Floor is 3, not 2: palettegen reserves a transparent palette slot, and
+    // FFmpeg rejects max_colors=2 with "only allowed without reserving a
+    // transparent color slot". Transparency is what makes static GIF regions
+    // compress, so the slot is kept and the floor raised instead.
+    maxColors: clampInteger(incoming.maxColors, 3, 256, fallback.maxColors),
     dither: normalizeGifDither(incoming.dither, fallback.dither),
   };
 };

@@ -28,9 +28,11 @@ const preloadOns = new Set([
 
 // main uses ipcMain.handle('channel', ...) for invoke targets
 const windowChromeSrc = fs.readFileSync(path.join(ROOT, 'src/main/windowChrome.ts'), 'utf8');
+const conversionIpcSrc = fs.readFileSync(path.join(ROOT, 'src/main/conversionIpc.ts'), 'utf8');
 const mainHandles = new Set([
   ...extractAll(mainSrc, /ipcMain\.handle\(\s*['"]([a-z0-9-]+)['"]/gi),
   ...extractAll(windowChromeSrc, /ipcMain\.handle\(\s*['"]([a-z0-9-]+)['"]/gi),
+  ...extractAll(conversionIpcSrc, /ipcMain\.handle\(\s*['"]([a-z0-9-]+)['"]/gi),
 ]);
 
 // main emits one-way events via webContents.send('channel', ...) or window.webContents.send

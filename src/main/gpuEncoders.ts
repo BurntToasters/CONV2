@@ -1,6 +1,13 @@
-import { GPUVendor } from './presets';
+// Type-only import: keeps this module free of a runtime dependency on presets.ts
+// so presets.ts can import GPU_ENCODERS without creating a require cycle.
+import type { GPUVendor } from './presets';
 
-/** Shared GPU/CPU encoder map used by FFmpeg runner and capability checks. */
+/**
+ * Single source of truth for encoder names, shared by the FFmpeg runner, the
+ * capability probe, and preset argument construction. Anything that resolves an
+ * encoder must read this map: a second copy would let the probe validate one
+ * encoder while the conversion invokes another.
+ */
 export const GPU_ENCODERS: Record<string, Record<GPUVendor, string>> = {
   h264: {
     nvidia: 'h264_nvenc',

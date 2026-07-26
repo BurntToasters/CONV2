@@ -26,7 +26,9 @@
 ### CONV2 is a quick and simple video converter using ffmpeg on the backend which features:
 
 - In-App Updates
-- Windows, MacOS, and Linux Support
+- Windows, macOS, and Linux Support
+- Native **File / Convert / Help** menus on Windows and macOS (no system-wide “Open with CONV2” file registration)
+- Multi-file **batch queue** with per-file status in the main window
 - Minimalist UI
 - Minimal Bloat (besides the part that its electron-based)
 - Quick Video Presets
@@ -48,6 +50,29 @@
   - `.DEB`: x64, arm64
   - `.RPM`: x64, arm64
   - `.AppImage`: x64, arm64
+
+## Hardware acceleration
+
+CONV2 picks a GPU encoder automatically, or you can choose one in Settings. What is available depends on platform:
+
+| GPU    | Windows                 | macOS                      | Linux                   |
+| :----- | :---------------------- | :------------------------- | :---------------------- |
+| NVIDIA | NVENC (H.264/H.265/AV1) | n/a                        | NVENC (H.264/H.265/AV1) |
+| Intel  | Quick Sync              | n/a                        | Quick Sync              |
+| AMD    | AMF                     | n/a                        | **CPU only**            |
+| Apple  | n/a                     | VideoToolbox (H.264/H.265) | n/a                     |
+
+Two limits worth knowing:
+
+- **AMD on Linux falls back to CPU encoding.** AMF encoders ship only in Windows FFmpeg builds, so CONV2 switches AMD/Linux jobs to CPU automatically and says so in the app.
+- **AV1 on Apple silicon uses the CPU encoder (SVT-AV1),** because VideoToolbox has no AV1 encoder.
+
+## Stream handling
+
+- **Encoding presets** keep the video track and all audio tracks. Subtitles and attachments are not carried into the output.
+- **Remuxing to MKV** copies every stream as-is.
+- **Remuxing to MP4 or WebM** copies video and audio and converts text subtitles to the container's format (`mov_text` for MP4, WebVTT for WebM). Bitmap subtitles (PGS/DVD/DVB) and attachments are left out, because those containers cannot store them.
+- If a source cannot be remuxed at all (for example AAC audio into WebM, which supports only Opus or Vorbis), CONV2 explains this before starting instead of failing partway.
 
 ## FFmpeg
 
