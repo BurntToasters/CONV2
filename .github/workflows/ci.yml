@@ -2,9 +2,9 @@ name: CI
 
 on:
   push:
-    branches: [main, beta]
+    branches: [main, beta, 'next-*']
   pull_request:
-    branches: [main, beta]
+    branches: [main, beta, 'next-*']
 
 permissions:
   contents: read
@@ -56,6 +56,12 @@ jobs:
       - name: Build and run tests
         run: npm run tests
 
+      - name: Coverage thresholds
+        run: npm run test:coverage
+
+      - name: Config and syntax checks
+        run: npm run test:checks
+
   build:
     name: Build + Package Smoke
     runs-on: ${{ matrix.os }}
@@ -82,6 +88,25 @@ jobs:
 
       - name: Build
         run: npm run build
+
+      # Runs the real conversion presets against the bundled FFmpeg. Self-skips
+      # when the payload is the placeholder used for untrusted builds, and is
+      # enforced on trusted branches where the real payload is available.
+      - name: FFmpeg integration tests
+        env:
+          # ci:prepare-ffmpeg installs a checksum-verified payload whenever the
+          # download secret is configured, so that is exactly when these tests
+          # must not be allowed to silently skip.
+          CONV2_REQUIRE_FFMPEG_TESTS: ${{ secrets.FFMPEG_DL_SERVER != '' && '1' || '0' }}
+        run: npm run test:ffmpeg
+
+      - name: Runtime smoke (headless)
+        if: runner.os == 'Linux'
+        run: xvfb-run -a npm run smoke:runtime -- --skip-compile
+
+      - name: Runtime smoke
+        if: runner.os != 'Linux'
+        run: npm run smoke:runtime -- --skip-compile
 
       - name: Generate license manifest
         run: npm run licenses

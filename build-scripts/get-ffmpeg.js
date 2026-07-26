@@ -5,20 +5,28 @@
  * get-ffmpeg.js
  *
  * Downloads ffmpeg/ffprobe binaries from the internal server defined by
- * FFMPEG_DL_SERVER in .env, then extracts them into resources/ffmpeg/.
+ * FFMPEG_DL_SERVER in .env, extracts them to a staging directory, verifies them
+ * against resources/ffmpeg/checksums.json, and only then installs them into
+ * resources/ffmpeg/. A failed verification leaves the existing binaries intact.
  *
  * Usage:
  *   node build-scripts/get-ffmpeg.js               # current OS (x64 and arm64)
  *   node build-scripts/get-ffmpeg.js --all          # all 6 platform/arch combos
  *   node build-scripts/get-ffmpeg.js --target mac:arm64 --target win:x64
+ *   node build-scripts/get-ffmpeg.js --all --allow-unverified   # new FFmpeg version
  *
  * Requires: 7z or 7zz installed and on PATH
  */
 
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 const https = require('https');
 const { execFileSync } = require('child_process');
+const { REQUIRED_BINARIES, computeSha256, getExpectedChecksums } = require('./check-ffmpeg.js');
+
+/** Set by --allow-unverified: permits installing a payload with no recorded hashes. */
+let allowUnverified = false;
 
 // Load .env (FFMPEG_DL_SERVER lives here)
 require('dotenv').config({ path: path.resolve(__dirname, '..', '.env') });
@@ -82,10 +90,14 @@ function normalizeArch(value) {
 
 function usage() {
   console.error(
-    'Usage: node build-scripts/get-ffmpeg.js [--all] [--target <platform:arch>]...\n' +
+    'Usage: node build-scripts/get-ffmpeg.js [--all] [--target <platform:arch>]... [--allow-unverified]\n' +
       '  Platforms: win, mac, linux\n' +
       '  Architectures: x64, arm64\n' +
       '  Default: current OS (x64 and arm64)\n' +
+      '\n' +
+      '  Downloads are extracted to a staging dir and verified against\n' +
+      '  resources/ffmpeg/checksums.json before being installed.\n' +
+      '  --allow-unverified permits a payload with no recorded hashes (new versions).\n' +
       '\n' +
       '  Requires FFMPEG_DL_SERVER to be set in .env'
   );
@@ -103,6 +115,10 @@ function parseArgs(args) {
     const arg = args[i];
     if (arg === '--all') {
       explicitAll = true;
+      continue;
+    }
+    if (arg === '--allow-unverified') {
+      allowUnverified = true;
       continue;
     }
     if (arg === '--target') {
@@ -277,6 +293,154 @@ function extract7z(sevenZipBin, archivePath, destDir) {
   });
 }
 
+// ─── Verification / installation ─────────────────────────────────────────────
+
+/** Tracked files that live in the destination dirs and must survive a refresh. */
+const PRESERVED_DEST_FILES = new Set(['PLACE_BINARIES_HERE.txt']);
+
+/** Locate an extracted binary by name, tolerating a nested archive root.
+ * @param {string} rootDir
+ * @param {string} fileName
+ * @param {number} [maxDepth]
+ * @returns {string | null}
+ */
+function findExtractedFile(rootDir, fileName, maxDepth = 3) {
+  /** @type {Array<{dir: string, depth: number}>} */
+  const queue = [{ dir: rootDir, depth: 0 }];
+  while (queue.length > 0) {
+    const next = queue.shift();
+    if (!next) break;
+    const { dir, depth } = next;
+    let entries;
+    try {
+      entries = fs.readdirSync(dir, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+    for (const entry of entries) {
+      const fullPath = path.join(dir, entry.name);
+      if (entry.isFile() && entry.name === fileName) {
+        return fullPath;
+      }
+      if (entry.isDirectory() && depth < maxDepth) {
+        queue.push({ dir: fullPath, depth: depth + 1 });
+      }
+    }
+  }
+  return null;
+}
+
+/** Verify staged binaries against the tracked checksum manifest.
+ *
+ * Runs before anything is written to the directory the build consumes, so an
+ * unverified or tampered payload never becomes the bundled FFmpeg.
+ *
+ * @param {string} stagingDir
+ * @param {string} platform
+ * @param {string} arch
+ * @param {{ allowUnverified?: boolean }} options
+ * @returns {Record<string, string>} staged binary paths keyed by binary name
+ */
+function verifyStagedBinaries(stagingDir, platform, arch, options = {}) {
+  const allowUnverified = options.allowUnverified === true;
+  const required = REQUIRED_BINARIES[platform]?.[arch];
+  if (!required) {
+    throw new Error(`No known binary layout for ${platform}:${arch}`);
+  }
+
+  /** @type {Record<string, string>} */
+  const staged = {};
+  for (const [binaryName, relativePath] of Object.entries(required)) {
+    const fileName = path.basename(relativePath);
+    const stagedPath = findExtractedFile(stagingDir, fileName);
+    if (!stagedPath) {
+      throw new Error(`Archive did not contain the expected binary: ${fileName}`);
+    }
+    staged[binaryName] = stagedPath;
+  }
+
+  const expected = getExpectedChecksums(platform, arch);
+  if (!expected) {
+    if (!allowUnverified) {
+      throw new Error(
+        `No checksum manifest entry for ${platform}:${arch}.\n` +
+          `  Re-run with --allow-unverified only after independently verifying the download,\n` +
+          `  then record the new hashes with: npm run ffmpeg:checksums:generate`
+      );
+    }
+    console.warn(`  ! No recorded checksums for ${platform}:${arch} — payload NOT verified.`);
+    return staged;
+  }
+
+  for (const [binaryName, stagedPath] of Object.entries(staged)) {
+    const expectedHash = expected[binaryName];
+    if (!expectedHash) {
+      if (!allowUnverified) {
+        throw new Error(
+          `No recorded SHA-256 for ${binaryName} on ${platform}:${arch}. ` +
+            `Re-run with --allow-unverified only after independent verification.`
+        );
+      }
+      console.warn(`  ! No recorded checksum for ${binaryName} — NOT verified.`);
+      continue;
+    }
+    const actual = computeSha256(stagedPath);
+    if (actual !== expectedHash) {
+      throw new Error(
+        `SHA-256 mismatch for ${binaryName} (${platform}:${arch})\n` +
+          `  expected: ${expectedHash}\n` +
+          `  actual:   ${actual}`
+      );
+    }
+  }
+  console.log(`  ✓ Checksums verified against resources/ffmpeg/checksums.json`);
+  return staged;
+}
+
+/** Replace the destination contents with the verified payload, preserving tracked files.
+ *
+ * The whole payload directory is installed, not just ffmpeg/ffprobe, so a future
+ * archive that ships sidecar files (shared libraries, presets) is not silently
+ * truncated. Only the two binaries are checksum-verified, which is what the
+ * manifest records.
+ *
+ * @param {Record<string, string>} stagedBinaries
+ * @param {string} destDir
+ * @param {string} platform
+ */
+function installVerifiedBinaries(stagedBinaries, destDir, platform) {
+  const binaryPaths = Object.values(stagedBinaries);
+  if (binaryPaths.length === 0) {
+    throw new Error('No verified binaries to install');
+  }
+
+  fs.mkdirSync(destDir, { recursive: true });
+  for (const entry of fs.readdirSync(destDir)) {
+    if (PRESERVED_DEST_FILES.has(entry)) continue;
+    fs.rmSync(path.join(destDir, entry), { recursive: true, force: true });
+  }
+
+  const payloadRoots = new Set(binaryPaths.map((binaryPath) => path.dirname(binaryPath)));
+  if (payloadRoots.size === 1) {
+    const [payloadRoot] = [...payloadRoots];
+    fs.cpSync(payloadRoot, destDir, { recursive: true, force: true });
+  } else {
+    // Binaries came from different subdirectories; install them individually.
+    for (const binaryPath of binaryPaths) {
+      fs.copyFileSync(binaryPath, path.join(destDir, path.basename(binaryPath)));
+    }
+  }
+
+  if (platform !== 'win') {
+    for (const binaryPath of binaryPaths) {
+      const target = path.join(destDir, path.basename(binaryPath));
+      if (fs.existsSync(target)) {
+        fs.chmodSync(target, 0o755);
+      }
+    }
+  }
+}
+
 // ─── Main ────────────────────────────────────────────────────────────────────
 
 async function main() {
@@ -325,6 +489,20 @@ async function main() {
     const url = `${base}/${filename}`;
     const tmpFile = path.join(projectRoot, filename);
     const destDir = path.join(projectRoot, 'resources', 'ffmpeg', platform, arch);
+    const stagingDir = fs.mkdtempSync(path.join(os.tmpdir(), `conv2-ffmpeg-${platform}-${arch}-`));
+
+    const cleanup = () => {
+      try {
+        fs.rmSync(stagingDir, { recursive: true, force: true });
+      } catch {
+        /* best-effort */
+      }
+      try {
+        fs.rmSync(tmpFile, { force: true });
+      } catch {
+        /* best-effort */
+      }
+    };
 
     console.log(`[${platform}:${arch}] Downloading ${filename} ...`);
     try {
@@ -332,33 +510,46 @@ async function main() {
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       console.error(`\n[${platform}:${arch}] Download failed: ${msg}`);
+      cleanup();
       process.exit(1);
     }
     console.log(`[${platform}:${arch}] Download complete.`);
 
-    console.log(`[${platform}:${arch}] Extracting to resources/ffmpeg/${platform}/${arch}/ ...`);
+    // Extract into a staging dir first: nothing reaches resources/ffmpeg until
+    // the payload has been checked against the tracked checksum manifest.
+    console.log(`[${platform}:${arch}] Extracting to staging ...`);
     try {
-      extract7z(sevenZipBin, tmpFile, destDir);
+      extract7z(sevenZipBin, tmpFile, stagingDir);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       console.error(`\n[${platform}:${arch}] Extraction failed: ${msg}`);
-      // Clean up archive
-      try {
-        fs.unlinkSync(tmpFile);
-      } catch {
-        /* ignore */
-      }
+      cleanup();
       process.exit(1);
     }
 
-    // Clean up archive
+    console.log(`[${platform}:${arch}] Verifying payload ...`);
+    let stagedBinaries;
     try {
-      fs.unlinkSync(tmpFile);
+      stagedBinaries = verifyStagedBinaries(stagingDir, platform, arch, { allowUnverified });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      console.warn(`[${platform}:${arch}] Warning: could not delete temp archive: ${msg}`);
+      console.error(`\n[${platform}:${arch}] Verification failed: ${msg}`);
+      console.error(`[${platform}:${arch}] resources/ffmpeg/${platform}/${arch}/ left untouched.`);
+      cleanup();
+      process.exit(1);
     }
 
+    console.log(`[${platform}:${arch}] Installing to resources/ffmpeg/${platform}/${arch}/ ...`);
+    try {
+      installVerifiedBinaries(stagedBinaries, destDir, platform);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error(`\n[${platform}:${arch}] Install failed: ${msg}`);
+      cleanup();
+      process.exit(1);
+    }
+
+    cleanup();
     console.log(`[${platform}:${arch}] Done.\n`);
   }
 
@@ -368,7 +559,16 @@ async function main() {
   console.log(`  Run 'npm run ffmpeg:check' to verify.\n`);
 }
 
-main().catch((err) => {
-  console.error('\nUnexpected error:', err);
-  process.exit(1);
-});
+if (require.main === module) {
+  main().catch((err) => {
+    console.error('\nUnexpected error:', err);
+    process.exit(1);
+  });
+}
+
+module.exports = {
+  PRESERVED_DEST_FILES,
+  findExtractedFile,
+  installVerifiedBinaries,
+  verifyStagedBinaries,
+};

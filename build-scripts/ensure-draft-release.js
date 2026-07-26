@@ -216,7 +216,9 @@ async function ensureDraftRelease() {
         prerelease: IS_PRERELEASE,
       }
     );
-    console.log('   Created draft release: ' + (release.name || TAG_NAME) + ' (id ' + release.id + ')');
+    console.log(
+      '   Created draft release: ' + (release.name || TAG_NAME) + ' (id ' + release.id + ')'
+    );
     return release;
   } catch (error) {
     // Another concurrent run may have created it (422 already_exists) - re-fetch.

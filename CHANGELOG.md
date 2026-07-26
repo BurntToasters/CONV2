@@ -21,9 +21,23 @@
 - **UI:** Settings **Appearance** section; batch queue with clearer failures, **Retry failed**, and per-file **Retry**; live **File N of M** text during multi-file jobs.
 - **UI:** In-app batch status matches background notification copy via shared `queueSummary` helpers.
 - **UI:** GPU panel summary line for Auto mode (recommended vendor + reason); preset search focuses with `/`.
+- **UI:** **Trash Original on Success** now asks for confirmation before being enabled and shows an active warning indicator while it is on.
+- **QUEUE:** Batch size is now bounded and malformed queue requests are rejected safely.
+- **REMUX:** Remuxing an MKV to MP4 no longer fails when the source has subtitles. Text subtitles are converted to the container's format (`mov_text` for MP4, WebVTT for WebM) and attachments that MP4 cannot store are left out. MKV remuxes still copy every stream untouched.
+- **REMUX:** Sources that genuinely cannot be remuxed are now explained before the job starts instead of failing partway, including audio the container cannot hold (for example AAC into WebM, which supports only Opus or Vorbis).
+- **REMUX:** HEVC remuxed into MP4 is now tagged `hvc1` so it plays in QuickTime, Safari, and on iOS. Previously it was tagged `hev1`, which those players reject.
+- **ENCODING:** Advanced AV1 quality values above 51 are clamped for hardware encoders, whose quality parameters stop at 51. CPU encoding keeps the full SVT-AV1 range.
+- **ENCODING:** AV1 on Apple silicon now correctly uses CPU arguments, since VideoToolbox has no AV1 encoder.
+- **GIF:** Fixed GIF conversion failing outright when **Max Colors** was set to 2. FFmpeg needs at least 3 colours when a transparent palette slot is reserved, so the minimum is now 3 in both the settings and the input field.
 - **OS:** Completion notifications mention click-to-reveal when an output path is available (unfocused window).
-- **Docs:** README notes native menus and batch queue (no file-type registration).
-- **Tooling:** TypeScript 7.
+- **Security:** macOS hardened runtime no longer disables library validation.
+- **Privacy:** Debug log redaction now also hides home paths belonging to other user accounts, not just the current user's.
+- **Building - FFMPEG:** Downloads are now extracted to a temporary staging directory and checked against the tracked checksum manifest **before** anything is installed into `resources/ffmpeg`, so a failed check leaves the existing binaries untouched. The destination is also cleaned to avoid stale files.
+- **Linux:** Both Flatpak build paths now grant identical sandbox permissions, and the Node SDK extension matches the Node version the project builds with. Tests enforce that they stay in sync.
+- **Codebase:** Window state is now written atomically, and encoder names come from a single shared map so capability checks and conversions can never disagree.
+- **Docs:** README notes native menus and batch queue (no file-type registration), plus a hardware-acceleration support table and how each preset type handles audio, subtitle, and attachment streams.
+- **Tooling:** TypeScript 7; CI now covers release-candidate branches and runs the runtime smoke test, config checks, and a coverage gate.
+- **Tooling:** New end-to-end test suite that runs every conversion preset through the bundled FFmpeg and checks the resulting streams, rather than only checking the arguments CONV2 builds. It skips automatically when no FFmpeg payload is present, so contributors are never blocked.
 
 **Setup tour (manual QA):** Skip on step 1; finish all steps; Replay from Settings; Reset settings → restart → tour shows again.
 

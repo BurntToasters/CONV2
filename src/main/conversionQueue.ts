@@ -60,6 +60,13 @@ const basename = (inputPath: string): string => {
   return parts[parts.length - 1] || inputPath;
 };
 
+/**
+ * Upper bound on files accepted in a single batch. Conversions run
+ * sequentially, but every state change broadcasts a full snapshot, so an
+ * unbounded queue turns into unbounded IPC traffic and DOM work.
+ */
+export const MAX_QUEUE_ITEMS = 500;
+
 export const createEmptyQueueSnapshot = (): QueueSnapshot => ({
   active: false,
   presetId: '',

@@ -247,8 +247,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getVersion: (): Promise<string> => ipcRenderer.invoke('get-version'),
   getPlatform: (): Promise<string> => ipcRenderer.invoke('get-platform'),
 
-  // Open external
-  openPath: (path: string): Promise<void> => ipcRenderer.invoke('open-path', path),
+  // Reveal in the OS file manager (shell.showItemInFolder). This deliberately
+  // does not open/execute the file.
+  revealPath: (path: string): Promise<void> => ipcRenderer.invoke('reveal-path', path),
   openExternal: (url: string): Promise<void> => ipcRenderer.invoke('open-external', url),
 
   // Theme
@@ -320,7 +321,7 @@ declare global {
       checkFFmpeg: () => Promise<boolean>;
       getVersion: () => Promise<string>;
       getPlatform: () => Promise<string>;
-      openPath: (path: string) => Promise<void>;
+      revealPath: (path: string) => Promise<void>;
       openExternal: (url: string) => Promise<void>;
       getSystemTheme: () => Promise<'dark' | 'light'>;
       onThemeChange: (callback: (theme: 'dark' | 'light') => void) => () => void;

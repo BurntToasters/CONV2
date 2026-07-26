@@ -64,6 +64,16 @@ export const isSettingsCorrupted = (value: unknown): boolean => {
   return !value || typeof value !== 'object';
 };
 
+/**
+ * Upgrades are normalization-based rather than step-by-step migrations: an
+ * outdated file is run through the same normalizers as any other input, so
+ * valid values are kept, invalid or unknown ones fall back to defaults, and the
+ * result is re-persisted at the current version.
+ *
+ * The consequence to keep in mind: if a field is ever renamed or its scale
+ * changed, that field silently resets instead of being converted. Such a change
+ * needs an explicit migration here alongside the version bump.
+ */
 export const isSettingsSchemaOutdated = (value: unknown): boolean => {
   if (!value || typeof value !== 'object') {
     return false;

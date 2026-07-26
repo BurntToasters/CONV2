@@ -457,19 +457,73 @@ test('video presets include -map 0:v:0 and -map 0:a for multi-track preservation
   }
 });
 
-test('remux presets include -map 0 to copy all streams', () => {
+test('remux presets always stream copy', () => {
   const remuxIds = ['remux-mp4', 'remux-mkv', 'remux-webm'];
 
   for (const id of remuxIds) {
     const preset = presets.find((p) => p.id === id);
     assert.ok(preset, `missing preset ${id}`);
     const args = preset.getArgs('input.mp4', `output.${preset.extension}`, 'cpu');
-    const mapIdx = args.indexOf('-map');
-    assert.ok(mapIdx >= 0, `${id}: missing -map`);
-    assert.equal(args[mapIdx + 1], '0', `${id}: -map must be 0`);
+    assert.ok(args.indexOf('-map') >= 0, `${id}: missing -map`);
     assert.ok(args.includes('-c'), `${id}: missing -c`);
     assert.equal(args[args.indexOf('-c') + 1], 'copy', `${id}: must use stream copy`);
   }
+});
+
+test('MKV remux copies every stream wholesale', () => {
+  // MKV can carry any stream FFmpeg copies, including bitmap subs and attachments.
+  const preset = presets.find((p) => p.id === 'remux-mkv');
+  const args = preset.getArgs('input.mkv', 'output.mkv', 'cpu', {
+    sourceStreams: { subtitleCodecs: ['subrip', 'hdmv_pgs_subtitle'] },
+  });
+  assert.equal(args[args.indexOf('-map') + 1], '0');
+  assert.equal(args.includes('-c:s'), false, 'MKV needs no subtitle conversion');
+});
+
+test('MP4 remux converts text subtitles instead of failing on them', () => {
+  // Copying subrip into MP4 fails with "Could not find tag for codec subrip",
+  // and -map 0 additionally drags in MKV attachments that MP4 rejects.
+  const preset = presets.find((p) => p.id === 'remux-mp4');
+  const args = preset.getArgs('input.mkv', 'output.mp4', 'cpu', {
+    sourceStreams: { videoCodec: 'h264', audioCodec: 'aac', subtitleCodecs: ['subrip'] },
+  });
+  const mapValues = args.filter((arg, index) => args[index - 1] === '-map');
+  assert.equal(mapValues.includes('0'), false, 'must not blanket-map every stream');
+  assert.ok(args.includes('0:v:0?'), 'should map the first video stream');
+  assert.ok(args.includes('0:a?'), 'should map all audio streams');
+  assert.ok(args.includes('0:s:0'), 'should map the text subtitle stream');
+  assert.equal(args[args.indexOf('-c:s') + 1], 'mov_text');
+});
+
+test('MP4 remux skips bitmap subtitles that cannot become text', () => {
+  const preset = presets.find((p) => p.id === 'remux-mp4');
+  const args = preset.getArgs('input.mkv', 'output.mp4', 'cpu', {
+    sourceStreams: { subtitleCodecs: ['hdmv_pgs_subtitle', 'subrip'] },
+  });
+  assert.equal(args.includes('0:s:0'), false, 'bitmap subtitle must not be mapped');
+  assert.ok(args.includes('0:s:1'), 'text subtitle at index 1 should be mapped');
+  assert.equal(args[args.indexOf('-c:s') + 1], 'mov_text');
+});
+
+test('remux without probe info maps no subtitles', () => {
+  // No stream info means we cannot tell text from bitmap; copying blind is what
+  // used to break, so subtitles are simply left out.
+  const preset = presets.find((p) => p.id === 'remux-mp4');
+  const args = preset.getArgs('input.mkv', 'output.mp4', 'cpu');
+  assert.equal(
+    args.some((arg) => String(arg).startsWith('0:s')),
+    false
+  );
+  assert.equal(args.includes('-c:s'), false);
+});
+
+test('WebM remux converts text subtitles to WebVTT', () => {
+  const preset = presets.find((p) => p.id === 'remux-webm');
+  const args = preset.getArgs('input.mkv', 'output.webm', 'cpu', {
+    sourceStreams: { videoCodec: 'vp9', audioCodec: 'opus', subtitleCodecs: ['ass'] },
+  });
+  assert.ok(args.includes('0:s:0'));
+  assert.equal(args[args.indexOf('-c:s') + 1], 'webvtt');
 });
 
 test('audio extract presets strip video and produce no -map', () => {

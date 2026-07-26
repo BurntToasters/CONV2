@@ -1417,12 +1417,30 @@ select option {
   margin-top: 10px;
   display: flex;
   gap: 8px;
+  flex-wrap: wrap;
 }
 
 .convert-section .btn-primary {
   flex: 1;
   padding: 10px 24px;
   font-size: var(--text-base);
+}
+
+/* Standing reminder that successful conversions delete the source file. */
+.trash-original-notice {
+  flex-basis: 100%;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 2px 0 0;
+  font-size: var(--text-sm);
+  color: var(--error);
+}
+
+.trash-original-notice-icon {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
 }
 
 .progress-container {

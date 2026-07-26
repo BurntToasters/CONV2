@@ -114,14 +114,8 @@ test('setup wizard blocks other modals while visible', () => {
     'utf8'
   );
   assert.match(rendererSource, /isSetupWizardBlockingUi/);
-  assert.match(
-    rendererSource,
-    /hasBlockingModalForShortcuts[\s\S]*isSetupWizardBlockingUi\(\)/
-  );
-  assert.match(
-    rendererSource,
-    /openSettingsModal[\s\S]*isSetupWizardBlockingUi\(\)[\s\S]*return;/
-  );
+  assert.match(rendererSource, /hasBlockingModalForShortcuts[\s\S]*isSetupWizardBlockingUi\(\)/);
+  assert.match(rendererSource, /openSettingsModal[\s\S]*isSetupWizardBlockingUi\(\)[\s\S]*return;/);
 });
 
 test('setup wizard clears spotlight chrome on close and reopen', () => {

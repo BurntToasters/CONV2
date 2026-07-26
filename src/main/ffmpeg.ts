@@ -3,7 +3,7 @@ import { forceKillFfmpegProcess } from './ffmpegProcessControl';
 import * as path from 'path';
 import * as fs from 'fs';
 import * as os from 'os';
-import { GPUVendor, Preset, getPresetGpuCodec } from './presets';
+import { GPUVendor, Preset, PresetContext, getPresetGpuCodec } from './presets';
 import { AdvancedFormatSettings } from './advancedFormats';
 import { CODEC_NAMES, GPU_ENCODERS, GPU_NAMES } from './gpuEncoders';
 
@@ -100,6 +100,10 @@ export interface VideoInfo {
   colorTransfer?: string;
   colorSpace?: string;
   colorRange?: string;
+  /** First audio stream's codec, used for remux container compatibility. */
+  audioCodec?: string;
+  /** Codec names of every subtitle stream, in subtitle-stream order. */
+  subtitleCodecs?: string[];
 }
 
 let currentProcess: ChildProcess | null = null;
@@ -555,34 +559,6 @@ const normalizeCodec = (codec?: string): string | null => {
   return normalized;
 };
 
-const canAccessVaapiDevice = (devicePath: string): boolean => {
-  try {
-    fs.accessSync(devicePath, fs.constants.R_OK | fs.constants.W_OK);
-    return true;
-  } catch {
-    return false;
-  }
-};
-
-const findVaapiDevice = (): string | null => {
-  const driDir = '/dev/dri';
-  try {
-    const entries = fs.readdirSync(driDir);
-    const renderDevices = entries
-      .filter((e) => e.startsWith('renderD'))
-      .sort()
-      .map((e) => path.join(driDir, e));
-    for (const device of renderDevices) {
-      if (canAccessVaapiDevice(device)) {
-        return device;
-      }
-    }
-  } catch {
-    // /dev/dri doesn't exist or isn't readable
-  }
-  return null;
-};
-
 const getHardwareDecodeArgs = async (gpu: GPUVendor, codec?: string): Promise<string[]> => {
   if (gpu === 'cpu') {
     return [];
@@ -645,24 +621,11 @@ const getHardwareDecodeArgs = async (gpu: GPUVendor, codec?: string): Promise<st
       return [];
     }
 
-    if (gpu === 'amd') {
-      const vaapiDevice = findVaapiDevice();
-      if (
-        vaapiDevice &&
-        canAccessVaapiDevice(vaapiDevice) &&
-        ['h264', 'hevc', 'av1', 'vp9'].includes(normalized)
-      ) {
-        return [
-          '-hwaccel',
-          'vaapi',
-          '-hwaccel_device',
-          vaapiDevice,
-          '-hwaccel_output_format',
-          'vaapi',
-        ];
-      }
-      return [];
-    }
+    // AMD on Linux is not reachable here: AMF encoders ship only in Windows
+    // FFmpeg builds, so checkGPUEncoderSupport reports AMD/Linux unavailable and
+    // the conversion is switched to CPU before decode arguments are built.
+    // Enabling it would require VAAPI *encoders* plus a hwdownload filter, since
+    // -hwaccel_output_format vaapi cannot feed a software encoder.
   }
 
   return [];
@@ -744,10 +707,19 @@ export const getVideoInfo = async (inputPath: string, signal?: AbortSignal): Pro
   );
   try {
     const data = JSON.parse(output);
+    const streams: Array<{ codec_type?: string; codec_name?: string }> = Array.isArray(data.streams)
+      ? data.streams
+      : [];
     const videoStream = data.streams?.find(
       (stream: { codec_type: string }) => stream.codec_type === 'video'
     );
+    const audioStream = streams.find((stream) => stream.codec_type === 'audio');
+    const subtitleCodecs = streams
+      .filter((stream) => stream.codec_type === 'subtitle')
+      .map((stream) => stream.codec_name || 'unknown');
     return {
+      audioCodec: audioStream?.codec_name || undefined,
+      subtitleCodecs,
       duration: parseFloat(data.format?.duration || '0'),
       size: parseInt(data.format?.size || '0'),
       width: videoStream?.width || 0,
@@ -861,9 +833,20 @@ export const resolveUniqueOutputPath = (
   throw new Error(`Could not find unique output path after ${MAX_SUFFIX} attempts`);
 };
 
+const HEVC_CODEC_NAMES = ['hevc', 'h265'];
+
+/**
+ * Applies MP4 container fixes: faststart for progressive playback, and the
+ * `hvc1` codec tag for HEVC.
+ *
+ * The tag matters for remuxes too, not just H.265 encodes: copying HEVC into MP4
+ * otherwise yields the `hev1` tag, which Apple players (QuickTime, Safari, iOS)
+ * will not open. `-tag:v hvc1` is valid alongside `-c copy`.
+ */
 export const ensureMp4PlaybackCompatibilityArgs = (
   preset: Preset,
-  presetArgs: string[]
+  presetArgs: string[],
+  sourceVideoCodec?: string
 ): string[] => {
   if (preset.extension !== 'mp4' || presetArgs.length === 0) {
     return presetArgs;
@@ -882,7 +865,13 @@ export const ensureMp4PlaybackCompatibilityArgs = (
     argsWithoutOutput.push('-movflags', '+faststart');
   }
 
-  if (preset.category === 'h265') {
+  const outputCarriesHevc =
+    preset.category === 'h265' ||
+    (preset.category === 'remux' &&
+      typeof sourceVideoCodec === 'string' &&
+      HEVC_CODEC_NAMES.includes(sourceVideoCodec.toLowerCase()));
+
+  if (outputCarriesHevc) {
     const hasHvc1Tag = argsWithoutOutput.some(
       (arg, index) => arg === '-tag:v' && argsWithoutOutput[index + 1] === 'hvc1'
     );
@@ -903,29 +892,71 @@ export const isKnownColorValue = (v: string): boolean =>
   v !== 'unknown' && v !== 'unspecified' && v !== 'reserved' && v.length > 0;
 
 /**
- * Replaces the user's home-directory prefix in log output with `~` so that
- * absolute paths sent to the renderer don't reveal the system username.
+ * Replaces home-directory prefixes in log output with `~` so that absolute
+ * paths sent to the renderer (or pasted into bug reports) don't reveal the
+ * system username.
+ *
+ * The current user's home is collapsed to `~`. Home-shaped paths belonging to
+ * any other account are also redacted, since debug logs can contain paths from
+ * other volumes or accounts that this process merely read.
  */
 const HOME_DIR = os.homedir();
+const USER_HOME_PATTERNS: RegExp[] = [
+  /(\/Users\/)([^/\\\s:"']+)/g, // macOS
+  /(\/home\/)([^/\\\s:"']+)/g, // Linux
+  /([A-Za-z]:\\Users\\)([^\\/\s:"']+)/g, // Windows
+];
+
 export const redactPaths = (s: string): string => {
-  if (!HOME_DIR || !s.includes(HOME_DIR)) return s;
-  return s.split(HOME_DIR).join('~');
+  if (!s) return s;
+  let redacted = s;
+  if (HOME_DIR && redacted.includes(HOME_DIR)) {
+    redacted = redacted.split(HOME_DIR).join('~');
+  }
+  for (const pattern of USER_HOME_PATTERNS) {
+    redacted = redacted.replace(pattern, (_match, prefix: string) => `${prefix}~`);
+  }
+  return redacted;
 };
 
+const WEBM_VIDEO_CODECS = ['vp8', 'vp9', 'av1'];
+/** Verified against the bundled build: the WebM muxer copies only these audio codecs. */
+const WEBM_AUDIO_CODECS = ['opus', 'vorbis'];
+const MP4_UNSUPPORTED_VIDEO_CODECS = ['vp8', 'vp9', 'theora'];
+
+const isKnownCodecName = (codec: string | undefined): codec is string =>
+  typeof codec === 'string' && codec.length > 0 && codec !== 'unknown';
+
+/**
+ * Pre-flights a remux so an incompatible source fails with an explanation
+ * instead of a raw FFmpeg "Could not write header" error.
+ *
+ * Both the video and the audio codec matter: WebM accepts VP8/VP9/AV1 video but
+ * only Opus/Vorbis audio, so a VP9+AAC source passes a video-only check and
+ * then dies at mux time. Subtitles are handled by stream mapping rather than
+ * rejection, since text subtitles can be converted per container.
+ */
 export const getRemuxIncompatibilityReason = (
   videoCodec: string | undefined,
-  extension: string
+  extension: string,
+  audioCodec?: string
 ): string | null => {
-  if (!videoCodec || videoCodec === 'unknown') {
-    return null;
+  const codec = isKnownCodecName(videoCodec) ? videoCodec.toLowerCase() : null;
+  const audio = isKnownCodecName(audioCodec) ? audioCodec.toLowerCase() : null;
+
+  if (extension === 'webm') {
+    if (codec && !WEBM_VIDEO_CODECS.includes(codec)) {
+      return `Cannot remux ${videoCodec!.toUpperCase()} into a WebM container without re-encoding. WebM supports only VP8, VP9, or AV1 video. Use an MP4 or MKV remux, or pick an encoding preset instead.`;
+    }
+    if (audio && !WEBM_AUDIO_CODECS.includes(audio)) {
+      return `Cannot remux ${audioCodec!.toUpperCase()} audio into a WebM container without re-encoding. WebM supports only Opus or Vorbis audio. Use an MP4 or MKV remux, or pick an encoding preset instead.`;
+    }
   }
-  const codec = videoCodec.toLowerCase();
-  if (extension === 'webm' && !['vp8', 'vp9', 'av1'].includes(codec)) {
-    return `Cannot remux ${videoCodec.toUpperCase()} into a WebM container without re-encoding. WebM supports only VP8, VP9, or AV1 video. Use an MP4 or MKV remux, or pick an encoding preset instead.`;
+
+  if (extension === 'mp4' && codec && MP4_UNSUPPORTED_VIDEO_CODECS.includes(codec)) {
+    return `Cannot remux ${videoCodec!.toUpperCase()} into an MP4 container without re-encoding. Use an MKV remux, or pick an encoding preset instead.`;
   }
-  if (extension === 'mp4' && ['vp8', 'vp9', 'theora'].includes(codec)) {
-    return `Cannot remux ${videoCodec.toUpperCase()} into an MP4 container without re-encoding. Use an MKV remux, or pick an encoding preset instead.`;
-  }
+
   return null;
 };
 
@@ -988,7 +1019,11 @@ export const convertVideo = async (
     // ignore
   }
   if (preset.category === 'remux') {
-    const remuxIssue = getRemuxIncompatibilityReason(inputCodec, preset.extension);
+    const remuxIssue = getRemuxIncompatibilityReason(
+      inputCodec,
+      preset.extension,
+      videoInfo?.audioCodec
+    );
     if (remuxIssue) {
       try {
         fs.unlinkSync(outputPath);
@@ -1036,12 +1071,26 @@ export const convertVideo = async (
   if (options.signal?.aborted) {
     return canceledResult();
   }
-  const presetContext = options.advancedFormatSettings
-    ? { advancedFormatSettings: options.advancedFormatSettings }
-    : undefined;
+  // Stream layout is passed through so remux presets can map only the streams
+  // the target container can actually carry.
+  const presetContext: PresetContext = {
+    ...(options.advancedFormatSettings
+      ? { advancedFormatSettings: options.advancedFormatSettings }
+      : {}),
+    ...(videoInfo
+      ? {
+          sourceStreams: {
+            videoCodec: videoInfo.codec,
+            audioCodec: videoInfo.audioCodec,
+            subtitleCodecs: videoInfo.subtitleCodecs ?? [],
+          },
+        }
+      : {}),
+  };
   let presetArgs = ensureMp4PlaybackCompatibilityArgs(
     preset,
-    preset.getArgs(inputPath, outputPath, gpu, presetContext)
+    preset.getArgs(inputPath, outputPath, gpu, presetContext),
+    videoInfo?.codec
   );
 
   // Inject color metadata passthrough and pix_fmt for video encodes (skip remux/audio/gif)

@@ -533,6 +533,7 @@ const elements = {
   moveOriginalToTrashOnSuccessCheck: getRequiredElement<HTMLInputElement>(
     'moveOriginalToTrashOnSuccessCheck'
   ),
+  trashOriginalNotice: getRequiredElement<HTMLParagraphElement>('trashOriginalNotice'),
   notifyOnConversionCompleteCheck: getRequiredElement<HTMLInputElement>(
     'notifyOnConversionCompleteCheck'
   ),
@@ -703,8 +704,7 @@ type QueueSummaryApi = {
 const getSetupWizard = (): SetupWizardApi | undefined =>
   (window as Window & { setupWizard?: SetupWizardApi }).setupWizard;
 
-const isSetupWizardBlockingUi = (): boolean =>
-  getSetupWizard()?.isSetupWizardVisible() ?? false;
+const isSetupWizardBlockingUi = (): boolean => getSetupWizard()?.isSetupWizardVisible() ?? false;
 
 const getQueueSummary = (): QueueSummaryApi | undefined =>
   (window as Window & { queueSummary?: QueueSummaryApi }).queueSummary;
@@ -1380,6 +1380,14 @@ const persistSettingsChange = async (
     rollback();
     showStatus('error', `${failurePrefix}: ${getErrorMessage(err)}`);
   }
+};
+
+/** Keeps the destructive-action reminder next to Convert in sync with settings. */
+const updateTrashOriginalNotice = (): void => {
+  elements.trashOriginalNotice.classList.toggle(
+    'u-hidden',
+    settings.moveOriginalToTrashOnSuccess !== true
+  );
 };
 
 const applyGpuModeUi = (): void => {
@@ -2472,7 +2480,7 @@ const handleAppMenuAction = (event: { action: string; payload?: { paths?: string
       break;
     case 'show-in-folder':
       if (lastOutputPath) {
-        void window.electronAPI.openPath(lastOutputPath);
+        void window.electronAPI.revealPath(lastOutputPath);
       }
       break;
     default:
@@ -2674,6 +2682,7 @@ const loadSettings = async () => {
   elements.useSystemFFmpegCheck.checked = settings.useSystemFFmpeg;
   elements.useCpuDecodingWhenGpuCheck.checked = settings.useCpuDecodingWhenGpu;
   elements.moveOriginalToTrashOnSuccessCheck.checked = settings.moveOriginalToTrashOnSuccess;
+  updateTrashOriginalNotice();
   elements.notifyOnConversionCompleteCheck.checked = settings.notifyOnConversionComplete !== false;
   elements.preventSleepWhileConvertingCheck.checked = settings.preventSleepWhileConverting === true;
   elements.showAllGpuVendorsCheck.checked = settings.showAllGpuVendors;
@@ -2860,8 +2869,7 @@ const setupKeyboardShortcuts = () => {
       !(e.target instanceof HTMLTextAreaElement) &&
       !(e.target instanceof HTMLSelectElement)
     ) {
-      const isModalOpen =
-        hasBlockingModalForShortcuts();
+      const isModalOpen = hasBlockingModalForShortcuts();
       if (!isModalOpen) {
         e.preventDefault();
         elements.presetSearch.focus();
@@ -3381,17 +3389,44 @@ const setupEventListeners = () => {
   elements.moveOriginalToTrashOnSuccessCheck.addEventListener('change', async () => {
     const nextValue = elements.moveOriginalToTrashOnSuccessCheck.checked;
     const previousValue = settings.moveOriginalToTrashOnSuccess;
-    await persistSettingsChange(
-      () => {
-        settings.moveOriginalToTrashOnSuccess = nextValue;
+
+    const persist = () =>
+      persistSettingsChange(
+        () => {
+          settings.moveOriginalToTrashOnSuccess = nextValue;
+        },
+        () => {
+          settings.moveOriginalToTrashOnSuccess = previousValue;
+          elements.moveOriginalToTrashOnSuccessCheck.checked = previousValue;
+          updateTrashOriginalNotice();
+        },
+        { moveOriginalToTrashOnSuccess: nextValue },
+        'Failed to save trash-on-success setting',
+        () => {
+          updateTrashOriginalNotice();
+        }
+      );
+
+    // Turning it off is always safe; turning it on deletes source files.
+    if (!nextValue) {
+      await persist();
+      return;
+    }
+
+    showModal({
+      title: 'Trash originals after conversion?',
+      message:
+        'Every successful conversion, including each file in a batch, will move the source file to the system trash. Files stay recoverable until the trash is emptied.',
+      confirmText: 'Enable',
+      cancelText: 'Keep originals',
+      confirmClass: 'btn-danger',
+      onConfirm: () => {
+        void persist();
       },
-      () => {
-        settings.moveOriginalToTrashOnSuccess = previousValue;
+      onCancel: () => {
         elements.moveOriginalToTrashOnSuccessCheck.checked = previousValue;
       },
-      { moveOriginalToTrashOnSuccess: nextValue },
-      'Failed to save trash-on-success setting'
-    );
+    });
   });
 
   elements.notifyOnConversionCompleteCheck.addEventListener('change', async () => {
@@ -3482,7 +3517,7 @@ const setupEventListeners = () => {
 
   elements.showInFolderBtn?.addEventListener('click', () => {
     if (lastOutputPath) {
-      window.electronAPI.openPath(lastOutputPath);
+      window.electronAPI.revealPath(lastOutputPath);
     }
   });
 
@@ -3881,6 +3916,58 @@ const resolvePreferredGpuVendor = async (
   };
 };
 
+/** Everything that affects how a single queue row is drawn. */
+const queueRowSignature = (item: QueueItemSnapshot): string =>
+  [
+    item.status,
+    item.error ?? '',
+    item.usedCpuFallback ? '1' : '0',
+    item.fileName,
+    isConverting ? '1' : '0',
+    lastQueueRunContext ? '1' : '0',
+  ].join('\u0001');
+
+const fillQueueRow = (li: HTMLLIElement, item: QueueItemSnapshot): void => {
+  li.className = `conversion-queue-item is-${item.status}`;
+  const name = document.createElement('span');
+  name.className = 'conversion-queue-name';
+  name.textContent = item.fileName;
+  name.title = item.error ? `${item.fileName}: ${item.error}` : item.fileName;
+  const status = document.createElement('span');
+  status.className = 'conversion-queue-status';
+  let statusLabel = item.status === 'done' && item.usedCpuFallback ? 'done (cpu)' : item.status;
+  if (item.status === 'failed' && item.error) {
+    statusLabel = item.error.length > 48 ? `${item.error.slice(0, 45)}…` : item.error;
+  }
+  status.textContent = statusLabel;
+  status.title = item.error || statusLabel;
+  const statusWrap = document.createElement('div');
+  statusWrap.className = 'conversion-queue-status-wrap';
+  statusWrap.append(status);
+  if (item.status === 'failed' && !isConverting && lastQueueRunContext) {
+    const retryOne = document.createElement('button');
+    retryOne.type = 'button';
+    retryOne.className = 'btn btn-secondary btn-xs conversion-queue-retry-one';
+    retryOne.textContent = 'Retry';
+    retryOne.setAttribute('aria-label', `Retry ${item.fileName}`);
+    retryOne.addEventListener('click', () => {
+      void runConversionWorkflow([item.inputPath]);
+    });
+    statusWrap.append(retryOne);
+  }
+  li.replaceChildren(name, statusWrap);
+};
+
+// Rows are cached by item id so a snapshot only repaints the rows that changed.
+// A full rebuild would be O(files) per snapshot, i.e. O(files²) per batch.
+const renderedQueueRows = new Map<string, { li: HTMLLIElement; signature: string }>();
+let renderedQueueKey = '';
+
+const resetQueueRowCache = (): void => {
+  renderedQueueRows.clear();
+  renderedQueueKey = '';
+};
+
 const renderConversionQueue = (snapshot: QueueSnapshot | null) => {
   if (snapshot && snapshot.total > 1) {
     lastQueueDisplaySnapshot = snapshot;
@@ -3896,7 +3983,8 @@ const renderConversionQueue = (snapshot: QueueSnapshot | null) => {
 
   if (!showBatchUi || !display) {
     elements.conversionQueue.hidden = true;
-    elements.conversionQueueList.innerHTML = '';
+    elements.conversionQueueList.replaceChildren();
+    resetQueueRowCache();
     elements.retryFailedQueueBtn.classList.add('u-hidden');
     if (snapshot === null && isConverting) {
       lastQueueDisplaySnapshot = null;
@@ -3905,44 +3993,34 @@ const renderConversionQueue = (snapshot: QueueSnapshot | null) => {
   }
 
   elements.conversionQueue.hidden = false;
-  elements.conversionQueueList.innerHTML = '';
   const failedCount = display.items.filter((item) => item.status === 'failed').length;
   elements.retryFailedQueueBtn.classList.toggle(
     'u-hidden',
     isConverting || failedCount === 0 || !lastQueueRunContext
   );
 
+  const nextKey = display.items.map((item) => item.id).join('\u0001');
+  if (nextKey !== renderedQueueKey) {
+    resetQueueRowCache();
+    const fragment = document.createDocumentFragment();
+    for (const item of display.items) {
+      const li = document.createElement('li');
+      fillQueueRow(li, item);
+      renderedQueueRows.set(item.id, { li, signature: queueRowSignature(item) });
+      fragment.appendChild(li);
+    }
+    elements.conversionQueueList.replaceChildren(fragment);
+    renderedQueueKey = nextKey;
+    return;
+  }
+
   for (const item of display.items) {
-    const li = document.createElement('li');
-    li.className = `conversion-queue-item is-${item.status}`;
-    const name = document.createElement('span');
-    name.className = 'conversion-queue-name';
-    name.textContent = item.fileName;
-    name.title = item.error ? `${item.fileName}: ${item.error}` : item.fileName;
-    const status = document.createElement('span');
-    status.className = 'conversion-queue-status';
-    let statusLabel = item.status === 'done' && item.usedCpuFallback ? 'done (cpu)' : item.status;
-    if (item.status === 'failed' && item.error) {
-      statusLabel = item.error.length > 48 ? `${item.error.slice(0, 45)}…` : item.error;
-    }
-    status.textContent = statusLabel;
-    status.title = item.error || statusLabel;
-    const statusWrap = document.createElement('div');
-    statusWrap.className = 'conversion-queue-status-wrap';
-    statusWrap.append(status);
-    if (item.status === 'failed' && !isConverting && lastQueueRunContext) {
-      const retryOne = document.createElement('button');
-      retryOne.type = 'button';
-      retryOne.className = 'btn btn-secondary btn-xs conversion-queue-retry-one';
-      retryOne.textContent = 'Retry';
-      retryOne.setAttribute('aria-label', `Retry ${item.fileName}`);
-      retryOne.addEventListener('click', () => {
-        void runConversionWorkflow([item.inputPath]);
-      });
-      statusWrap.append(retryOne);
-    }
-    li.append(name, statusWrap);
-    elements.conversionQueueList.appendChild(li);
+    const cached = renderedQueueRows.get(item.id);
+    if (!cached) continue;
+    const signature = queueRowSignature(item);
+    if (signature === cached.signature) continue;
+    fillQueueRow(cached.li, item);
+    cached.signature = signature;
   }
 };
 

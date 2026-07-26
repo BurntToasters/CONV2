@@ -5,10 +5,14 @@ sdk: org.freedesktop.Sdk
 base: org.electronjs.Electron2.BaseApp
 base-version: '24.08'
 sdk-extensions:
-  - org.freedesktop.Sdk.Extension.node22
+  # Must stay in sync with the Node major in package.json "engines".
+  - org.freedesktop.Sdk.Extension.node24
 command: conv2
 separate-locales: false
 
+# Keep this list identical to build.flatpak.finishArgs in package.json.
+# tests/flatpak-parity.test.js enforces it. The app only needs its own
+# sandboxed /tmp, so the host /tmp is deliberately not shared.
 finish-args:
   - --share=ipc
   - --socket=x11
@@ -19,14 +23,13 @@ finish-args:
   - --filesystem=home
   - --filesystem=xdg-videos
   - --filesystem=xdg-download
-  - --filesystem=/tmp
   - --env=ELECTRON_OZONE_PLATFORM_HINT=auto
 
 modules:
   - name: conv2
     buildsystem: simple
     build-options:
-      append-path: /usr/lib/sdk/node22/bin
+      append-path: /usr/lib/sdk/node24/bin
       build-args:
         - --share=network
       env:
