@@ -329,6 +329,7 @@ let convertBtnOriginalHTML = '';
 let checkUpdateDefaultHTML = '';
 let manualUpdateCheckInProgress = false;
 let updateDownloadInProgress = false;
+let updateAvailablePending = false;
 let updateReadyToInstall = false;
 let ffmpegInstalled = true;
 let cancelRequested = false;
@@ -2016,7 +2017,7 @@ const persistAdvancedFormatSettings = async (
       advancedFormatSettings: nextAdvancedSettings,
     });
     const refreshed = await window.electronAPI.getSettings();
-    settings = refreshed;
+    settings.advancedFormatSettings = refreshed.advancedFormatSettings;
     if (!areAdvancedSettingsEqual(refreshed.advancedFormatSettings, nextAdvancedSettings)) {
       setAdvancedFormatControlValues(refreshed.advancedFormatSettings);
     }
@@ -2056,7 +2057,9 @@ const resetFormatSettingsToDefaults = async (
           [format]: defaults[format],
         } as unknown as AdvancedFormatSettings,
       });
-      settings = await window.electronAPI.getSettings();
+      settings.advancedFormatSettings = (
+        await window.electronAPI.getSettings()
+      ).advancedFormatSettings;
       setAdvancedFormatControlValues(settings.advancedFormatSettings);
     } catch (err) {
       settings.advancedFormatSettings = previousSettings;
@@ -2436,6 +2439,10 @@ const openLogsModal = (): void => {
     return;
   }
   if (!settings.showDebugOutput) {
+    showStatus(
+      'warning',
+      'Debug logging is off. Enable “Show debug output” in Settings → Debug to view logs.'
+    );
     return;
   }
   flushLogBuffer();
@@ -2470,7 +2477,19 @@ const handleAppMenuAction = (event: { action: string; payload?: { paths?: string
       }
       break;
     case 'cancel-conversion':
-      void cancelConversion();
+      if (isConverting) {
+        showModal({
+          title: 'Cancel Conversion',
+          message:
+            'Are you sure you want to cancel the conversion? The partial file will be deleted.',
+          confirmText: 'Yes, Cancel',
+          cancelText: 'No, Continue',
+          confirmClass: 'btn-danger',
+          onConfirm: () => {
+            void cancelConversion();
+          },
+        });
+      }
       break;
     case 'show-logs':
       openLogsModal();
@@ -3498,12 +3517,22 @@ const setupEventListeners = () => {
 
   elements.cancelBtn.addEventListener('click', () => {
     if (isConverting) {
-      cancelConversion();
+      showModal({
+        title: 'Cancel Conversion',
+        message:
+          'Are you sure you want to cancel the conversion? The partial file will be deleted.',
+        confirmText: 'Yes, Cancel',
+        cancelText: 'No, Continue',
+        confirmClass: 'btn-danger',
+        onConfirm: () => {
+          void cancelConversion();
+        },
+      });
     }
   });
 
   elements.retryFailedQueueBtn.addEventListener('click', () => {
-    if (isConverting || !lastQueueDisplaySnapshot || !lastQueueRunContext) {
+    if (isConverting || conversionStarting || !lastQueueDisplaySnapshot || !lastQueueRunContext) {
       return;
     }
     const failedPaths = lastQueueDisplaySnapshot.items
@@ -3661,9 +3690,20 @@ const setupEventListeners = () => {
       return;
     }
 
+    if (updateAvailablePending) {
+      updateAvailablePending = false;
+      updateDownloadInProgress = true;
+      setCheckUpdateButtonState(getDownloadingUpdateButtonHTML(), true);
+      void window.electronAPI.downloadUpdate().catch(() => {
+        updateDownloadInProgress = false;
+        updateAvailablePending = true;
+        setCheckUpdateButtonState(getUpdateAvailableButtonHTML(), false, true);
+      });
+      return;
+    }
+
     manualUpdateCheckInProgress = true;
     updateDownloadInProgress = false;
-    updateReadyToInstall = false;
     setCheckUpdateButtonState(getCheckingUpdateButtonHTML(), true);
     window.electronAPI.checkForUpdates();
   });
@@ -3674,13 +3714,17 @@ const setupEventListeners = () => {
     if (phase === 'checking') {
       manualUpdateCheckInProgress = payload.manual;
       updateDownloadInProgress = false;
-      updateReadyToInstall = false;
+      if (updateReadyToInstall) {
+        return;
+      }
+      updateAvailablePending = false;
       setCheckUpdateButtonState(getCheckingUpdateButtonHTML(), true);
       return;
     }
 
     if (phase === 'downloading') {
       updateDownloadInProgress = true;
+      updateAvailablePending = false;
       updateReadyToInstall = false;
       setCheckUpdateButtonState(getDownloadingUpdateButtonHTML(percent), true);
       return;
@@ -3688,6 +3732,7 @@ const setupEventListeners = () => {
 
     if (phase === 'available') {
       elements.updateBadge.classList.remove('u-hidden');
+      updateAvailablePending = true;
       setCheckUpdateButtonState(getUpdateAvailableButtonHTML(), false, true);
       manualUpdateCheckInProgress = false;
       updateDownloadInProgress = false;
@@ -3697,6 +3742,7 @@ const setupEventListeners = () => {
 
     if (phase === 'installing') {
       updateDownloadInProgress = false;
+      updateAvailablePending = false;
       updateReadyToInstall = false;
       setCheckUpdateButtonState(getInstallingUpdateButtonHTML(), true);
       return;
@@ -3704,6 +3750,7 @@ const setupEventListeners = () => {
 
     if (phase === 'downloaded') {
       updateDownloadInProgress = false;
+      updateAvailablePending = false;
       updateReadyToInstall = true;
       elements.updateBadge.classList.remove('u-hidden');
       setCheckUpdateButtonState(getInstallUpdateButtonHTML(), false, true);
@@ -3711,6 +3758,14 @@ const setupEventListeners = () => {
     }
 
     if (phase === 'not-available' || phase === 'disabled') {
+      updateAvailablePending = false;
+      if (phase === 'not-available' && updateReadyToInstall) {
+        setCheckUpdateButtonState(getInstallUpdateButtonHTML(), false, true);
+        elements.updateBadge.classList.remove('u-hidden');
+        manualUpdateCheckInProgress = false;
+        updateDownloadInProgress = false;
+        return;
+      }
       elements.updateBadge.classList.add('u-hidden');
       setCheckUpdateButtonState(checkUpdateDefaultHTML, false);
       manualUpdateCheckInProgress = false;
@@ -3720,13 +3775,29 @@ const setupEventListeners = () => {
     }
 
     if (phase === 'already-checking') {
-      setCheckUpdateButtonState(getCheckingUpdateButtonHTML(), true);
+      if (!updateReadyToInstall) {
+        setCheckUpdateButtonState(getCheckingUpdateButtonHTML(), true);
+      }
       return;
     }
 
     if (phase === 'error') {
+      const wasDownloading = updateDownloadInProgress;
       manualUpdateCheckInProgress = false;
       updateDownloadInProgress = false;
+      if (updateReadyToInstall) {
+        updateAvailablePending = false;
+        setCheckUpdateButtonState(getInstallUpdateButtonHTML(), false, true);
+        elements.updateBadge.classList.remove('u-hidden');
+        return;
+      }
+      if (wasDownloading) {
+        updateAvailablePending = true;
+        elements.updateBadge.classList.remove('u-hidden');
+        setCheckUpdateButtonState(getUpdateAvailableButtonHTML(), false, true);
+        return;
+      }
+      updateAvailablePending = false;
       updateReadyToInstall = false;
       setCheckUpdateButtonState(checkUpdateDefaultHTML, false);
       elements.updateBadge.classList.add('u-hidden');
@@ -3951,6 +4022,9 @@ const fillQueueRow = (li: HTMLLIElement, item: QueueItemSnapshot): void => {
     retryOne.textContent = 'Retry';
     retryOne.setAttribute('aria-label', `Retry ${item.fileName}`);
     retryOne.addEventListener('click', () => {
+      if (isConverting || conversionStarting) {
+        return;
+      }
       void runConversionWorkflow([item.inputPath]);
     });
     statusWrap.append(retryOne);
@@ -4036,171 +4110,179 @@ const finishConversionUi = () => {
 };
 
 const runConversionWorkflow = async (inputPathsOverride?: string[]) => {
-  await waitForAdvancedSettingsIdle();
-
-  const filesToConvert =
-    inputPathsOverride && inputPathsOverride.length > 0
-      ? [...inputPathsOverride]
-      : [...selectedFiles];
-
-  if (filesToConvert.length === 0) return;
-
-  const presetId = inputPathsOverride
-    ? (lastQueueRunContext?.presetId ?? selectedPresetId)
-    : selectedPresetId;
-  if (!presetId) {
-    showStatus('error', 'Select a conversion preset first');
+  if (isConverting || conversionStarting) {
     return;
   }
-  const preset = presets.find((entry) => entry.id === presetId);
-  if (!preset) {
-    showStatus('error', 'Selected preset is no longer available');
-    return;
-  }
+
+  conversionStarting = true;
+  elements.convertBtn.disabled = true;
 
   try {
-    await rememberRecentPreset(presetId);
-  } catch {}
+    await waitForAdvancedSettingsIdle();
 
-  let resolvedGpuVendor: GPUVendor = 'cpu';
-  if (inputPathsOverride && lastQueueRunContext) {
-    resolvedGpuVendor = lastQueueRunContext.gpu;
-  } else {
+    if (isConverting) {
+      return;
+    }
+
+    const filesToConvert =
+      inputPathsOverride && inputPathsOverride.length > 0
+        ? [...inputPathsOverride]
+        : [...selectedFiles];
+
+    if (filesToConvert.length === 0) return;
+
+    const presetId = inputPathsOverride
+      ? (lastQueueRunContext?.presetId ?? selectedPresetId)
+      : selectedPresetId;
+    if (!presetId) {
+      showStatus('error', 'Select a conversion preset first');
+      return;
+    }
+    const preset = presets.find((entry) => entry.id === presetId);
+    if (!preset) {
+      showStatus('error', 'Selected preset is no longer available');
+      return;
+    }
+
     try {
-      const resolvedGpu = await resolvePreferredGpuVendor(preset);
-      resolvedGpuVendor = resolvedGpu.gpu;
-    } catch {
-      resolvedGpuVendor = 'cpu';
+      await rememberRecentPreset(presetId);
+    } catch {}
+
+    let resolvedGpuVendor: GPUVendor = 'cpu';
+    if (inputPathsOverride && lastQueueRunContext) {
+      resolvedGpuVendor = lastQueueRunContext.gpu;
+    } else {
+      try {
+        const resolvedGpu = await resolvePreferredGpuVendor(preset);
+        resolvedGpuVendor = resolvedGpu.gpu;
+      } catch {
+        resolvedGpuVendor = 'cpu';
+      }
     }
-  }
 
-  lastQueueRunContext = {
-    presetId,
-    gpu: resolvedGpuVendor,
-    removeSpacesFromFilenames: settings.removeSpacesFromFilenames,
-    outputDirectory: settings.outputDirectory,
-    showDebugOutput: settings.showDebugOutput,
-  };
+    lastQueueRunContext = {
+      presetId,
+      gpu: resolvedGpuVendor,
+      removeSpacesFromFilenames: settings.removeSpacesFromFilenames,
+      outputDirectory: settings.outputDirectory,
+      showDebugOutput: settings.showDebugOutput,
+    };
 
-  isConverting = true;
-  cancelRequested = false;
-  syncConversionMenuState();
-  elements.convertBtn.classList.add('converting');
-  elements.cancelBtn.classList.remove('u-hidden');
-  elements.progressContainer.classList.add('visible');
-  elements.showInFolderBtn.classList.add('u-hidden');
-  pendingProgressUpdate = null;
-  progressUpdateScheduled = false;
-  pendingLogBuffer = '';
-  elements.logsContent.textContent = '';
-  hideStatus();
-  conversionStartTime = Date.now();
-  elements.progressFill.style.width = '0%';
-  elements.progressFill.setAttribute('aria-valuenow', '0');
-  elements.progressPercent.textContent = '0%';
-  elements.progressTime.textContent = '00:00:00';
-  elements.progressEta.textContent = '';
-  elements.progressSpeed.textContent = '';
-  elements.progressBatchSummary.textContent = '';
-  renderConversionQueue(null);
-
-  const totalFiles = filesToConvert.length;
-  let unexpectedError: string | null = null;
-  let snapshot: QueueSnapshot | null = null;
-
-  const unsubQueue = window.electronAPI.onConversionQueueUpdated((next) => {
-    snapshot = next;
-    renderConversionQueue(next);
-    const running = next.items.find((item) => item.status === 'running');
-    if (running && next.total > 1) {
-      elements.progressBatchSummary.textContent = `File ${next.currentIndex + 1} of ${next.total}: ${running.fileName}`;
-      showStatus(
-        'warning',
-        `Converting ${next.currentIndex + 1}/${next.total}: ${running.fileName}`
-      );
-    }
-  });
-
-  try {
-    snapshot = await window.electronAPI.startConversionQueue({
-      inputPaths: filesToConvert,
-      presetId: lastQueueRunContext.presetId,
-      gpu: lastQueueRunContext.gpu,
-      removeSpacesFromFilenames: lastQueueRunContext.removeSpacesFromFilenames,
-      outputDirectory: lastQueueRunContext.outputDirectory,
-      showDebugOutput: lastQueueRunContext.showDebugOutput,
-    });
-    renderConversionQueue(snapshot);
-  } catch (err) {
-    unexpectedError = err instanceof Error ? err.message : String(err);
-  } finally {
-    unsubQueue();
-  }
-
-  const wasCancelled =
-    cancelRequested || snapshot?.items.some((item) => item.status === 'cancelled');
-  finishConversionUi();
-  renderConversionQueue(null);
-
-  if (unexpectedError) {
-    showStatus('error', `Conversion failed: ${unexpectedError}`);
-    elements.showInFolderBtn.classList.add('u-hidden');
-    return;
-  }
-
-  const items = snapshot?.items ?? [];
-  const successItems = items.filter((item) => item.status === 'done');
-  const lastSuccess = [...successItems].reverse().find((item) => item.outputPath);
-  if (lastSuccess?.outputPath) {
-    lastOutputPath = lastSuccess.outputPath;
+    isConverting = true;
+    cancelRequested = false;
     syncConversionMenuState();
-  }
+    elements.convertBtn.classList.add('converting');
+    elements.cancelBtn.classList.remove('u-hidden');
+    elements.progressContainer.classList.add('visible');
+    elements.showInFolderBtn.classList.add('u-hidden');
+    pendingProgressUpdate = null;
+    progressUpdateScheduled = false;
+    pendingLogBuffer = '';
+    elements.logsContent.textContent = '';
+    hideStatus();
+    conversionStartTime = Date.now();
+    elements.progressFill.style.width = '0%';
+    elements.progressFill.setAttribute('aria-valuenow', '0');
+    elements.progressPercent.textContent = '0%';
+    elements.progressTime.textContent = '00:00:00';
+    elements.progressEta.textContent = '';
+    elements.progressSpeed.textContent = '';
+    elements.progressBatchSummary.textContent = '';
+    renderConversionQueue(null);
 
-  if (totalFiles === 1) {
+    const totalFiles = filesToConvert.length;
+    let unexpectedError: string | null = null;
+    let snapshot: QueueSnapshot | null = null;
+
+    const unsubQueue = window.electronAPI.onConversionQueueUpdated((next) => {
+      snapshot = next;
+      renderConversionQueue(next);
+      const running = next.items.find((item) => item.status === 'running');
+      if (running && next.total > 1) {
+        elements.progressBatchSummary.textContent = `File ${next.currentIndex + 1} of ${next.total}: ${running.fileName}`;
+        showStatus(
+          'warning',
+          `Converting ${next.currentIndex + 1}/${next.total}: ${running.fileName}`
+        );
+      }
+    });
+
+    try {
+      snapshot = await window.electronAPI.startConversionQueue({
+        inputPaths: filesToConvert,
+        presetId: lastQueueRunContext.presetId,
+        gpu: lastQueueRunContext.gpu,
+        removeSpacesFromFilenames: lastQueueRunContext.removeSpacesFromFilenames,
+        outputDirectory: lastQueueRunContext.outputDirectory,
+        showDebugOutput: lastQueueRunContext.showDebugOutput,
+      });
+      renderConversionQueue(snapshot);
+    } catch (err) {
+      unexpectedError = err instanceof Error ? err.message : String(err);
+    } finally {
+      unsubQueue();
+    }
+
+    const wasCancelled =
+      cancelRequested || snapshot?.items.some((item) => item.status === 'cancelled');
+    finishConversionUi();
+    renderConversionQueue(null);
+
+    if (unexpectedError) {
+      showStatus('error', `Conversion failed: ${unexpectedError}`);
+      elements.showInFolderBtn.classList.add('u-hidden');
+      return;
+    }
+
+    const items = snapshot?.items ?? [];
+    const successItems = items.filter((item) => item.status === 'done');
+    const lastSuccess = [...successItems].reverse().find((item) => item.outputPath);
+    if (lastSuccess?.outputPath) {
+      lastOutputPath = lastSuccess.outputPath;
+      syncConversionMenuState();
+    }
+
+    if (totalFiles === 1) {
+      const uiStatus = conv2QueueUiStatus({ total: totalFiles, items }, { wasCancelled });
+      showStatus(uiStatus.type, uiStatus.message);
+      if (items[0]?.status === 'done') {
+        elements.showInFolderBtn.classList.remove('u-hidden');
+      } else {
+        elements.showInFolderBtn.classList.add('u-hidden');
+      }
+      return;
+    }
+
     const uiStatus = conv2QueueUiStatus({ total: totalFiles, items }, { wasCancelled });
     showStatus(uiStatus.type, uiStatus.message);
-    if (items[0]?.status === 'done') {
+
+    const successCount = successItems.length;
+
+    if (successCount > 0) {
       elements.showInFolderBtn.classList.remove('u-hidden');
     } else {
       elements.showInFolderBtn.classList.add('u-hidden');
     }
-    return;
-  }
-
-  const uiStatus = conv2QueueUiStatus({ total: totalFiles, items }, { wasCancelled });
-  showStatus(uiStatus.type, uiStatus.message);
-
-  const successCount = successItems.length;
-
-  if (successCount > 0) {
-    elements.showInFolderBtn.classList.remove('u-hidden');
-  } else {
-    elements.showInFolderBtn.classList.add('u-hidden');
+  } finally {
+    conversionStarting = false;
+    syncConversionMenuState();
+    if (!isConverting) {
+      elements.convertBtn.disabled = !ffmpegInstalled || selectedFiles.length === 0;
+    }
   }
 };
 
 const startConversion = (): void => {
-  if (isConverting || conversionStarting) return;
-
-  conversionStarting = true;
-  elements.convertBtn.disabled = true;
-  void runConversionWorkflow()
-    .catch((error) => {
-      if (isConverting) {
-        finishConversionUi();
-      }
-      showStatus(
-        'error',
-        `Conversion failed to start: ${error instanceof Error ? error.message : String(error)}`
-      );
-    })
-    .finally(() => {
-      conversionStarting = false;
-      syncConversionMenuState();
-      if (!isConverting) {
-        elements.convertBtn.disabled = !ffmpegInstalled || selectedFiles.length === 0;
-      }
-    });
+  void runConversionWorkflow().catch((error) => {
+    if (isConverting) {
+      finishConversionUi();
+    }
+    showStatus(
+      'error',
+      `Conversion failed to start: ${error instanceof Error ? error.message : String(error)}`
+    );
+    elements.convertBtn.disabled = !ffmpegInstalled || selectedFiles.length === 0;
+  });
 };
 
 const cancelConversion = async () => {
