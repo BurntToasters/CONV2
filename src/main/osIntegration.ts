@@ -32,7 +32,7 @@ export interface JumpListDeps {
 let activeConversionSessions = 0;
 let powerBlockerId: number | null = null;
 let queueProgressScope: QueueProgressScope | null = null;
-let notificationPermissionRequested = false;
+let cachedNotificationPermission: 'granted' | 'denied' | 'default' | null = null;
 
 export const computeOverallProgress = (
   percent: number,
@@ -55,7 +55,10 @@ export const summarizeQueueForNotification = (
 
 export const initOsIntegration = (): void => {
   if (process.platform === 'win32') {
-    app.setAppUserModelId('com.burnttoasters.conv2');
+    const flags = process as NodeJS.Process & { windowsStore?: boolean };
+    if (flags.windowsStore !== true) {
+      app.setAppUserModelId('com.burnttoasters.conv2');
+    }
   }
 
   if (process.platform === 'darwin') {
@@ -119,10 +122,12 @@ const ensureNotificationPermission = async (): Promise<boolean> => {
   if (process.platform !== 'darwin') {
     return true;
   }
-  if (notificationPermissionRequested) {
+  if (cachedNotificationPermission === 'denied') {
+    return false;
+  }
+  if (cachedNotificationPermission === 'granted' || cachedNotificationPermission === 'default') {
     return true;
   }
-  notificationPermissionRequested = true;
   const notificationCtor = Notification as typeof Notification & {
     requestPermission?: () => Promise<'granted' | 'denied' | 'default'>;
   };
@@ -130,6 +135,7 @@ const ensureNotificationPermission = async (): Promise<boolean> => {
     return true;
   }
   const permission = await notificationCtor.requestPermission();
+  cachedNotificationPermission = permission;
   return permission === 'granted' || permission === 'default';
 };
 

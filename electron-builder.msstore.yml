@@ -12,6 +12,16 @@ asarUnpack:
 win:
   target: appx
   icon: assets/icon.ico
+  # Must mirror package.json build.win.extraResources — --config replaces, does not merge.
+  extraResources:
+    - from: resources/ffmpeg/win/${arch}
+      to: ffmpeg
+    - from: resources/ffmpeg/NOTICE.txt
+      to: ffmpeg/NOTICE.txt
+    - from: resources/ffmpeg/ffmpeg_license.txt
+      to: ffmpeg/LICENSE.txt
+    - from: resources/ffmpeg/SOURCE_OFFER.txt
+      to: ffmpeg/SOURCE_OFFER.txt
 appx:
   identityName: BurntToasters.CONV2
   publisher: CN=BC0CB990-55E8-4580-97B7-1E2DAA4B44F6

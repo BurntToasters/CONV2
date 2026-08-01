@@ -1019,6 +1019,18 @@ export const convertVideo = async (
     // ignore
   }
   if (preset.category === 'remux') {
+    if (!videoInfo || !inputCodec) {
+      try {
+        fs.unlinkSync(outputPath);
+      } catch {
+        /* best-effort placeholder cleanup */
+      }
+      return {
+        success: false,
+        outputPath: '',
+        error: 'Could not read input media for remux. The file may be unreadable or corrupt.',
+      };
+    }
     const remuxIssue = getRemuxIncompatibilityReason(
       inputCodec,
       preset.extension,
@@ -1149,6 +1161,19 @@ export const convertVideo = async (
       );
       currentProcess = ffmpegProcess;
       outputPathByProcess.set(ffmpegProcess, outputPath);
+
+      const onAbortSignal = (): void => {
+        conversionCanceled = true;
+        canceledProcesses.add(ffmpegProcess);
+        forceKillProcess(ffmpegProcess);
+      };
+      if (options.signal) {
+        if (options.signal.aborted) {
+          onAbortSignal();
+        } else {
+          options.signal.addEventListener('abort', onAbortSignal, { once: true });
+        }
+      }
 
       let errorOutput = '';
       let lastProgressEmitAt = 0;

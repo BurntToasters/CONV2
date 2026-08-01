@@ -36,7 +36,10 @@ jobs:
         run: npx tsc --noEmit
 
       - name: Audit dependencies
-        run: npm audit --omit=dev --audit-level=high
+        run: |
+          npm audit --omit=dev --audit-level=high
+          # Electron (Chromium runtime) is a devDependency; still audit it.
+          npm audit --audit-level=high
 
   test:
     name: Test

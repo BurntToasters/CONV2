@@ -36,6 +36,7 @@ import {
   initUpdater,
   checkForUpdates,
   checkForUpdatesSilent,
+  downloadAvailableUpdate,
   installDownloadedUpdate,
   isUpdateDisabled,
   isUpdateReadyToInstall,
@@ -132,6 +133,19 @@ app.on('second-instance', (_event, argv) => {
   if (jump) {
     void runConv2JumpAction(jump, getJumpListDeps());
   }
+  const candidatePaths = argv.filter((arg) => {
+    if (typeof arg !== 'string' || arg.length === 0) {
+      return false;
+    }
+    if (arg.startsWith('-')) {
+      return false;
+    }
+    if (arg === process.execPath) {
+      return false;
+    }
+    return path.isAbsolute(arg);
+  });
+  ingestOpenPaths(candidatePaths);
 });
 
 const pendingOpenPaths: string[] = [];
@@ -350,10 +364,19 @@ const normalizeSettings = (value: unknown): AppSettings => {
 
   return {
     settingsSchemaVersion: SETTINGS_SCHEMA_VERSION,
-    outputDirectory:
-      typeof incoming.outputDirectory === 'string'
-        ? incoming.outputDirectory
-        : defaults.outputDirectory,
+    outputDirectory: (() => {
+      if (typeof incoming.outputDirectory !== 'string') {
+        return defaults.outputDirectory;
+      }
+      const trimmed = incoming.outputDirectory.trim();
+      if (!trimmed) {
+        return '';
+      }
+      if (!path.isAbsolute(trimmed)) {
+        return '';
+      }
+      return path.resolve(trimmed);
+    })(),
     gpu: normalizedManualVendor,
     gpuMode: normalizedMode,
     gpuManualVendor: normalizedManualVendor,
@@ -707,7 +730,7 @@ const loadSettings = (): void => {
   setUseSystemFFmpeg(settings.useSystemFFmpeg);
   clearFFmpegCaches();
   if (shouldPersist) {
-    saveSettings();
+    trySaveSettings();
   }
 };
 
@@ -728,10 +751,16 @@ const writeJsonAtomic = (filePath: string, value: unknown): void => {
 };
 
 const saveSettings = (): void => {
+  writeJsonAtomic(getSettingsPath(), settings);
+};
+
+const trySaveSettings = (): boolean => {
   try {
-    writeJsonAtomic(getSettingsPath(), settings);
+    saveSettings();
+    return true;
   } catch (err) {
     console.error('Failed to save settings:', err);
+    return false;
   }
 };
 
@@ -1180,23 +1209,43 @@ const performSingleConversion = async (
     }
 
     if (result.success && settings.moveOriginalToTrashOnSuccess) {
-      try {
-        await shell.trashItem(resolvedInputPath);
-        if (showDebugOutput) {
-          mainWindow?.webContents.send(
-            'conversion-log',
-            redactPaths(`Moved original file to trash: ${resolvedInputPath}\n`)
-          );
+      const shouldSkipTrash = conversionAbortController.signal.aborted || queueCancelled === true;
+      let outputReady = false;
+      if (!shouldSkipTrash && result.outputPath) {
+        try {
+          const outputStat = fs.statSync(result.outputPath);
+          outputReady = outputStat.isFile() && outputStat.size > 0;
+        } catch {
+          outputReady = false;
         }
-      } catch (trashError) {
-        if (showDebugOutput) {
+      }
+
+      if (!shouldSkipTrash && outputReady) {
+        try {
+          await shell.trashItem(resolvedInputPath);
+          if (showDebugOutput) {
+            mainWindow?.webContents.send(
+              'conversion-log',
+              redactPaths(`Moved original file to trash: ${resolvedInputPath}\n`)
+            );
+          }
+        } catch (trashError) {
           const errorMessage =
             trashError instanceof Error ? trashError.message : String(trashError);
           mainWindow?.webContents.send(
             'conversion-log',
             redactPaths(`Failed to move original file to trash: ${errorMessage}\n`)
           );
+          result = {
+            ...result,
+            error: result.error
+              ? `${result.error}; also failed to trash original: ${errorMessage}`
+              : `Conversion succeeded but failed to trash original: ${errorMessage}`,
+          };
         }
+      } else if (!shouldSkipTrash && !outputReady) {
+        const message = 'Skipped trashing original: output file missing or empty.';
+        mainWindow?.webContents.send('conversion-log', redactPaths(`${message}\n`));
       }
     }
 
@@ -1482,7 +1531,12 @@ ipcMain.handle('save-settings', (event: IpcMainInvokeEvent, newSettings: SaveSet
     uiPanels: nextUiPanels,
     advancedFormatSettings: nextAdvancedFormatSettings,
   });
-  saveSettings();
+  try {
+    saveSettings();
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    throw new Error(`Failed to save settings: ${message}`);
+  }
   if (safeIncomingSettings.updateChannel !== undefined) {
     setUpdateChannel(nextUpdateChannel);
   }
@@ -1507,6 +1561,11 @@ ipcMain.handle('save-settings', (event: IpcMainInvokeEvent, newSettings: SaveSet
 ipcMain.handle('check-for-updates', (event: IpcMainInvokeEvent) => {
   assertTrustedIpcSender(event);
   checkForUpdates();
+});
+
+ipcMain.handle('download-update', (event: IpcMainInvokeEvent) => {
+  assertTrustedIpcSender(event);
+  downloadAvailableUpdate();
 });
 
 ipcMain.handle('install-update', async (event: IpcMainInvokeEvent) => {
@@ -1570,7 +1629,12 @@ ipcMain.handle('reset-settings', (event: IpcMainInvokeEvent) => {
   setUpdateChannel(settings.updateChannel);
   setUseSystemFFmpeg(settings.useSystemFFmpeg);
   clearFFmpegCaches();
-  saveSettings();
+  try {
+    saveSettings();
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    throw new Error(`Failed to reset settings: ${message}`);
+  }
   syncNativeThemeSource();
   return settings;
 });

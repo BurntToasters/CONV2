@@ -24,11 +24,15 @@ test('conversion cancellation aborts preflight as well as FFmpeg', () => {
 
 test('renderer locks conversion startup before asynchronous preparation', () => {
   const source = read('src/renderer/renderer.ts');
-  assert.match(source, /if \(isConverting \|\| conversionStarting\) return;/);
   assert.match(
     source,
-    /conversionStarting = true;\s*elements\.convertBtn\.disabled = true;\s*void runConversionWorkflow\(\)/
+    /const runConversionWorkflow = async[\s\S]*?if \(isConverting \|\| conversionStarting\) \{\s*return;\s*\}/
   );
+  assert.match(
+    source,
+    /conversionStarting = true;\s*elements\.convertBtn\.disabled = true;\s*try \{\s*await waitForAdvancedSettingsIdle\(\)/
+  );
+  assert.match(source, /void runConversionWorkflow\(\)\.catch\(/);
 });
 
 test('font license notice is copied with renderer fonts', () => {

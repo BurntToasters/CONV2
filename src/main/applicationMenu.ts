@@ -193,6 +193,24 @@ const buildTemplate = (deps: ApplicationMenuDeps): MenuItemConstructorOptions[] 
         },
       },
       { type: 'separator' },
+      ...(!isMac
+        ? ([
+            {
+              label: 'Check for Updates…',
+              enabled: !updatesDisabled,
+              click: () => deps.checkForUpdates(),
+            },
+            {
+              id: 'install-update',
+              label: 'Install Update…',
+              enabled: installReady,
+              click: () => {
+                void deps.installDownloadedUpdate().catch(() => undefined);
+              },
+            },
+            { type: 'separator' as const },
+          ] as MenuItemConstructorOptions[])
+        : []),
       {
         label: 'View Credits',
         click: () => deps.sendMenuAction('open-credits'),

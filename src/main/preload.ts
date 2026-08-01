@@ -229,6 +229,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   // Updates
   checkForUpdates: (): Promise<void> => ipcRenderer.invoke('check-for-updates'),
+  downloadUpdate: (): Promise<void> => ipcRenderer.invoke('download-update'),
   installUpdate: (): Promise<void> => ipcRenderer.invoke('install-update'),
   isUpdatesDisabled: (): Promise<boolean> => ipcRenderer.invoke('is-updates-disabled'),
   onUpdateStatus: (callback: (message: string) => void): (() => void) =>
@@ -312,6 +313,7 @@ declare global {
       getDefaultAdvancedFormatSettings: () => Promise<AdvancedFormatSettings>;
       saveSettings: (settings: SaveSettingsPayload) => Promise<void>;
       checkForUpdates: () => Promise<void>;
+      downloadUpdate: () => Promise<void>;
       installUpdate: () => Promise<void>;
       isUpdatesDisabled: () => Promise<boolean>;
       onUpdateStatus: (callback: (message: string) => void) => () => void;

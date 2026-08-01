@@ -221,6 +221,17 @@ function runConfigChecks() {
       msstoreConfig.win?.target === 'appx',
       'electron-builder.msstore.yml: win.target must be appx'
     );
+    assertConfig(
+      Array.isArray(msstoreConfig.win?.extraResources) &&
+        msstoreConfig.win.extraResources.some(
+          (entry) =>
+            entry &&
+            typeof entry === 'object' &&
+            typeof entry.from === 'string' &&
+            entry.from.includes('resources/ffmpeg/win')
+        ),
+      'electron-builder.msstore.yml: win.extraResources must include FFmpeg binaries'
+    );
 
     const requiredFiles = [
       'src/main/main.ts',
