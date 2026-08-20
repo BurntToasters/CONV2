@@ -90,7 +90,7 @@
     "release:beta:mac": "node build-scripts/release-beta.js release:mac",
     "release:beta:linux": "node build-scripts/release-beta.js release:linux",
     "sign:gpg": "dotenv -- node build-scripts/gpg-sign.js",
-    "licenses": "npm exec -- license-checker-rseidelsohn --production --json --out licenses.json",
+    "licenses": "npm exec --offline -- license-checker-rseidelsohn --production --json --out licenses.json",
     "format": "prettier --write \"src/**/*.{ts,js,html,css}\" \"build/**/*.js\" \"build-scripts/**/*.js\" \"tests/**/*.js\" \"*.{json,md,yml,yaml}\"",
     "format:check": "prettier --check \"src/**/*.{ts,js,html,css}\" \"build/**/*.js\" \"build-scripts/**/*.js\" \"tests/**/*.js\" \"*.{json,md,yml,yaml}\"",
     "test": "npm run tests:node",
@@ -103,7 +103,8 @@
     "test:ffmpeg": "npm run compile && node --test tests/ffmpeg-integration.test.js",
     "test:ffmpeg:required": "npm run compile && cross-env CONV2_REQUIRE_FFMPEG_TESTS=1 node --test tests/ffmpeg-integration.test.js",
     "typecheck": "tsc --noEmit",
-    "release:prepare": "node build/update-metainfo.js",
+    "release:deps": "npm ci",
+    "release:prepare": "npm run release:deps && node build/update-metainfo.js",
     "release:finalize": "node build/post-release-assets.js"
   },
   "engines": {
