@@ -22,6 +22,10 @@ function requiresRealPayload(env = process.env) {
   return env.GITHUB_EVENT_NAME === 'push' && isTrustedReleaseRef(env.GITHUB_REF || '');
 }
 
+function commandRequiresShell(command, platform = process.platform) {
+  return platform === 'win32' && /\.cmd$/iu.test(command);
+}
+
 function run(env = process.env) {
   if (!env.FFMPEG_DL_SERVER?.trim()) {
     if (requiresRealPayload(env)) {
@@ -39,7 +43,11 @@ function run(env = process.env) {
   const platform =
     process.platform === 'win32' ? 'win' : process.platform === 'darwin' ? 'mac' : 'linux';
 
-  execFileSync(npmCommand, ['run', 'get:ffmpeg'], { stdio: 'inherit', env });
+  execFileSync(npmCommand, ['run', 'get:ffmpeg'], {
+    stdio: 'inherit',
+    env,
+    shell: commandRequiresShell(npmCommand),
+  });
   execFileSync(
     process.execPath,
     [
@@ -63,4 +71,4 @@ if (require.main === module) {
   }
 }
 
-module.exports = { isTrustedReleaseRef, requiresRealPayload, run };
+module.exports = { commandRequiresShell, isTrustedReleaseRef, requiresRealPayload, run };

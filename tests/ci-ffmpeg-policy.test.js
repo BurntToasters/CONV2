@@ -1,7 +1,14 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
-const { requiresRealPayload, run } = require('../build-scripts/ci-ffmpeg.js');
+const { commandRequiresShell, requiresRealPayload, run } = require('../build-scripts/ci-ffmpeg.js');
+
+test('Windows command shims run through a shell', () => {
+  assert.equal(commandRequiresShell('npm.cmd', 'win32'), true);
+  assert.equal(commandRequiresShell('NPM.CMD', 'win32'), true);
+  assert.equal(commandRequiresShell('npm', 'win32'), false);
+  assert.equal(commandRequiresShell('npm.cmd', 'linux'), false);
+});
 
 test('real FFmpeg payload is required on trusted branch pushes', () => {
   assert.equal(
