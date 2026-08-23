@@ -44,28 +44,40 @@ test('font license notice is copied with renderer fonts', () => {
   assert.match(notice, /These can be\s+included either as stand-alone text files/);
 });
 
-test('Flatpak bundles are uploaded with their signatures and checksums', () => {
+test('all release artifacts and updater metadata are explicitly uploaded', () => {
   const { getReleaseUploadFiles } = require('../build-scripts/release-upload-policy');
   const releaseDir = path.join(ROOT, 'release');
   const uploads = getReleaseUploadFiles(
-    ['CONV2-Win-x64-Setup.exe', 'CONV2-Linux-x86_64.flatpak', 'CONV2-Linux-aarch64.flatpak'],
     [
-      path.join(releaseDir, 'CONV2-Win-x64-Setup.exe.asc'),
-      path.join(releaseDir, 'CONV2-Linux-x86_64.flatpak.asc'),
-      path.join(releaseDir, 'CONV2-Linux-aarch64.flatpak.asc'),
+      'CONV2-Win-x64-Setup.exe',
+      'CONV2-Win-x64-Setup.exe.blockmap',
+      'CONV2-Win-x64-Setup.exe.asc',
+      'CONV2-Linux-x86_64.flatpak',
+      'SHA256SUMS-Windows.txt',
+      'beta.yml',
+      'builder-debug.yml',
     ],
-    path.join(releaseDir, 'SHA256SUMS-Linux.txt'),
     releaseDir
   );
 
   assert.deepEqual(uploads, [
     path.join(releaseDir, 'CONV2-Linux-x86_64.flatpak'),
-    path.join(releaseDir, 'CONV2-Linux-aarch64.flatpak'),
+    path.join(releaseDir, 'CONV2-Win-x64-Setup.exe'),
     path.join(releaseDir, 'CONV2-Win-x64-Setup.exe.asc'),
-    path.join(releaseDir, 'CONV2-Linux-x86_64.flatpak.asc'),
-    path.join(releaseDir, 'CONV2-Linux-aarch64.flatpak.asc'),
-    path.join(releaseDir, 'SHA256SUMS-Linux.txt'),
+    path.join(releaseDir, 'CONV2-Win-x64-Setup.exe.blockmap'),
+    path.join(releaseDir, 'SHA256SUMS-Windows.txt'),
+    path.join(releaseDir, 'beta.yml'),
   ]);
+});
+
+test('release commands disable electron-builder publishing', () => {
+  const packageJson = JSON.parse(read('package.json'));
+  for (const [name, command] of Object.entries(packageJson.scripts)) {
+    if (name.startsWith('release:') && command.includes('electron-builder')) {
+      assert.doesNotMatch(command, /--publish always/);
+      assert.match(command, /--publish never/);
+    }
+  }
 });
 
 test('Twemoji is not copied twice by electron-builder', () => {
