@@ -3,11 +3,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const { getReleaseUploadFiles } = require('./release-upload-policy');
-const {
-  assertGitHubCliAuthenticated,
-  githubApi,
-  uploadReleaseAsset,
-} = require('./github-cli');
+const { assertGitHubCliAuthenticated, githubApi, uploadReleaseAsset } = require('./github-cli');
 
 // Environment variables are loaded via the `dotenv -e .env --` prefix in npm scripts.
 
