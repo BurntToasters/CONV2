@@ -6,8 +6,10 @@ const path = require('node:path');
 
 const {
   copyReleaseAssets,
+  isBetaReleaseVersion,
   pathsEqual,
   run,
+  shouldSkipBetaMirror,
   verifyCopiedPath,
 } = require('../build/post-release-assets.js');
 
@@ -40,11 +42,15 @@ test('mirrors and verifies release entries', () => {
   fs.writeFileSync(path.join(releaseDir, 'CONV2-Win-x64-Setup.exe'), 'installer');
   fs.writeFileSync(path.join(releaseDir, 'checksums', 'SHA256SUMS.txt'), 'checksum');
 
-  assert.deepEqual(run({ releaseDir, env: { AFTER_PACK_LOC: destination } }), {
-    mirrored: true,
-    destination,
-    copiedEntries: 2,
-  });
+  assert.deepEqual(
+    run({ releaseDir, env: { AFTER_PACK_LOC: destination }, version: '1.6.0' }),
+    {
+      mirrored: true,
+      destination,
+      copiedEntries: 2,
+      skippedBetaMirror: false,
+    }
+  );
   assert.equal(
     fs.readFileSync(path.join(destination, 'CONV2-Win-x64-Setup.exe'), 'utf8'),
     'installer'
@@ -53,6 +59,31 @@ test('mirrors and verifies release entries', () => {
     fs.readFileSync(path.join(destination, 'checksums', 'SHA256SUMS.txt'), 'utf8'),
     'checksum'
   );
+});
+
+test('skips AFTER_PACK_LOC mirroring for beta versions unless overridden', () => {
+  const root = makeTemporaryDirectory();
+  const releaseDir = path.join(root, 'release');
+  const destination = path.join(root, 'mirror');
+  fs.mkdirSync(releaseDir);
+  fs.writeFileSync(path.join(releaseDir, 'CONV2-Win-x64-Setup.exe'), 'installer');
+
+  assert.equal(isBetaReleaseVersion('1.6.0'), false);
+  assert.equal(isBetaReleaseVersion('1.6.0-beta.3'), true);
+  assert.equal(shouldSkipBetaMirror({}, '1.6.0-beta.3'), true);
+  assert.deepEqual(
+    run({
+      releaseDir,
+      env: { AFTER_PACK_LOC: destination },
+      version: '1.6.0-beta.3',
+    }),
+    {
+      mirrored: false,
+      destination: null,
+      skippedBetaMirror: true,
+    }
+  );
+  assert.equal(fs.existsSync(path.join(destination, 'CONV2-Win-x64-Setup.exe')), false);
 });
 
 test('fails when the release directory is missing', () => {

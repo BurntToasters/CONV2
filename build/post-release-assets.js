@@ -37,6 +37,23 @@ function getAfterPackLocation(env = process.env) {
   return value.trim();
 }
 
+function isBetaReleaseVersion(version) {
+  const numeric = '(?:0|[1-9]\\d*)';
+  return new RegExp(`^${numeric}\\.${numeric}\\.${numeric}-beta\\.${numeric}$`).test(
+    String(version ?? '')
+  );
+}
+
+function readPackageVersion(repositoryRoot = path.join(__dirname, '..')) {
+  const packageJson = JSON.parse(fs.readFileSync(path.join(repositoryRoot, 'package.json'), 'utf8'));
+  return typeof packageJson.version === 'string' ? packageJson.version : '';
+}
+
+function shouldSkipBetaMirror(env = process.env, version) {
+  if (!isBetaReleaseVersion(version)) return false;
+  return String(env.OVERRIDE_BETA_MIRROR_SKIP ?? '').trim() !== '1';
+}
+
 function comparablePath(value, platform = process.platform) {
   let resolved = path.resolve(value);
   try {
@@ -121,30 +138,54 @@ function copyReleaseAssets(releaseDir = RELEASE_DIR, destination) {
   return entries.length;
 }
 
-function run({ releaseDir = RELEASE_DIR, env = process.env } = {}) {
+function run({ releaseDir = RELEASE_DIR, env = process.env, version = readPackageVersion() } = {}) {
   cleanReleaseArtifacts(releaseDir);
+  if (shouldSkipBetaMirror(env, version)) {
+    console.warn(
+      `beta version ${version}; skipping AFTER_PACK_LOC mirror (set OVERRIDE_BETA_MIRROR_SKIP=1 to force).`
+    );
+    return { mirrored: false, destination: null, skippedBetaMirror: true };
+  }
 
   const destination = getAfterPackLocation(env);
   if (!destination) {
-    return { mirrored: false, destination: null };
+    return { mirrored: false, destination: null, skippedBetaMirror: false };
   }
 
   const copiedEntries = copyReleaseAssets(releaseDir, destination);
-  return { mirrored: true, destination: path.resolve(destination), copiedEntries };
+  return {
+    mirrored: true,
+    destination: path.resolve(destination),
+    copiedEntries,
+    skippedBetaMirror: false,
+  };
+}
+
+function finalizeReleaseAssets({
+  releaseDir = RELEASE_DIR,
+  env = process.env,
+  version = readPackageVersion(),
+} = {}) {
+  const result = run({ releaseDir, env, version });
+  if (result.mirrored) {
+    console.log(
+      `Mirrored and verified ${result.copiedEntries} cleaned release entries to: ${result.destination}`
+    );
+  } else if (result.skippedBetaMirror) {
+    console.warn(
+      `WARNING: Cleaned release assets without mirroring (beta version ${version}; set OVERRIDE_BETA_MIRROR_SKIP=1 to force).`
+    );
+  } else {
+    console.warn(
+      'WARNING: Cleaned release assets, but AFTER_PACK_LOC is not set; mirror intentionally skipped.'
+    );
+  }
+  return result;
 }
 
 if (require.main === module) {
   try {
-    const result = run();
-    if (result.mirrored) {
-      console.log(
-        `Mirrored and verified ${result.copiedEntries} cleaned release entries to: ${result.destination}`
-      );
-    } else {
-      console.warn(
-        'WARNING: Cleaned release assets, but AFTER_PACK_LOC is not set; mirror intentionally skipped.'
-      );
-    }
+    finalizeReleaseAssets();
   } catch (error) {
     const message = error && error.message ? error.message : String(error);
     console.error(`Failed to finalize release assets: ${message}`);
@@ -161,10 +202,14 @@ module.exports = {
   BUILD_ONLY_FILES,
   cleanReleaseArtifacts,
   getAfterPackLocation,
+  isBetaReleaseVersion,
+  readPackageVersion,
+  shouldSkipBetaMirror,
   comparablePath,
   pathsEqual,
   getReleaseEntries,
   verifyCopiedPath,
   copyReleaseAssets,
   run,
+  finalizeReleaseAssets,
 };

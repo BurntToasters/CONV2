@@ -105,7 +105,8 @@
     "typecheck": "tsc --noEmit",
     "release:deps": "npm ci",
     "release:prepare": "npm run release:deps && node build/update-metainfo.js",
-    "release:finalize": "node build/post-release-assets.js"
+    "release:mirror": "dotenv -- node build/finalize-release-assets.js",
+    "release:finalize": "npm run release:mirror"
   },
   "engines": {
     "node": "24.x",
