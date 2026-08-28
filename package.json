@@ -91,6 +91,8 @@
     "release:beta:linux": "node build-scripts/release-beta.js release:linux",
     "sign:gpg": "dotenv -- node build-scripts/gpg-sign.js",
     "licenses": "npm exec --offline -- license-checker-rseidelsohn --production --json --out licenses.json",
+    "lint": "npm run lint:comments",
+    "lint:comments": "node build-scripts/lint-comments.mjs src build-scripts tests",
     "format": "prettier --write \"src/**/*.{ts,js,html,css}\" \"build/**/*.js\" \"build-scripts/**/*.js\" \"tests/**/*.js\" \"*.{json,md,yml,yaml}\"",
     "format:check": "prettier --check \"src/**/*.{ts,js,html,css}\" \"build/**/*.js\" \"build-scripts/**/*.js\" \"tests/**/*.js\" \"*.{json,md,yml,yaml}\"",
     "test": "npm run tests:node",
