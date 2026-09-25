@@ -47,7 +47,7 @@
 - **REMUX:** HEVC remuxed into MP4 is now tagged `hvc1` so it plays in QuickTime, Safari, and on iOS. Previously it was tagged `hev1`, which those players reject.
 - **ENCODING:** Advanced AV1 quality values above 51 are clamped for hardware encoders, whose quality parameters stop at 51. CPU encoding keeps the full SVT-AV1 range.
 - **ENCODING:** AV1 on Apple silicon now correctly uses CPU arguments, since VideoToolbox has no AV1 encoder.
-- **GIF:** Fixed GIF conversion failing outright when **Max Colors** was set to 2. FFmpeg needs at least 3 colours when a transparent palette slot is reserved, so the minimum is now 3 in both the settings and the input field.
+- **GIF:** Fixed GIF conversion failing outright when **Max Colors** was set to 2. FFmpeg needs at least 3 colors when a transparent palette slot is reserved, so the minimum is now 3 in both the settings and the input field.
 - **OS:** Completion notifications mention click-to-reveal when an output path is available (unfocused window).
 - **Security:** macOS hardened runtime no longer disables library validation.
 - **Privacy:** Debug log redaction now also hides home paths belonging to other user accounts, not just the current user's.
