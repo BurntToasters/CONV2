@@ -9,9 +9,11 @@ const escapeRegex = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 test('conversion IPC returns the redacted result', () => {
   const source = read('src/main/main.ts');
-  assert.match(source, /webContents\.send\('conversion-complete', resultForRenderer\)/);
   assert.match(source, /return resultForRenderer;/);
-  assert.match(source, /emitCompleteEvent/);
+  assert.match(source, /error: redactPaths\(result\.error\)/);
+  assert.doesNotMatch(source, /webContents\.send\('conversion-complete'/);
+  assert.doesNotMatch(source, /emitCompleteEvent/);
+  assert.doesNotMatch(source, /ipcMain\.handle\(\s*'start-conversion'/);
 });
 
 test('conversion cancellation aborts preflight as well as FFmpeg', () => {

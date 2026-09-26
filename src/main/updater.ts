@@ -162,7 +162,6 @@ const emitUpdateNotAvailable = (manual: boolean): void => {
       const windowRef = getMainWindow();
       if (windowRef) {
         const version = downloadedUpdateVersion;
-        sendStatusToWindow(`Version ${version} is ready to install.`);
         dialog
           .showMessageBox(windowRef, {
             type: 'info',
@@ -190,9 +189,6 @@ const emitUpdateNotAvailable = (manual: boolean): void => {
   }
 
   const windowRef = getMainWindow();
-  if (windowRef) {
-    windowRef.webContents.send('update-available', false);
-  }
   sendUpdateStateToWindow({
     phase: 'not-available',
     manual,
@@ -201,7 +197,6 @@ const emitUpdateNotAvailable = (manual: boolean): void => {
   endUpdateCheck();
 
   if (manual && windowRef) {
-    sendStatusToWindow('You have the latest version.');
     dialog.showMessageBox(windowRef, {
       type: 'info',
       title: 'No Updates',
@@ -295,7 +290,6 @@ const clearDownloadedUpdate = (): void => {
 const startUpdateDownload = (): void => {
   if (!availableUpdateVersion) {
     const message = 'No update is available to download.';
-    sendStatusToWindow(message);
     sendUpdateStateToWindow({
       phase: 'error',
       manual: true,
@@ -312,7 +306,6 @@ const startUpdateDownload = (): void => {
     emitUpdateError(true, `Update error: ${error.message}`);
   });
   activeDownloadEpoch = updateOfferEpoch;
-  sendStatusToWindow('Downloading update...');
   sendUpdateStateToWindow({
     phase: 'downloading',
     manual: true,
@@ -321,7 +314,6 @@ const startUpdateDownload = (): void => {
 };
 
 const emitUpdateError = (manual: boolean, message: string): void => {
-  sendStatusToWindow(message);
   if (updateDownloadedReady && downloadedUpdateVersion) {
     sendDownloadedUpdateStateToWindow();
     return;
@@ -335,10 +327,6 @@ const emitUpdateError = (manual: boolean, message: string): void => {
 
 const clearStaleAvailableOffer = (): void => {
   availableUpdateVersion = null;
-  const windowRef = getMainWindow();
-  if (windowRef) {
-    windowRef.webContents.send('update-available', false);
-  }
   if (updateDownloadedReady && downloadedUpdateVersion) {
     sendDownloadedUpdateStateToWindow();
     return;
@@ -419,7 +407,6 @@ export const initUpdater = (window: BrowserWindow): void => {
     if (discardCheckResults) {
       return;
     }
-    sendStatusToWindow('Checking for updates...');
     // Keep Restart Now visible while a background re-check runs.
     if (updateDownloadedReady) {
       return;
@@ -446,10 +433,6 @@ export const initUpdater = (window: BrowserWindow): void => {
       }
       clearStableFallback();
       availableUpdateVersion = null;
-      const windowRef = getMainWindow();
-      if (windowRef) {
-        windowRef.webContents.send('update-available', false);
-      }
       if (updateDownloadedReady && downloadedUpdateVersion) {
         sendDownloadedUpdateStateToWindow();
       } else {
@@ -480,9 +463,6 @@ export const initUpdater = (window: BrowserWindow): void => {
     const offerEpoch = updateOfferEpoch;
     const offeredVersion = info.version;
     const windowRef = getMainWindow();
-    if (windowRef) {
-      windowRef.webContents.send('update-available', true);
-    }
     sendUpdateStateToWindow({
       phase: 'available',
       manual,
@@ -552,25 +532,18 @@ export const initUpdater = (window: BrowserWindow): void => {
 
   autoUpdater.on('download-progress', (progressObj) => {
     const message = `Download speed: ${formatBytes(progressObj.bytesPerSecond)}/s - ${Math.round(progressObj.percent)}% (${formatBytes(progressObj.transferred)}/${formatBytes(progressObj.total)})`;
-    sendStatusToWindow(message);
     sendUpdateStateToWindow({
       phase: 'downloading',
       manual: false,
       message,
       percent: progressObj.percent,
     });
-
-    const windowRef = getMainWindow();
-    if (windowRef) {
-      windowRef.webContents.send('update-download-progress', progressObj.percent);
-    }
   });
 
   autoUpdater.on('update-downloaded', (info: UpdateInfo) => {
     if (activeDownloadEpoch !== null && activeDownloadEpoch !== updateOfferEpoch) {
       activeDownloadEpoch = null;
       availableUpdateVersion = null;
-      sendStatusToWindow('Ignoring update downloaded from a previous channel.');
       return;
     }
     activeDownloadEpoch = null;
@@ -630,7 +603,6 @@ export const checkForUpdates = (): void => {
   }
 
   if (!beginUpdateCheck('manual')) {
-    sendStatusToWindow('Update check already in progress.');
     sendUpdateStateToWindow({
       phase: 'already-checking',
       manual: true,
@@ -679,7 +651,6 @@ export const installDownloadedUpdate = async (): Promise<void> => {
 
   if (!updateDownloadedReady) {
     const message = 'No downloaded update is ready to install.';
-    sendStatusToWindow(message);
     sendUpdateStateToWindow({
       phase: 'error',
       manual: true,
@@ -690,7 +661,6 @@ export const installDownloadedUpdate = async (): Promise<void> => {
 
   updateInstallInProgress = true;
   notifyUpdateMenuStateChange();
-  sendStatusToWindow('Restarting to install update...');
   sendUpdateStateToWindow({
     phase: 'installing',
     manual: true,
@@ -704,7 +674,6 @@ export const installDownloadedUpdate = async (): Promise<void> => {
     updateInstallInProgress = false;
     notifyUpdateMenuStateChange();
     const error = err instanceof Error ? err : new Error(String(err));
-    sendStatusToWindow(`Update error: ${error.message}`);
     sendUpdateStateToWindow({
       phase: 'error',
       manual: true,
@@ -770,13 +739,6 @@ export const setUpdateChannel = (channel: UpdateChannel): void => {
   clearDownloadedUpdate();
   clearStaleAvailableOffer();
   queueChannelRecheck();
-};
-
-const sendStatusToWindow = (message: string): void => {
-  const windowRef = getMainWindow();
-  if (windowRef) {
-    windowRef.webContents.send('update-status', message);
-  }
 };
 
 const formatBytes = (bytes: number): string => {

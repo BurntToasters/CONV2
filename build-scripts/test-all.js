@@ -42,16 +42,6 @@ function parseUnitTests(output) {
   const clean = stripAnsi(output);
   const lines = clean.split(/\r?\n/);
 
-  // vitest format: "Tests  5 passed (5)"
-  const vitestLine = lines.find((line) => line.trim().startsWith('Tests'));
-  if (vitestLine) {
-    const passedMatch = vitestLine.match(/(\d+)\s+passed/);
-    const failedMatch = vitestLine.match(/(\d+)\s+failed/);
-    results.unit.passed = passedMatch ? parseInt(passedMatch[1], 10) : 0;
-    results.unit.failed = failedMatch ? parseInt(failedMatch[1], 10) : 0;
-    return;
-  }
-
   // node --test format (spec reporter: "ℹ pass N", TAP: "# pass N")
   const passLine = lines.find((line) => /[ℹ#]\s*pass\s+\d+/.test(line));
   const failLine = lines.find((line) => /[ℹ#]\s*fail\s+\d+/.test(line));

@@ -32,7 +32,12 @@ test('pull requests may run structure-only package smoke', () => {
 });
 
 test('explicit payload requirement overrides event context', () => {
+  const { bundledPayloadPresent } = require('../build-scripts/ci-ffmpeg.js');
   assert.equal(requiresRealPayload({ REQUIRE_FFMPEG_PAYLOAD: '1' }), true);
+  if (bundledPayloadPresent({})) {
+    assert.doesNotThrow(() => run({ REQUIRE_FFMPEG_PAYLOAD: '1' }));
+    return;
+  }
   assert.throws(() => run({ REQUIRE_FFMPEG_PAYLOAD: '1' }), /FFMPEG_DL_SERVER is required/);
 });
 

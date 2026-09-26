@@ -22,6 +22,8 @@ win:
       to: ffmpeg/LICENSE.txt
     - from: resources/ffmpeg/SOURCE_OFFER.txt
       to: ffmpeg/SOURCE_OFFER.txt
+    - from: resources/ffmpeg/checksums.json
+      to: ffmpeg/checksums.json
 appx:
   identityName: BurntToasters.CONV2
   publisher: CN=BC0CB990-55E8-4580-97B7-1E2DAA4B44F6

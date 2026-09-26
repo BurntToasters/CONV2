@@ -26,7 +26,31 @@ function commandRequiresShell(command, platform = process.platform) {
   return platform === 'win32' && /\.cmd$/iu.test(command);
 }
 
+function currentPayloadTarget(platform = process.platform, arch = process.arch) {
+  const os = platform === 'win32' ? 'win' : platform === 'darwin' ? 'mac' : 'linux';
+  const normalizedArch = arch === 'arm64' ? 'arm64' : 'x64';
+  return `${os}:${normalizedArch}`;
+}
+
+function bundledPayloadPresent(env = process.env) {
+  try {
+    execFileSync(
+      process.execPath,
+      ['build-scripts/check-ffmpeg.js', '--target', currentPayloadTarget(), '--require-checksums'],
+      { stdio: 'pipe', env }
+    );
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function run(env = process.env) {
+  if (bundledPayloadPresent(env)) {
+    console.log('[ci-ffmpeg] bundled payload already present; skipping download.');
+    return;
+  }
+
   if (!env.FFMPEG_DL_SERVER?.trim()) {
     if (requiresRealPayload(env)) {
       throw new Error(
@@ -71,4 +95,11 @@ if (require.main === module) {
   }
 }
 
-module.exports = { commandRequiresShell, isTrustedReleaseRef, requiresRealPayload, run };
+module.exports = {
+  bundledPayloadPresent,
+  commandRequiresShell,
+  currentPayloadTarget,
+  isTrustedReleaseRef,
+  requiresRealPayload,
+  run,
+};

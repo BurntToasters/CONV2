@@ -118,12 +118,15 @@ function signFile(filePath) {
     }
 
     if (GPG_PASSPHRASE) {
-      gpgArgs.push('--pinentry-mode', 'loopback', '--passphrase', GPG_PASSPHRASE);
+      gpgArgs.push('--pinentry-mode', 'loopback', '--passphrase-fd', '0');
     }
 
     gpgArgs.push('--output', ascFile, filePath);
 
-    execFileSync('gpg', gpgArgs, { stdio: 'pipe' });
+    execFileSync('gpg', gpgArgs, {
+      stdio: 'pipe',
+      input: GPG_PASSPHRASE ? `${GPG_PASSPHRASE}\n` : undefined,
+    });
     console.log('   ✓ Created ' + path.basename(ascFile));
     return ascFile;
   } catch (error) {

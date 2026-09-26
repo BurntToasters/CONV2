@@ -71,6 +71,7 @@ import {
   type QueueSnapshot,
 } from './conversionQueue';
 import { registerConversionCancelIpc } from './conversionIpc';
+import type { AppSettings, GPUMode } from '../shared/appContract';
 import {
   installApplicationMenu,
   type AppMenuActionId,
@@ -194,33 +195,6 @@ const flushPendingOpenPaths = (): void => {
   sendAppMenuAction('open-files', { paths });
 };
 
-const notifySingleConversionResult = async (
-  result: ConversionResult,
-  inputPath: string
-): Promise<void> => {
-  const snapshot = createEmptyQueueSnapshot();
-  snapshot.total = 1;
-  snapshot.items = [
-    {
-      id: 'single',
-      inputPath,
-      fileName: path.basename(inputPath),
-      status: result.success
-        ? 'done'
-        : result.error === 'Conversion cancelled'
-          ? 'cancelled'
-          : 'failed',
-      error: result.error,
-      outputPath: result.outputPath || undefined,
-    },
-  ];
-  const summary = summarizeQueueForNotification(snapshot);
-  const revealOutputPath = result.success ? result.outputPath : undefined;
-  await maybeNotifyConversionComplete(summary, getOsIntegrationSettings(), () => mainWindow, {
-    revealOutputPath,
-  });
-};
-
 const resolveRevealOutputPath = (snapshot: QueueSnapshot): string | undefined => {
   const successes = snapshot.items.filter(
     (item) => item.status === 'done' && item.outputPath && item.outputPath.length > 0
@@ -248,34 +222,6 @@ const isRuntimeSmoke = process.argv.includes('--smoke') || process.env.CONV2_SMO
 const handleNativeThemeUpdated = (): void => {
   mainWindow?.webContents.send('theme-changed', nativeTheme.shouldUseDarkColors ? 'dark' : 'light');
 };
-
-type GPUMode = 'auto' | 'manual';
-
-interface AppSettings {
-  settingsSchemaVersion: number;
-  outputDirectory: string;
-  gpu: GPUVendor;
-  gpuMode: GPUMode;
-  gpuManualVendor: GPUVendor;
-  theme: ThemePreference;
-  customTheme: CustomThemeId;
-  interfaceStyle: 'glass' | 'flat';
-  showDebugOutput: boolean;
-  autoCheckUpdates: boolean;
-  useSystemFFmpeg: boolean;
-  useCpuDecodingWhenGpu: boolean;
-  moveOriginalToTrashOnSuccess: boolean;
-  updateChannel: 'auto' | 'stable' | 'beta';
-  showAdvancedPresets: boolean;
-  removeSpacesFromFilenames: boolean;
-  showAllGpuVendors: boolean;
-  notifyOnConversionComplete: boolean;
-  preventSleepWhileConverting: boolean;
-  setupWizardCompleted: boolean;
-  recentPresetIds: string[];
-  uiPanels: UIPanelSettings;
-  advancedFormatSettings: AdvancedFormatSettings;
-}
 
 type SaveSettingsPayload = Omit<Partial<AppSettings>, 'uiPanels'> & {
   uiPanels?: Partial<UIPanelSettings>;
@@ -903,6 +849,16 @@ const createWindow = (): void => {
 
   attachWindowChromeListeners(mainWindow);
 
+  mainWindow.webContents.session.setPermissionRequestHandler(
+    (_webContents, _permission, callback) => {
+      callback(false);
+    }
+  );
+  mainWindow.webContents.session.setPermissionCheckHandler(() => false);
+  mainWindow.webContents.on('certificate-error', (event) => {
+    event.preventDefault();
+  });
+
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
     try {
       const parsed = new URL(url);
@@ -942,15 +898,28 @@ const createWindow = (): void => {
           `Promise.resolve(window.electronAPI?.getVersion()).then((version) => ({
             title: document.title,
             version,
+            hasFileList: !!document.getElementById('selectedFileList'),
+            dropZoneRole: document.getElementById('dropZone')?.getAttribute('role'),
           }))`,
           true
         )
         .then((result) => {
-          if (result?.title !== 'CONV2' || result.version !== app.getVersion()) {
+          if (
+            result?.title !== 'CONV2' ||
+            result.version !== app.getVersion() ||
+            result.hasFileList !== true ||
+            result.dropZoneRole !== 'region'
+          ) {
             throw new Error(
               `Runtime smoke returned invalid renderer state: ${JSON.stringify(result)}`
             );
           }
+          const artifactDir = path.join(process.cwd(), 'coverage');
+          fs.mkdirSync(artifactDir, { recursive: true });
+          fs.writeFileSync(
+            path.join(artifactDir, 'smoke-runtime.json'),
+            JSON.stringify({ ...result, at: new Date().toISOString() }, null, 2)
+          );
           app.exit(0);
         })
         .catch((error) => {
@@ -1081,13 +1050,6 @@ registerConversionCancelIpc({
   cancelActiveConversion: (force) => cancelActiveConversion(!!force),
 });
 
-ipcMain.handle('select-file', async (event: IpcMainInvokeEvent) => {
-  assertTrustedIpcSender(event);
-  const win = mainWindow;
-  if (!win) return [];
-  return pickVideoFilesDialog(win);
-});
-
 ipcMain.handle('select-output-directory', async (event: IpcMainInvokeEvent) => {
   assertTrustedIpcSender(event);
   const win = mainWindow;
@@ -1107,7 +1069,7 @@ const performSingleConversion = async (
     removeSpacesFromFilenames?: boolean;
     outputDirectory?: string;
     showDebugOutput?: boolean;
-    emitCompleteEvent?: boolean;
+    abortController?: AbortController;
   }
 ): Promise<ConversionResult> => {
   const resolvedInputPath = resolveExistingFilePath(inputPath);
@@ -1117,7 +1079,6 @@ const performSingleConversion = async (
 
   const suppressGpuErrorEvent = options?.suppressGpuErrorEvent === true;
   const showDebugOutput = options?.showDebugOutput ?? settings.showDebugOutput;
-  const emitCompleteEvent = options?.emitCompleteEvent !== false;
 
   const preset = getPresetById(presetId);
   if (!preset) {
@@ -1136,7 +1097,10 @@ const performSingleConversion = async (
         ? 'cpu'
         : requestedGpu;
 
-  const conversionAbortController = new AbortController();
+  const conversionAbortController = options?.abortController ?? new AbortController();
+  if (conversionAbortController.signal.aborted) {
+    return { success: false, outputPath: '', error: 'Conversion cancelled' };
+  }
   activeConversionAbortController = conversionAbortController;
   try {
     if (codec !== null && effectiveGpu !== 'cpu') {
@@ -1252,9 +1216,6 @@ const performSingleConversion = async (
     const resultForRenderer: ConversionResult = result.error
       ? { ...result, error: redactPaths(result.error) }
       : result;
-    if (emitCompleteEvent) {
-      mainWindow?.webContents.send('conversion-complete', resultForRenderer);
-    }
     if (result.success && result.outputPath) {
       registerRecentOutput(result.outputPath);
     }
@@ -1265,45 +1226,6 @@ const performSingleConversion = async (
     }
   }
 };
-
-ipcMain.handle(
-  'start-conversion',
-  async (
-    event: IpcMainInvokeEvent,
-    inputPath: string,
-    presetId: string,
-    gpuOverride?: GPUVendor,
-    options?: {
-      suppressGpuErrorEvent?: boolean;
-      removeSpacesFromFilenames?: boolean;
-      outputDirectory?: string;
-      showDebugOutput?: boolean;
-    }
-  ): Promise<ConversionResult> => {
-    assertTrustedIpcSender(event);
-    if (isConversionActive) {
-      const busyResult: ConversionResult = {
-        success: false,
-        outputPath: '',
-        error: 'Another conversion is already in progress',
-      };
-      mainWindow?.webContents.send('conversion-complete', busyResult);
-      return busyResult;
-    }
-
-    isConversionActive = true;
-    setQueueProgressScope(null);
-    conversionActivityStarted(getOsIntegrationSettings());
-    try {
-      const result = await performSingleConversion(inputPath, presetId, gpuOverride, options);
-      await notifySingleConversionResult(result, inputPath);
-      return result;
-    } finally {
-      isConversionActive = false;
-      conversionActivityEnded(() => mainWindow);
-    }
-  }
-);
 
 ipcMain.handle(
   'start-conversion-queue',
@@ -1382,6 +1304,8 @@ ipcMain.handle(
 
     isConversionActive = true;
     queueCancelled = false;
+    const queueAbortController = new AbortController();
+    activeConversionAbortController = queueAbortController;
     setQueueProgressScope(null);
     conversionActivityStarted(getOsIntegrationSettings());
     try {
@@ -1412,11 +1336,11 @@ ipcMain.handle(
           convertOne: async ({ inputPath, presetId, gpu, options }) =>
             performSingleConversion(inputPath, presetId, gpu, {
               ...options,
-              emitCompleteEvent: false,
+              abortController: queueAbortController,
             }),
           shouldRetryWithCpu,
           hasVideoCodec: codec !== null,
-          isCancelled: () => queueCancelled,
+          isCancelled: () => queueCancelled || queueAbortController.signal.aborted,
         }
       );
       latestQueueSnapshot = snapshot;
@@ -1428,6 +1352,9 @@ ipcMain.handle(
     } finally {
       isConversionActive = false;
       queueCancelled = false;
+      if (activeConversionAbortController === queueAbortController) {
+        activeConversionAbortController = null;
+      }
       conversionActivityEnded(() => mainWindow);
     }
   }

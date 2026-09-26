@@ -40,11 +40,33 @@ if [[ -z "${KEYCHAIN_PASSWORD:-}" ]]; then
   fi
 fi
 
+if ! command -v expect >/dev/null 2>&1; then
+  echo "expect is required so the keychain password is not placed on security argv."
+  exit 1
+fi
+
 echo "Preparing keychain for non-GUI codesign..."
-security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+
+KEYCHAIN_PATH="$KEYCHAIN_PATH" KEYCHAIN_PASSWORD="$KEYCHAIN_PASSWORD" expect <<'EOF'
+set timeout 20
+spawn /usr/bin/security unlock-keychain $env(KEYCHAIN_PATH)
+expect {
+  -re "(?i)password:" { send -- "$env(KEYCHAIN_PASSWORD)\r"; exp_continue }
+  eof
+}
+EOF
+
 security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
 security list-keychains -d user -s "$KEYCHAIN_PATH"
 security default-keychain -d user -s "$KEYCHAIN_PATH"
-security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+
+KEYCHAIN_PATH="$KEYCHAIN_PATH" KEYCHAIN_PASSWORD="$KEYCHAIN_PASSWORD" expect <<'EOF'
+set timeout 20
+spawn /usr/bin/security set-key-partition-list -S apple-tool:,apple:,codesign: -s $env(KEYCHAIN_PATH)
+expect {
+  -re "(?i)password:" { send -- "$env(KEYCHAIN_PASSWORD)\r"; exp_continue }
+  eof
+}
+EOF
 
 echo "Keychain ready for SSH signing."

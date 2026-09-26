@@ -116,6 +116,24 @@ test('every main-side webContents.send has a preload subscriber', () => {
   );
 });
 
+test('retired single-job and alias channels stay gone', () => {
+  const retiredInvokes = ['start-conversion', 'select-file'];
+  const retiredEvents = [
+    'conversion-complete',
+    'update-status',
+    'update-download-progress',
+    'update-available',
+  ];
+  for (const channel of retiredInvokes) {
+    assert.equal(preloadInvokes.has(channel), false, `preload still invokes ${channel}`);
+    assert.equal(mainHandles.has(channel), false, `main still handles ${channel}`);
+  }
+  for (const channel of retiredEvents) {
+    assert.equal(preloadOns.has(channel), false, `preload still subscribes ${channel}`);
+    assert.equal(mainSends.has(channel), false, `main still sends ${channel}`);
+  }
+});
+
 test('channel names use kebab-case (no underscores or camelCase)', () => {
   const offenders = [];
   for (const channel of [...preloadInvokes, ...preloadOns, ...mainHandles, ...mainSends]) {

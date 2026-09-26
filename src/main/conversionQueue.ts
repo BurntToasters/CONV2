@@ -1,25 +1,8 @@
 import type { ConversionProgress, ConversionResult } from './ffmpeg';
 import type { GPUVendor } from './presets';
+import type { QueueItemSnapshot, QueueItemStatus, QueueSnapshot } from '../shared/appContract';
 
-export type QueueItemStatus = 'pending' | 'running' | 'done' | 'failed' | 'cancelled';
-
-export interface QueueItemSnapshot {
-  id: string;
-  inputPath: string;
-  fileName: string;
-  status: QueueItemStatus;
-  error?: string;
-  outputPath?: string;
-  usedCpuFallback?: boolean;
-}
-
-export interface QueueSnapshot {
-  active: boolean;
-  presetId: string;
-  currentIndex: number;
-  total: number;
-  items: QueueItemSnapshot[];
-}
+export type { QueueItemSnapshot, QueueItemStatus, QueueSnapshot };
 
 export interface QueueRunOptions {
   inputPaths: string[];

@@ -1,3 +1,16 @@
+import type {
+  AppSettings,
+  ConversionProgress as ConversionProgressPayload,
+  GPUCodec,
+  GPUMode,
+  GPUVendor,
+  QueueItemSnapshot,
+  QueueSnapshot,
+  VideoInfo,
+} from '../shared/appContract';
+import type { FileSelectionApi, FileSelectionMode } from '../shared/fileSelection';
+import type { UIPanelSettings } from '../main/settingsSchema';
+
 interface Preset {
   id: string;
   name: string;
@@ -9,10 +22,6 @@ interface Preset {
   extension: string;
   aviTier: string | null;
 }
-
-type GPUVendor = 'nvidia' | 'amd' | 'intel' | 'apple' | 'cpu';
-type GPUMode = 'auto' | 'manual';
-type GPUCodec = 'h264' | 'h265' | 'av1';
 
 type GifLoopMode = 'forever' | 'once';
 type GifDither = 'sierra2_4a' | 'floyd_steinberg' | 'bayer' | 'none';
@@ -128,73 +137,6 @@ interface AdvancedFormatSettings {
   h264: H264AdvancedSettings;
   h265: H265AdvancedSettings;
   avi: AviAdvancedSettings;
-}
-
-interface UIPanelSettings {
-  presetExpanded: boolean;
-  gpuExpanded: boolean;
-}
-
-interface AppSettings {
-  settingsSchemaVersion: number;
-  outputDirectory: string;
-  gpu: GPUVendor;
-  gpuMode: GPUMode;
-  gpuManualVendor: GPUVendor;
-  theme: 'system' | 'dark' | 'light' | 'custom';
-  customTheme: 'midnight-blue' | 'high-contrast-dark';
-  interfaceStyle: 'glass' | 'flat';
-  showDebugOutput: boolean;
-  autoCheckUpdates: boolean;
-  useSystemFFmpeg: boolean;
-  useCpuDecodingWhenGpu: boolean;
-  moveOriginalToTrashOnSuccess: boolean;
-  notifyOnConversionComplete: boolean;
-  preventSleepWhileConverting: boolean;
-  updateChannel: 'auto' | 'stable' | 'beta';
-  showAdvancedPresets: boolean;
-  removeSpacesFromFilenames: boolean;
-  showAllGpuVendors: boolean;
-  setupWizardCompleted: boolean;
-  recentPresetIds: string[];
-  uiPanels: UIPanelSettings;
-  advancedFormatSettings: AdvancedFormatSettings;
-}
-
-interface QueueItemSnapshot {
-  id: string;
-  inputPath: string;
-  fileName: string;
-  status: 'pending' | 'running' | 'done' | 'failed' | 'cancelled';
-  error?: string;
-  outputPath?: string;
-  usedCpuFallback?: boolean;
-}
-
-interface QueueSnapshot {
-  active: boolean;
-  presetId: string;
-  currentIndex: number;
-  total: number;
-  items: QueueItemSnapshot[];
-}
-
-interface VideoInfo {
-  duration: number;
-  size: number;
-  width: number;
-  height: number;
-  codec: string;
-  format: string;
-}
-
-interface ConversionProgressPayload {
-  percent: number;
-  frame: number;
-  fps: number;
-  time: string;
-  bitrate: string;
-  speed: string;
 }
 
 interface ConversionResult {
@@ -420,6 +362,10 @@ const elements = {
   fileInfo: getRequiredElement<HTMLDivElement>('fileInfo'),
   fileName: getRequiredElement<HTMLSpanElement>('fileName'),
   fileDetails: getRequiredElement<HTMLSpanElement>('fileDetails'),
+  selectedFileList: getRequiredElement<HTMLUListElement>('selectedFileList'),
+  clearSelectedFilesBtn: getRequiredElement<HTMLButtonElement>('clearSelectedFilesBtn'),
+  browseFilesBtn: getRequiredElement<HTMLButtonElement>('browseFilesBtn'),
+  betaLabel: getRequiredElement<HTMLSpanElement>('betaLabel'),
   presetPanelSection: getRequiredElement<HTMLElement>('presetPanelSection'),
   presetPanelToggle: getRequiredElement<HTMLButtonElement>('presetPanelToggle'),
   presetPanelBody: getRequiredElement<HTMLDivElement>('presetPanelBody'),
@@ -2750,6 +2696,8 @@ const loadVersion = async () => {
   elements.versionInfo.textContent = `CONV2 v${version}`;
   elements.versionLink.href = tagUrl;
   elements.versionLink.title = `View release v${version}`;
+  const isBeta = /-(beta|alpha|rc)/i.test(version);
+  elements.betaLabel.classList.toggle('u-hidden', !isBeta);
 };
 
 const applyUpdateVisibility = async () => {
@@ -2780,7 +2728,9 @@ const updateCustomThemeUi = () => {
   elements.customThemeRow.hidden = !isCustom;
   elements.customThemeGallery.querySelectorAll('.theme-swatch').forEach((btn) => {
     const id = (btn as HTMLElement).dataset.customTheme;
-    btn.classList.toggle('active', isCustom && id === settings.customTheme);
+    const active = isCustom && id === settings.customTheme;
+    btn.classList.toggle('active', active);
+    btn.setAttribute('aria-selected', active ? 'true' : 'false');
   });
 };
 
@@ -2790,7 +2740,9 @@ const updateThemeSwitcher = () => {
 
   switcher.querySelectorAll('.theme-option').forEach((btn) => {
     const btnTheme = (btn as HTMLElement).dataset.theme;
-    btn.classList.toggle('active', btnTheme === settings.theme);
+    const active = btnTheme === settings.theme;
+    btn.classList.toggle('active', active);
+    btn.setAttribute('aria-checked', active ? 'true' : 'false');
   });
   updateCustomThemeUi();
 };
@@ -2801,7 +2753,9 @@ const updateUiStyleSwitcher = () => {
 
   switcher.querySelectorAll('.theme-option').forEach((btn) => {
     const btnStyle = (btn as HTMLElement).dataset.style;
-    btn.classList.toggle('active', btnStyle === settings.interfaceStyle);
+    const active = btnStyle === settings.interfaceStyle;
+    btn.classList.toggle('active', active);
+    btn.setAttribute('aria-checked', active ? 'true' : 'false');
   });
 };
 
@@ -3066,10 +3020,12 @@ const setupEventListeners = () => {
     }
   });
 
-  const browseBtn = elements.dropZone.querySelector('button');
-  browseBtn?.addEventListener('click', (e: MouseEvent) => {
+  elements.browseFilesBtn.addEventListener('click', (e: MouseEvent) => {
     e.stopPropagation();
     elements.fileInput.click();
+  });
+  elements.clearSelectedFilesBtn.addEventListener('click', () => {
+    void handleFileSelect([], 'replace');
   });
 
   elements.dropZone.addEventListener('dragover', (e) => {
@@ -3902,13 +3858,70 @@ const showGPUErrorStatus = (error: GPUEncoderError): void => {
 
 const getFileName = (filePath: string): string => filePath.split(/[/\\]/).pop() || filePath;
 
-const handleFileSelect = async (filePaths: string[]) => {
-  const selectionToken = ++fileSelectionToken;
-  const normalizedPaths = Array.from(new Set(filePaths.filter((path) => path && path.length > 0)));
-  selectedFiles = normalizedPaths;
+const getFileSelection = (): FileSelectionApi => {
+  const api = (window as Window & { conv2FileSelection?: FileSelectionApi }).conv2FileSelection;
+  if (!api) {
+    throw new Error('File selection helper failed to load');
+  }
+  return api;
+};
 
+const renderSelectedFileList = (): void => {
+  elements.selectedFileList.replaceChildren();
+  selectedFiles.forEach((filePath, index) => {
+    const item = document.createElement('li');
+    item.className = 'selected-file-item';
+
+    const name = document.createElement('span');
+    name.className = 'selected-file-name';
+    name.textContent = getFileName(filePath);
+    name.title = filePath;
+
+    const actions = document.createElement('div');
+    actions.className = 'selected-file-actions';
+
+    const upBtn = document.createElement('button');
+    upBtn.type = 'button';
+    upBtn.className = 'btn btn-secondary btn-xs';
+    upBtn.textContent = 'Up';
+    upBtn.disabled = index === 0;
+    upBtn.addEventListener('click', () => {
+      selectedFiles = getFileSelection().moveSelectedFile(selectedFiles, index, -1);
+      void refreshSelectedFilesUi();
+    });
+
+    const downBtn = document.createElement('button');
+    downBtn.type = 'button';
+    downBtn.className = 'btn btn-secondary btn-xs';
+    downBtn.textContent = 'Down';
+    downBtn.disabled = index === selectedFiles.length - 1;
+    downBtn.addEventListener('click', () => {
+      selectedFiles = getFileSelection().moveSelectedFile(selectedFiles, index, 1);
+      void refreshSelectedFilesUi();
+    });
+
+    const removeBtn = document.createElement('button');
+    removeBtn.type = 'button';
+    removeBtn.className = 'btn btn-secondary btn-xs';
+    removeBtn.textContent = 'Remove';
+    removeBtn.addEventListener('click', () => {
+      selectedFiles = getFileSelection().removeSelectedFile(selectedFiles, index);
+      void refreshSelectedFilesUi();
+    });
+
+    actions.append(upBtn, downBtn, removeBtn);
+    item.append(name, actions);
+    elements.selectedFileList.append(item);
+  });
+};
+
+const refreshSelectedFilesUi = async (): Promise<void> => {
+  const selectionToken = ++fileSelectionToken;
   if (selectedFiles.length === 0) {
     elements.fileInfo.classList.remove('visible');
+    elements.fileName.textContent = '';
+    elements.fileDetails.textContent = '';
+    elements.selectedFileList.replaceChildren();
     elements.convertBtn.disabled = true;
     return;
   }
@@ -3916,16 +3929,10 @@ const handleFileSelect = async (filePaths: string[]) => {
   if (selectedFiles.length === 1) {
     const [filePath] = selectedFiles;
     elements.fileName.textContent = getFileName(filePath);
-
     const info = await window.electronAPI.getFileInfo(filePath).catch(() => null);
-    if (
-      selectionToken !== fileSelectionToken ||
-      selectedFiles.length !== 1 ||
-      selectedFiles[0] !== filePath
-    ) {
+    if (selectionToken !== fileSelectionToken || selectedFiles[0] !== filePath) {
       return;
     }
-
     if (info) {
       const details: string[] = [];
       details.push(formatFileSize(info.size));
@@ -3943,20 +3950,23 @@ const handleFileSelect = async (filePaths: string[]) => {
       elements.fileDetails.textContent = '';
     }
   } else {
-    const previewCount = Math.min(3, selectedFiles.length);
-    const previewNames = selectedFiles.slice(0, previewCount).map(getFileName);
-    const remaining = selectedFiles.length - previewCount;
     elements.fileName.textContent = `${selectedFiles.length} files selected`;
-    elements.fileDetails.textContent =
-      remaining > 0
-        ? `${previewNames.join(' \u2022 ')} \u2022 +${remaining} more`
-        : previewNames.join(' \u2022 ');
+    elements.fileDetails.textContent = 'Use the list to remove or reorder files';
   }
 
+  renderSelectedFileList();
   elements.fileInfo.classList.add('visible');
   elements.convertBtn.disabled = !ffmpegInstalled;
   elements.showInFolderBtn.classList.add('u-hidden');
   hideStatus();
+};
+
+const handleFileSelect = async (
+  filePaths: string[],
+  mode: FileSelectionMode = 'append'
+): Promise<void> => {
+  selectedFiles = getFileSelection().mergeSelectedFilePaths(selectedFiles, filePaths, mode);
+  await refreshSelectedFilesUi();
 };
 
 const resolvePreferredGpuVendor = async (

@@ -1,11 +1,13 @@
 import { spawn, ChildProcess } from 'child_process';
 import { forceKillFfmpegProcess } from './ffmpegProcessControl';
+import { isMissingBundledBinaryPath, verifyBundledBinaryChecksum } from './ffmpegIntegrity';
 import * as path from 'path';
 import * as fs from 'fs';
 import * as os from 'os';
 import { GPUVendor, Preset, PresetContext, getPresetGpuCodec } from './presets';
 import { AdvancedFormatSettings } from './advancedFormats';
 import { CODEC_NAMES, GPU_ENCODERS, GPU_NAMES } from './gpuEncoders';
+import { parseOutTimeMs, parseProgress } from './ffmpegProgress';
 
 export { GPU_ENCODERS } from './gpuEncoders';
 
@@ -117,6 +119,9 @@ const BINARY_CHECK_TIMEOUT_MS = 10000;
 const FFMPEG_INSTALLED_CACHE_TTL_MS = 30_000;
 
 const checkBinaryInstalled = async (binaryPath: string): Promise<boolean> => {
+  if (isMissingBundledBinaryPath(binaryPath)) {
+    return false;
+  }
   return new Promise((resolve) => {
     const proc = spawn(binaryPath, ['-version']);
     const timer = setTimeout(() => {
@@ -141,11 +146,16 @@ export const checkFFmpegInstalled = async (): Promise<boolean> => {
   if (ffmpegInstalledCache && now < ffmpegInstalledCache.expiresAt) {
     return ffmpegInstalledCache.result;
   }
+  const ffmpegPath = getFFmpegBinaryPath();
+  const ffprobePath = getFFprobeBinaryPath();
   const [ffmpegOk, ffprobeOk] = await Promise.all([
-    checkBinaryInstalled(getFFmpegBinaryPath()),
-    checkBinaryInstalled(getFFprobeBinaryPath()),
+    checkBinaryInstalled(ffmpegPath),
+    checkBinaryInstalled(ffprobePath),
   ]);
-  const result = ffmpegOk && ffprobeOk;
+  const checksumOk =
+    verifyBundledBinaryChecksum(ffmpegPath, 'ffmpeg') &&
+    verifyBundledBinaryChecksum(ffprobePath, 'ffprobe');
+  const result = ffmpegOk && ffprobeOk && checksumOk;
   ffmpegInstalledCache = { result, expiresAt: now + FFMPEG_INSTALLED_CACHE_TTL_MS };
   return result;
 };
@@ -749,9 +759,7 @@ export const getVideoDuration = async (
   return isNaN(duration) ? 0 : duration;
 };
 
-import { parseProgress } from './ffmpegProgress';
-
-export { parseProgress } from './ffmpegProgress';
+export { parseOutTimeMs, parseProgress } from './ffmpegProgress';
 
 export const appendBoundedErrorOutput = (current: string, nextChunk: string): string => {
   if (!nextChunk) {
@@ -1228,21 +1236,15 @@ export const convertVideo = async (
 
         const lines = output.split('\n');
         for (const line of lines) {
-          if (!line.includes('out_time_ms=')) {
+          const parsed = parseOutTimeMs(line, totalDuration);
+          if (!parsed) {
             continue;
           }
-          const rawTimeUs = line.split('=')[1];
-          const timeUs = parseInt(rawTimeUs, 10);
-          if (!Number.isFinite(timeUs) || timeUs < 0) {
-            continue;
-          }
-          const seconds = timeUs / 1000000;
-          const percent = totalDuration > 0 ? Math.min(100, (seconds / totalDuration) * 100) : 0;
           emitProgressThrottled({
-            percent,
+            percent: parsed.percent,
             frame: 0,
             fps: 0,
-            time: formatTime(seconds),
+            time: formatTime(parsed.seconds),
             bitrate: 'N/A',
             speed: 'N/A',
           });
