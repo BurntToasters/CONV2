@@ -42,15 +42,12 @@ test('mirrors and verifies release entries', () => {
   fs.writeFileSync(path.join(releaseDir, 'CONV2-Win-x64-Setup.exe'), 'installer');
   fs.writeFileSync(path.join(releaseDir, 'checksums', 'SHA256SUMS.txt'), 'checksum');
 
-  assert.deepEqual(
-    run({ releaseDir, env: { AFTER_PACK_LOC: destination }, version: '1.6.0' }),
-    {
-      mirrored: true,
-      destination,
-      copiedEntries: 2,
-      skippedBetaMirror: false,
-    }
-  );
+  assert.deepEqual(run({ releaseDir, env: { AFTER_PACK_LOC: destination }, version: '1.6.0' }), {
+    mirrored: true,
+    destination,
+    copiedEntries: 2,
+    skippedBetaMirror: false,
+  });
   assert.equal(
     fs.readFileSync(path.join(destination, 'CONV2-Win-x64-Setup.exe'), 'utf8'),
     'installer'

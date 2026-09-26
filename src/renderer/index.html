@@ -87,7 +87,7 @@
         </div>
       </header>
 
-      <div class="app">
+      <main class="app">
         <div class="ffmpeg-warning u-hidden" id="ffmpegWarning">
           <h3>FFmpeg Not Found</h3>
           <p>Please install FFmpeg and add it to your system PATH to use CONV2.</p>
@@ -315,19 +315,21 @@
               <span id="progressEta"></span>
             </div>
           </div>
-          <div class="conversion-queue" id="conversionQueue" hidden>
-            <div class="conversion-queue-header">
-              <span>Queue</span>
-              <button
-                type="button"
-                class="btn btn-secondary btn-xs u-hidden"
-                id="retryFailedQueueBtn"
-              >
-                Retry failed
-              </button>
-            </div>
-            <ul class="conversion-queue-list" id="conversionQueueList"></ul>
+        </div>
+
+        <!-- Outside #progressContainer so results stay visible after a run ends. -->
+        <div class="conversion-queue" id="conversionQueue" hidden>
+          <div class="conversion-queue-header">
+            <span>Queue</span>
+            <button
+              type="button"
+              class="btn btn-secondary btn-xs u-hidden"
+              id="retryFailedQueueBtn"
+            >
+              Retry failed
+            </button>
           </div>
+          <ul class="conversion-queue-list" id="conversionQueueList"></ul>
         </div>
 
         <div class="status-row">
@@ -342,6 +344,14 @@
             <span class="status-text"></span>
           </div>
           <div class="status-actions">
+            <button
+              type="button"
+              class="btn btn-secondary btn-xs u-hidden"
+              id="statusDetailsBtn"
+              aria-haspopup="dialog"
+            >
+              Details
+            </button>
             <button class="btn btn-secondary btn-xs u-hidden" id="showLogsBtn">
               <svg
                 class="btn-icon"
@@ -393,7 +403,7 @@
             <span class="kbd-action">Close</span>
           </span>
         </div>
-      </div>
+      </main>
     </div>
 
     <div class="modal-overlay" id="settingsModal">
@@ -2111,6 +2121,33 @@
       </div>
     </div>
 
+    <div class="modal-overlay" id="errorDetailsModal">
+      <div
+        class="modal logs-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="errorDetailsTitle"
+        aria-describedby="errorDetailsSummary"
+        tabindex="-1"
+      >
+        <div class="modal-header">
+          <h2 id="errorDetailsTitle">Error details</h2>
+          <button class="modal-close" id="closeErrorDetails" aria-label="Close error details">
+            &times;
+          </button>
+        </div>
+        <p class="error-details-summary" id="errorDetailsSummary"></p>
+        <div class="logs-body">
+          <pre id="errorDetailsContent"></pre>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-primary btn-sm" id="copyErrorDetailsBtn">
+            Copy
+          </button>
+        </div>
+      </div>
+    </div>
+
     <div class="modal-overlay" id="logsModal">
       <div
         class="modal logs-modal"
@@ -2163,11 +2200,6 @@
       </div>
     </div>
 
-    <script src="exports-shim.js"></script>
-    <script src="../shared/queueSummary.js"></script>
-    <script src="../shared/fileSelection.js"></script>
-    <script src="presetPickerModel.js"></script>
-    <script src="setupWizard.js"></script>
-    <script src="renderer.js"></script>
+    <script type="module" src="js/renderer/renderer.js"></script>
   </body>
 </html>

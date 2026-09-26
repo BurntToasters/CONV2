@@ -36,7 +36,7 @@ jobs:
         run: npm run lint
 
       - name: Run TypeScript compiler
-        run: npx tsc --noEmit
+        run: npm run typecheck
 
       - name: Audit dependencies
         run: |
@@ -149,3 +149,66 @@ jobs:
       - name: Package smoke (macOS DMG)
         if: runner.os == 'macOS'
         run: npx electron-builder --mac dmg -c.mac.notarize=false --publish never
+
+      - name: Verify packaged app contents
+        run: node build-scripts/verify-package-contents.js release
+
+      - name: Upload package contents report
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: package-contents-${{ runner.os }}
+          path: coverage/e2e/package-contents.json
+          if-no-files-found: warn
+
+  e2e:
+    name: E2E (UI + conversion matrix)
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Setup Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Cache bundled FFmpeg
+        uses: actions/cache@0c907a75c2c7cdfb9e76850f988c560c9a339f73 # v4.2.3
+        with:
+          path: |
+            resources/ffmpeg/linux
+            resources/ffmpeg/win
+            resources/ffmpeg/mac
+          key: ffmpeg-${{ runner.os }}-${{ hashFiles('resources/ffmpeg/checksums.json') }}
+
+      - name: Prepare FFmpeg payload
+        run: npm run ci:prepare-ffmpeg
+
+      # Skips when no runnable FFmpeg exists (untrusted PRs); required when the payload is available.
+      - name: E2E (headless)
+        if: runner.os == 'Linux'
+        env:
+          CONV2_REQUIRE_FFMPEG_TESTS: ${{ secrets.FFMPEG_DL_SERVER != '' && '1' || '0' }}
+        run: xvfb-run -a npm run test:e2e
+
+      - name: E2E
+        if: runner.os != 'Linux'
+        env:
+          CONV2_REQUIRE_FFMPEG_TESTS: ${{ secrets.FFMPEG_DL_SERVER != '' && '1' || '0' }}
+        run: npm run test:e2e
+
+      - name: Upload E2E artifacts
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: e2e-${{ runner.os }}
+          path: coverage/e2e/
+          if-no-files-found: warn

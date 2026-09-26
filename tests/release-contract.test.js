@@ -8,7 +8,7 @@ const read = (relativePath) => fs.readFileSync(path.join(ROOT, relativePath), 'u
 const escapeRegex = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 test('conversion IPC returns the redacted result', () => {
-  const source = read('src/main/main.ts');
+  const source = read('src/main/main.ts') + read('src/main/conversionController.ts');
   assert.match(source, /return resultForRenderer;/);
   assert.match(source, /error: redactPaths\(result\.error\)/);
   assert.doesNotMatch(source, /webContents\.send\('conversion-complete'/);
@@ -17,11 +17,14 @@ test('conversion IPC returns the redacted result', () => {
 });
 
 test('conversion cancellation aborts preflight as well as FFmpeg', () => {
-  const mainSource = read('src/main/main.ts');
+  const mainSource = read('src/main/main.ts') + read('src/main/conversionController.ts');
   const conversionIpcSource = read('src/main/conversionIpc.ts');
-  assert.match(mainSource, /activeConversionAbortController\?\.abort\(\)/);
+  assert.match(mainSource, /activeAbortController\?\.abort\(\)/);
   assert.match(mainSource, /signal: conversionAbortController\.signal/);
-  assert.match(mainSource + conversionIpcSource, /cancelActiveConversion\(!!force\)/);
+  assert.match(
+    mainSource + conversionIpcSource,
+    /cancelActiveConversion: \(force\) => conversions\.cancel\(!!force\)/
+  );
 });
 
 test('renderer locks conversion startup before asynchronous preparation', () => {

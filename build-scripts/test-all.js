@@ -231,7 +231,7 @@ function runConfigChecks() {
       'assets/icon.ico',
       'assets/conv2.icns',
       'assets/icon.png',
-      'build/appx/appxmanifest.xml',
+      'build/appxmanifest.xml',
     ];
     for (const relativePath of requiredFiles) {
       assertConfig(

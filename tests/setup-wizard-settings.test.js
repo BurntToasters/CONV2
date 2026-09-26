@@ -25,10 +25,7 @@ test('normalizeSetupWizardCompleted treats invalid explicit key as not completed
   assert.equal(normalizeSetupWizardCompleted('yes', true), false);
 });
 
-test('createDefaultSettings includes setupWizardCompleted false', () => {
-  const mainSource = fs.readFileSync(path.join(__dirname, '../src/main/main.ts'), 'utf8');
-  assert.match(mainSource, /setupWizardCompleted:\s*false/);
-});
+// First-run default (setupWizardCompleted: false) is covered in settings-store.test.js.
 
 test('setup wizard DOM contract', () => {
   const html = fs.readFileSync(path.join(__dirname, '../src/renderer/index.html'), 'utf8');
@@ -38,8 +35,6 @@ test('setup wizard DOM contract', () => {
   assert.match(html, /data-wizard-presentation="spotlight"/);
   assert.match(html, /id="setupWizardSkipBtn"/);
   assert.match(html, /setup-wizard-step-skip/);
-  assert.match(html, /src="setupWizard\.js"/);
-  assert.match(html, /src="\.\.\/shared\/queueSummary\.js"/);
 });
 
 test('setup wizard step indices align with SETUP_WIZARD_STEP_COUNT', () => {
@@ -129,33 +124,50 @@ test('setup wizard clears spotlight chrome on close and reopen', () => {
   assert.match(wizardSource, /openSetupWizard[\s\S]*clearSpotlightLayout\(\)/);
 });
 
-test('renderer bundle must not redeclare helper script globals', () => {
-  const rendererJs = fs.readFileSync(path.join(__dirname, '../dist/renderer/renderer.js'), 'utf8');
-  const reserved = [
-    'initSetupWizard',
-    'maybeOpenSetupWizard',
-    'openSetupWizard',
-    'isSetupWizardVisible',
-    'getSetupWizardOverlay',
-    'skipSetupWizardFromEscape',
-    'summarizeQueueForUiStatus',
-    'countQueueOutcomes',
-    'summarizeQueueForNotification',
-  ];
-  for (const name of reserved) {
-    assert.doesNotMatch(
-      rendererJs,
-      new RegExp(`const ${name}\\s*=`),
-      `renderer.js must not declare const ${name} (shared global scope with script tags)`
-    );
+const RENDERER_OUT = path.join(__dirname, '../dist/renderer/js');
+
+const listJs = (dir) =>
+  fs.readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+    const full = path.join(dir, entry.name);
+    if (entry.isDirectory()) return listJs(full);
+    return entry.name.endsWith('.js') ? [full] : [];
+  });
+
+test('renderer loads as one ES module entry with no classic helper scripts', () => {
+  const html = fs.readFileSync(path.join(__dirname, '../src/renderer/index.html'), 'utf8');
+  const scripts = [...html.matchAll(/<script\b[^>]*>/g)].map((match) => match[0]);
+  assert.deepEqual(scripts, ['<script type="module" src="js/renderer/renderer.js">']);
+  assert.equal(fs.existsSync(path.join(__dirname, '../src/renderer/exports-shim.js')), false);
+});
+
+test('every renderer import resolves to an emitted file (no missing .js extensions)', () => {
+  const files = listJs(RENDERER_OUT);
+  assert.ok(files.some((file) => file.endsWith(path.join('renderer', 'renderer.js'))));
+  for (const file of files) {
+    const source = fs.readFileSync(file, 'utf8');
+    assert.doesNotMatch(source, /\brequire\s*\(|\bexports\.|module\.exports/, file);
+    for (const match of source.matchAll(/\b(?:import|export)\b[^'"]*?from\s*['"]([^'"]+)['"]/g)) {
+      const specifier = match[1];
+      assert.ok(specifier.startsWith('.') && specifier.endsWith('.js'), `${file}: ${specifier}`);
+      const target = path.resolve(path.dirname(file), specifier);
+      assert.ok(
+        fs.existsSync(target),
+        `${path.relative(RENDERER_OUT, file)} imports missing ${specifier}`
+      );
+    }
   }
 });
 
-test('renderer bundle must not use CommonJS require (no nodeIntegration)', () => {
-  const rendererJs = fs.readFileSync(path.join(__dirname, '../dist/renderer/renderer.js'), 'utf8');
-  assert.equal(
-    /require\s*\(/.test(rendererJs),
-    false,
-    'renderer.js must not call require(); load helpers via script tags + window globals'
-  );
+test('renderer never publishes helpers on window', () => {
+  const sources = [
+    'src/renderer/renderer.ts',
+    'src/renderer/setupWizard.ts',
+    'src/renderer/presetPickerModel.ts',
+    'src/shared/queueSummary.ts',
+    'src/shared/fileSelection.ts',
+  ];
+  for (const relative of sources) {
+    const source = fs.readFileSync(path.join(__dirname, '..', relative), 'utf8');
+    assert.doesNotMatch(source, /\(window as Window &/, relative);
+  }
 });

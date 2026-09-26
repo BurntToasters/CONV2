@@ -44,6 +44,21 @@ test('dead husky installer is gone', () => {
   assert.equal(fs.existsSync(path.join(ROOT, 'build-scripts', 'install-hooks.js')), false);
 });
 
+test('yt-dlp leftovers from another project are gone', () => {
+  for (const dir of ['build', 'build-scripts', 'scripts']) {
+    for (const name of fs.readdirSync(path.join(ROOT, dir))) {
+      const full = path.join(ROOT, dir, name);
+      if (!fs.statSync(full).isFile()) continue;
+      assert.doesNotMatch(fs.readFileSync(full, 'utf8'), /yt-dlp/, `${dir}/${name}`);
+    }
+  }
+});
+
+test('main process does not intercept TLS certificate errors', () => {
+  const source = read('src/main/main.ts');
+  assert.doesNotMatch(source, /certificate-error/);
+});
+
 test('Store AppX lives only in the Store config', () => {
   const pkg = JSON.parse(read('package.json'));
   assert.equal(pkg.build.appx, undefined);

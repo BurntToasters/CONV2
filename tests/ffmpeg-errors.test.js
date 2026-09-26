@@ -5,7 +5,6 @@ const {
   parseGPUError,
   shouldRetryWithSoftwareDecode,
   appendBoundedErrorOutput,
-  isKnownColorValue,
   redactPaths,
   MAX_FFPROBE_OUTPUT_BYTES,
   wouldExceedFFprobeOutputLimit,
@@ -117,25 +116,6 @@ test('appendBoundedErrorOutput: does not split a UTF-16 surrogate pair', () => {
   // Must not start with a lone low surrogate
   const first = result.charCodeAt(0);
   assert.ok(!(first >= 0xdc00 && first <= 0xdfff), 'result must not start with lone low surrogate');
-});
-
-// ── isKnownColorValue ───────────────────────────────────────────────────────
-
-test('isKnownColorValue: rejects ffprobe sentinel strings', () => {
-  assert.equal(isKnownColorValue('unknown'), false);
-  assert.equal(isKnownColorValue('unspecified'), false);
-  assert.equal(isKnownColorValue('reserved'), false);
-  assert.equal(isKnownColorValue(''), false);
-});
-
-test('isKnownColorValue: accepts real colour-space values', () => {
-  assert.equal(isKnownColorValue('bt709'), true);
-  assert.equal(isKnownColorValue('smpte170m'), true);
-  assert.equal(isKnownColorValue('bt2020'), true);
-  assert.equal(isKnownColorValue('smpte2084'), true);
-  assert.equal(isKnownColorValue('arib-std-b67'), true);
-  assert.equal(isKnownColorValue('tv'), true);
-  assert.equal(isKnownColorValue('pc'), true);
 });
 
 // ── redactPaths ─────────────────────────────────────────────────────────────

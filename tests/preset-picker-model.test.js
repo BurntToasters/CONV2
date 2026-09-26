@@ -6,7 +6,7 @@ const {
   resolveActiveParentKey,
   pickPresetIdForParent,
   buildPresetPaneState,
-} = require('../dist/renderer/presetPickerModel.js');
+} = require('../dist/renderer/js/renderer/presetPickerModel.js');
 
 const samplePresets = [
   {

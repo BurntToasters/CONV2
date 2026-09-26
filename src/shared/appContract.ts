@@ -38,6 +38,8 @@ export interface QueueItemSnapshot {
   fileName: string;
   status: QueueItemStatus;
   error?: string;
+  /** Raw FFmpeg stderr tail (paths redacted) for the Details view. */
+  errorDetail?: string;
   outputPath?: string;
   usedCpuFallback?: boolean;
 }

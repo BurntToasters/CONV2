@@ -49,6 +49,13 @@ const sendRegex2 = /\.webContents\.send\(\s*['"]([a-z0-9-]+)['"]/gi;
 while ((u = sendRegex2.exec(updaterSrc)) !== null) {
   mainSends.add(u[1]);
 }
+// conversionController emits via webContents.send and a local send('channel', ...) helper.
+const controllerSrc = fs.readFileSync(path.join(ROOT, 'src/main/conversionController.ts'), 'utf8');
+for (const m of controllerSrc.matchAll(
+  /(?:\.webContents\.send|\bsend)\(\s*['"]([a-z0-9-]+)['"]/gi
+)) {
+  mainSends.add(m[1]);
+}
 let w;
 const sendRegex3 = /\.webContents\.send\(\s*['"]([a-z0-9-]+)['"]/gi;
 while ((w = sendRegex3.exec(windowChromeSrc)) !== null) {

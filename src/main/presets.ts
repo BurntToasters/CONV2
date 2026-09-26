@@ -112,10 +112,55 @@ const getGifLoopArg = (context?: PresetContext): string => {
 
 const toBitrateKbps = (value: number): string => `${value}k`;
 
+export type EncodeEffort = 'max' | 'high' | 'balanced' | 'fast';
+
+const X26X_EFFORT: Record<string, EncodeEffort> = {
+  placebo: 'max',
+  veryslow: 'max',
+  slower: 'max',
+  slow: 'high',
+  medium: 'balanced',
+  fast: 'fast',
+  faster: 'fast',
+  veryfast: 'fast',
+  superfast: 'fast',
+  ultrafast: 'fast',
+};
+
+/** Maps a tier's CPU preset (x264/x265 name or SVT-AV1 number) to a hardware effort level. */
+export const encodeEffortFromCpuPreset = (preset: unknown): EncodeEffort => {
+  if (typeof preset === 'string') return X26X_EFFORT[preset] ?? 'balanced';
+  if (typeof preset !== 'number' || !Number.isFinite(preset) || preset < 0) return 'balanced';
+  if (preset <= 3) return 'max';
+  if (preset <= 5) return 'high';
+  if (preset <= 7) return 'balanced';
+  return 'fast';
+};
+
+const NVENC_EFFORT: Record<EncodeEffort, [preset: string, multipass: string]> = {
+  max: ['p7', 'fullres'],
+  high: ['p6', 'qres'],
+  balanced: ['p5', 'disabled'],
+  fast: ['p4', 'disabled'],
+};
+const QSV_EFFORT: Record<EncodeEffort, [preset: string, lookahead: number]> = {
+  max: ['veryslow', 60],
+  high: ['slower', 40],
+  balanced: ['medium', 25],
+  fast: ['faster', 0],
+};
+const AMF_EFFORT: Record<EncodeEffort, string> = {
+  max: 'quality',
+  high: 'quality',
+  balanced: 'balanced',
+  fast: 'speed',
+};
+
 export const getQualityArgs = (
   gpu: GPUVendor,
   quality: number,
-  codec: 'h264' | 'h265' | 'av1' = 'h264'
+  codec: 'h264' | 'h265' | 'av1' = 'h264',
+  effort: EncodeEffort = 'max'
 ): string[] => {
   // Hardware QP scales stop at 51; CPU encoders keep the full requested range
   // (libsvtav1 accepts CRF up to 63).
@@ -123,8 +168,9 @@ export const getQualityArgs = (
 
   switch (resolveEncodeVendor(codec, gpu)) {
     case 'nvidia': {
-      // -b:v 0 enables true CQ mode; p7 = highest quality preset; multipass = two-pass encode
-      const args = ['-cq', hwQuality, '-b:v', '0', '-preset', 'p7', '-multipass', 'fullres'];
+      // -b:v 0 = constant-quality mode; preset and two-pass cost follow the tier.
+      const [preset, multipass] = NVENC_EFFORT[effort];
+      const args = ['-cq', hwQuality, '-b:v', '0', '-preset', preset, '-multipass', multipass];
       if (codec !== 'av1') {
         // -tune hq, spatial/temporal AQ not supported on av1_nvenc
         args.push('-tune', 'hq', '-spatial_aq', '1', '-temporal_aq', '1');
@@ -132,13 +178,13 @@ export const getQualityArgs = (
       return args;
     }
     case 'amd':
-      // -quality quality = highest quality preset for AMF
-      return ['-rc', 'cqp', '-qp_i', hwQuality, '-qp_p', hwQuality, '-quality', 'quality'];
+      return ['-rc', 'cqp', '-qp_i', hwQuality, '-qp_p', hwQuality, '-quality', AMF_EFFORT[effort]];
     case 'intel': {
-      // look_ahead + extbrc improve quality for H.264/H.265; not supported on QSV AV1
-      const args = ['-global_quality', hwQuality];
-      if (codec !== 'av1') {
-        args.push('-look_ahead', '1', '-look_ahead_depth', '60', '-extbrc', '1');
+      const [preset, lookahead] = QSV_EFFORT[effort];
+      const args = ['-global_quality', hwQuality, '-preset', preset];
+      // Lookahead + extbrc help H.264/H.265 only; QSV AV1 rejects them.
+      if (codec !== 'av1' && lookahead > 0) {
+        args.push('-look_ahead', '1', '-look_ahead_depth', String(lookahead), '-extbrc', '1');
       }
       return args;
     }
@@ -147,7 +193,9 @@ export const getQualityArgs = (
         1,
         Math.min(100, Math.round((1 - Number(hwQuality) / GPU_QP_MAX) * 100))
       );
-      return ['-q:v', String(vtQuality), '-allow_sw', '1', '-realtime', '0'];
+      const args = ['-q:v', String(vtQuality), '-allow_sw', '1', '-realtime', '0'];
+      if (effort === 'fast') args.push('-prio_speed', '1');
+      return args;
     }
     default:
       return ['-crf', String(Math.round(quality))];
@@ -199,7 +247,12 @@ const buildAv1Args = (
     '0:a?',
     '-c:v',
     encoder,
-    ...getQualityArgs(gpu, tierSettings.quality, 'av1'),
+    ...getQualityArgs(
+      gpu,
+      tierSettings.quality,
+      'av1',
+      encodeEffortFromCpuPreset(tierSettings.cpuPreset)
+    ),
   ];
 
   if (resolveEncodeVendor('av1', gpu) === 'cpu') {
@@ -234,7 +287,12 @@ const buildH264Args = (
     '0:a?',
     '-c:v',
     encoder,
-    ...getQualityArgs(gpu, tierSettings.quality, 'h264'),
+    ...getQualityArgs(
+      gpu,
+      tierSettings.quality,
+      'h264',
+      encodeEffortFromCpuPreset(tierSettings.preset)
+    ),
   ];
 
   if (resolveEncodeVendor('h264', gpu) === 'cpu') {
@@ -265,7 +323,12 @@ const buildH265Args = (
     '0:a?',
     '-c:v',
     encoder,
-    ...getQualityArgs(gpu, tierSettings.quality, 'h265'),
+    ...getQualityArgs(
+      gpu,
+      tierSettings.quality,
+      'h265',
+      encodeEffortFromCpuPreset(tierSettings.preset)
+    ),
   ];
 
   if (resolveEncodeVendor('h265', gpu) === 'cpu') {
@@ -297,7 +360,12 @@ const buildAviArgs = (
     '0:a?',
     '-c:v',
     encoder,
-    ...getQualityArgs(gpu, tierSettings.quality, tierSettings.codec),
+    ...getQualityArgs(
+      gpu,
+      tierSettings.quality,
+      tierSettings.codec,
+      encodeEffortFromCpuPreset(tierSettings.preset)
+    ),
   ];
 
   if (resolveEncodeVendor(tierSettings.codec, gpu) === 'cpu') {

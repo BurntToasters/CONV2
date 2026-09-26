@@ -32,6 +32,9 @@
         Square150x150Logo="${square150x150Logo}"
         Square44x44Logo="${square44x44Logo}"
         Description="A cross-platform FFMPEG GUI front-end for quick video conversion.">
+        ${lockScreen}
+        ${defaultTile}
+        ${splashScreen}
       </uap:VisualElements>
     </Application>
   </Applications>

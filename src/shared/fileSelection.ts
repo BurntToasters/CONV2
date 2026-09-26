@@ -29,20 +29,3 @@ export const moveSelectedFile = (paths: string[], index: number, delta: number):
   next.splice(target, 0, item);
   return next;
 };
-
-export interface FileSelectionApi {
-  mergeSelectedFilePaths: typeof mergeSelectedFilePaths;
-  removeSelectedFile: typeof removeSelectedFile;
-  moveSelectedFile: typeof moveSelectedFile;
-}
-
-const fileSelectionApi: FileSelectionApi = {
-  mergeSelectedFilePaths,
-  removeSelectedFile,
-  moveSelectedFile,
-};
-
-if (typeof window !== 'undefined') {
-  (window as Window & { conv2FileSelection?: FileSelectionApi }).conv2FileSelection =
-    fileSelectionApi;
-}

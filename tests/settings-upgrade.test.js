@@ -91,10 +91,4 @@ test('recent preset history stays bounded and deduplicated on upgrade', () => {
   assert.deepEqual(normalizeRecentPresetIds('not-an-array'), []);
 });
 
-test('an outdated file is re-persisted at the current version', () => {
-  const source = fs.readFileSync(path.join(__dirname, '..', 'src', 'main', 'main.ts'), 'utf8');
-  assert.match(source, /isSettingsSchemaOutdated\(parsed\)/);
-  assert.match(source, /shouldPersist = true/);
-  // Corrupt files are backed up rather than silently discarded.
-  assert.match(source, /corrupt-\$\{Date\.now\(\)\}/);
-});
+// Re-save of outdated files and corrupt-file backups are covered behaviourally in settings-store.test.js.

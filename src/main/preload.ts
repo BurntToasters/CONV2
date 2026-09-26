@@ -1,108 +1,24 @@
 import { contextBridge, ipcRenderer, webUtils, IpcRendererEvent } from 'electron';
-import type { AdvancedFormatSettings } from './advancedFormats';
-import type { UIPanelSettings } from './settingsSchema';
+import type {
+  AppMenuActionEvent,
+  ConversionMenuStatePayload,
+  ElectronApi,
+  GPUCapabilitiesPayload,
+  GPUEncoderError,
+  RendererPreset,
+  SaveSettingsPayload,
+  StartConversionQueuePayload,
+  UpdateStatePayload,
+  WindowChromeStylePayload,
+} from '../shared/electronApi';
 import type {
   AppSettings,
   ConversionProgress,
   GPUCodec,
-  GPUVendor,
   QueueSnapshot,
   VideoInfo,
 } from '../shared/appContract';
-
-export type {
-  AppSettings,
-  ConversionProgress,
-  GPUCodec,
-  GPUMode,
-  GPUVendor,
-  QueueItemSnapshot,
-  QueueItemStatus,
-  QueueSnapshot,
-  VideoInfo,
-} from '../shared/appContract';
-export type { UIPanelSettings };
-
-export type SaveSettingsPayload = Omit<Partial<AppSettings>, 'uiPanels'> & {
-  uiPanels?: Partial<UIPanelSettings>;
-};
-
-export interface GPUEncoderError {
-  type: 'encoder_unavailable' | 'gpu_capability' | 'driver_error' | 'unknown';
-  message: string;
-  details: string;
-  suggestion: string;
-  canRetryWithCPU: boolean;
-  codec?: string;
-  gpu?: GPUVendor;
-}
-
-export interface RendererPreset {
-  id: string;
-  name: string;
-  description: string;
-  category: string;
-  categoryLabel: string;
-  categoryOrder: number;
-  isAdvanced: boolean;
-  extension: string;
-  aviTier: string | null;
-}
-
-export interface GPUCapabilityStatus {
-  available: boolean;
-  reason: string;
-  encoder: string;
-}
-
-export interface GPUCapabilitiesPayload {
-  platform: string;
-  requestedCodec: GPUCodec | null;
-  checkedCodecs: GPUCodec[];
-  matrix: Partial<Record<GPUCodec, Record<GPUVendor, GPUCapabilityStatus>>>;
-  recommendedVendor: GPUVendor;
-  recommendationReason: string;
-}
-
-export interface UpdateStatePayload {
-  phase:
-    | 'checking'
-    | 'available'
-    | 'not-available'
-    | 'downloading'
-    | 'downloaded'
-    | 'installing'
-    | 'error'
-    | 'disabled'
-    | 'already-checking';
-  manual: boolean;
-  message?: string;
-  percent?: number;
-}
-
-export type AppMenuActionId =
-  | 'open-settings'
-  | 'open-files'
-  | 'start-conversion'
-  | 'cancel-conversion'
-  | 'show-logs'
-  | 'open-credits'
-  | 'show-in-folder';
-
-export interface AppMenuActionEvent {
-  action: AppMenuActionId;
-  payload?: { paths?: string[] };
-}
-
-export interface ConversionMenuStatePayload {
-  converting: boolean;
-  hasOutput: boolean;
-}
-
-export interface WindowChromeStylePayload {
-  platform: string;
-  customTitleBar: boolean;
-}
+import type { AdvancedFormatSettings } from './advancedFormats';
 
 const subscribe = <T>(channel: string, callback: (payload: T) => void): (() => void) => {
   const listener = (_event: IpcRendererEvent, payload: T) => callback(payload);
@@ -112,7 +28,8 @@ const subscribe = <T>(channel: string, callback: (payload: T) => void): (() => v
   };
 };
 
-contextBridge.exposeInMainWorld('electronAPI', {
+// Typed against the shared contract so preload and renderer cannot drift.
+const api: ElectronApi = {
   // File operations
   getPathForFile: (file: File): string => webUtils.getPathForFile(file),
   selectOutputDirectory: (): Promise<string | null> =>
@@ -121,14 +38,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.invoke('get-file-info', filePath),
 
   // Conversion
-  startConversionQueue: (payload: {
-    inputPaths: string[];
-    presetId: string;
-    gpu: GPUVendor;
-    removeSpacesFromFilenames?: boolean;
-    outputDirectory?: string;
-    showDebugOutput?: boolean;
-  }): Promise<QueueSnapshot> => ipcRenderer.invoke('start-conversion-queue', payload),
+  startConversionQueue: (payload: StartConversionQueuePayload): Promise<QueueSnapshot> =>
+    ipcRenderer.invoke('start-conversion-queue', payload),
   cancelConversion: (force?: boolean): Promise<void> =>
     ipcRenderer.invoke('cancel-conversion', force),
   onConversionProgress: (callback: (progress: ConversionProgress) => void): (() => void) =>
@@ -144,6 +55,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getPresets: (): Promise<RendererPreset[]> => ipcRenderer.invoke('get-presets'),
   getGpuCapabilities: (requestedCodec?: GPUCodec | null): Promise<GPUCapabilitiesPayload> =>
     ipcRenderer.invoke('get-gpu-capabilities', requestedCodec ?? null),
+  refreshGpuCapabilities: (): Promise<void> => ipcRenderer.invoke('refresh-gpu-capabilities'),
 
   // Settings
   getSettings: (): Promise<AppSettings> => ipcRenderer.invoke('get-settings'),
@@ -197,55 +109,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   // Licenses
   getLicenses: (): Promise<Record<string, unknown> | null> => ipcRenderer.invoke('get-licenses'),
-});
+};
 
-declare global {
-  interface Window {
-    electronAPI: {
-      getPathForFile: (file: File) => string;
-      selectOutputDirectory: () => Promise<string | null>;
-      getFileInfo: (filePath: string) => Promise<VideoInfo | null>;
-      startConversionQueue: (payload: {
-        inputPaths: string[];
-        presetId: string;
-        gpu: GPUVendor;
-        removeSpacesFromFilenames?: boolean;
-        outputDirectory?: string;
-        showDebugOutput?: boolean;
-      }) => Promise<QueueSnapshot>;
-      cancelConversion: (force?: boolean) => Promise<void>;
-      onConversionProgress: (callback: (progress: ConversionProgress) => void) => () => void;
-      onConversionLog: (callback: (message: string) => void) => () => void;
-      onConversionQueueUpdated: (callback: (snapshot: QueueSnapshot) => void) => () => void;
-      onGPUEncoderError: (callback: (error: GPUEncoderError) => void) => () => void;
-      getPresets: () => Promise<RendererPreset[]>;
-      getGpuCapabilities: (requestedCodec?: GPUCodec | null) => Promise<GPUCapabilitiesPayload>;
-      getSettings: () => Promise<AppSettings>;
-      getDefaultAdvancedFormatSettings: () => Promise<AdvancedFormatSettings>;
-      saveSettings: (settings: SaveSettingsPayload) => Promise<void>;
-      checkForUpdates: () => Promise<void>;
-      downloadUpdate: () => Promise<void>;
-      installUpdate: () => Promise<void>;
-      isUpdatesDisabled: () => Promise<boolean>;
-      onUpdateState: (callback: (payload: UpdateStatePayload) => void) => () => void;
-      checkFFmpeg: () => Promise<boolean>;
-      getVersion: () => Promise<string>;
-      getPlatform: () => Promise<string>;
-      revealPath: (path: string) => Promise<void>;
-      openExternal: (url: string) => Promise<void>;
-      getSystemTheme: () => Promise<'dark' | 'light'>;
-      onThemeChange: (callback: (theme: 'dark' | 'light') => void) => () => void;
-      onAppMenuAction: (callback: (event: AppMenuActionEvent) => void) => () => void;
-      setConversionMenuState: (state: ConversionMenuStatePayload) => void;
-      minimizeWindow: () => Promise<void>;
-      toggleMaximizeWindow: () => Promise<void>;
-      closeWindow: () => Promise<void>;
-      isWindowMaximized: () => Promise<boolean>;
-      onWindowChromeStyle: (callback: (payload: WindowChromeStylePayload) => void) => () => void;
-      onWindowMaximizedChanged: (callback: (maximized: boolean) => void) => () => void;
-      resetSettings: () => Promise<AppSettings>;
-      restartApp: () => Promise<void>;
-      getLicenses: () => Promise<Record<string, unknown> | null>;
-    };
-  }
-}
+contextBridge.exposeInMainWorld('electronAPI', api);

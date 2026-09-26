@@ -71,7 +71,7 @@ function copyRendererAssets() {
   const srcDir = path.join(ROOT, 'src', 'renderer');
   const destDir = path.join(ROOT, 'dist', 'renderer');
   fs.mkdirSync(destDir, { recursive: true });
-  const assets = ['index.html', 'fonts.css', 'main.css', 'settings.css', 'exports-shim.js'];
+  const assets = ['index.html', 'fonts.css', 'main.css', 'settings.css'];
   for (const file of assets) {
     const src = path.join(srcDir, file);
     const dest = path.join(destDir, file);
@@ -91,13 +91,16 @@ function copyRendererAssets() {
     }
     console.log('  Copied fonts/');
   }
+  // Main-process files reached only through `import type` are emitted but never loaded.
+  rmDir(path.join(destDir, 'js', 'main'), 'dist/renderer/js/main/ (type-only)');
   console.log('[dist-tools] Copy complete.');
 }
 
 function compile() {
   cleanBuildArtifacts();
   console.log('[dist-tools] Compiling TypeScript...');
-  execSync('tsc', { cwd: ROOT, stdio: 'inherit' });
+  execSync('tsc -p tsconfig.json', { cwd: ROOT, stdio: 'inherit' });
+  execSync('tsc -p tsconfig.renderer.json', { cwd: ROOT, stdio: 'inherit' });
   copyRendererAssets();
   console.log('[dist-tools] Compile complete.');
 }

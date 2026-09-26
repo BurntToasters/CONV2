@@ -154,6 +154,7 @@ export const runConversionQueue = async (
     } else {
       item.status = 'failed';
       item.error = result.error;
+      item.errorDetail = result.errorDetail;
       item.usedCpuFallback = usedCpuFallback || undefined;
     }
 
@@ -177,7 +178,7 @@ export const shouldRetryWithCpu = (
   if (result.error === 'Conversion cancelled') {
     return false;
   }
-  const message = (result.error || '').toLowerCase();
+  const message = `${result.error || ''}\n${result.errorDetail || ''}`.toLowerCase();
   const inputErrorMarkers = [
     'error opening input',
     'no such file or directory',
@@ -202,7 +203,9 @@ export const shouldRetryWithCpu = (
     'no capable devices found',
     'cannot load nvencode',
     'hardware acceleration',
-    'gpu',
+    'openencodesessionex',
+    'cuda',
+    'd3d11',
   ];
   return gpuMarkers.some((marker) => message.includes(marker));
 };

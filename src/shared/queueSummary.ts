@@ -130,19 +130,3 @@ export const summarizeQueueForUiStatus = (
   }
   return { type: 'warning', message: notification.body };
 };
-
-export interface QueueSummaryApi {
-  countQueueOutcomes: typeof countQueueOutcomes;
-  summarizeQueueForNotification: typeof summarizeQueueForNotification;
-  summarizeQueueForUiStatus: typeof summarizeQueueForUiStatus;
-}
-
-const queueSummaryApi: QueueSummaryApi = {
-  countQueueOutcomes,
-  summarizeQueueForNotification,
-  summarizeQueueForUiStatus,
-};
-
-if (typeof window !== 'undefined') {
-  (window as Window & { queueSummary?: QueueSummaryApi }).queueSummary = queueSummaryApi;
-}

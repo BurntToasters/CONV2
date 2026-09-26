@@ -4,147 +4,67 @@ import type {
   GPUCodec,
   GPUMode,
   GPUVendor,
-  QueueItemSnapshot,
   QueueSnapshot,
-  VideoInfo,
 } from '../shared/appContract';
-import type { FileSelectionApi, FileSelectionMode } from '../shared/fileSelection';
+import type {
+  AdvancedFormatSettings,
+  AviAdvancedSettings,
+  AviCodec,
+  AviTierCollection,
+  Av1AdvancedSettings,
+  Av1TierCollection,
+  GifAdvancedSettings,
+  GifDither,
+  GifLoopMode,
+  GifTierCollection,
+  H264AdvancedSettings,
+  H264TierCollection,
+  H265AdvancedSettings,
+  H265TierCollection,
+  VideoPreset,
+} from '../main/advancedFormats';
 import type { UIPanelSettings } from '../main/settingsSchema';
+import type {
+  GPUCapabilitiesPayload,
+  GPUEncoderError,
+  RendererPreset,
+  UpdateStatePayload,
+} from '../shared/electronApi';
+import * as fileSelection from '../shared/fileSelection.js';
+import type { FileSelectionMode } from '../shared/fileSelection.js';
+import { summarizeQueueForUiStatus } from '../shared/queueSummary.js';
+import * as pickerModel from './presetPickerModel.js';
+import type { PresetPaneState, PresetParentBucket, PresetPickerItem } from './presetPickerModel.js';
+import * as setupWizard from './setupWizard.js';
+import { elements, getRequiredElement } from './dom.js';
+import { closeErrorDetails } from './errorDetails.js';
+import {
+  formatDuration,
+  formatFileSize,
+  getFileName,
+  hasAcceptedVideoExtension,
+} from './format.js';
+import { buildLicenseEntries, renderLicenses, type LicenseCrawlerEntry } from './licenses.js';
+import {
+  focusFirstInteractiveElement,
+  getTopVisibleModal,
+  handleTabKeyboardNavigation,
+  trapFocusInModal,
+} from './modals.js';
+import {
+  configureQueueView,
+  getLastQueueDisplaySnapshot,
+  renderConversionQueue,
+} from './queueView.js';
+import { hideStatus, showStatus } from './status.js';
 
-interface Preset {
-  id: string;
-  name: string;
-  description: string;
-  category: string;
-  categoryLabel: string;
-  categoryOrder: number;
-  isAdvanced: boolean;
-  extension: string;
-  aviTier: string | null;
-}
-
-type GifLoopMode = 'forever' | 'once';
-type GifDither = 'sierra2_4a' | 'floyd_steinberg' | 'bayer' | 'none';
-type GifTierKey = 'bestQuality' | 'quality' | 'balanced' | 'bestCompression';
-type VideoPreset =
-  | 'ultrafast'
-  | 'superfast'
-  | 'veryfast'
-  | 'faster'
-  | 'fast'
-  | 'medium'
-  | 'slow'
-  | 'slower'
-  | 'veryslow'
-  | 'placebo';
-type Av1TierKey = 'bestQuality' | 'quality' | 'balanced' | 'bestCompression' | 'compression';
-type H264TierKey = 'fast' | 'quality';
-type H265TierKey = 'bestQuality' | 'quality' | 'balanced' | 'bestCompression';
-type AviTierKey = 'bestQuality' | 'bestCompression' | 'balanced';
-type AviCodec = 'h264' | 'h265';
-
-interface GifTierSettings {
-  fps: number;
-  maxDimension: number;
-  maxColors: number;
-  dither: GifDither;
-}
-
-interface GifTierCollection {
-  bestQuality: GifTierSettings;
-  quality: GifTierSettings;
-  balanced: GifTierSettings;
-  bestCompression: GifTierSettings;
-}
-
-interface GifAdvancedSettings {
-  loopMode: GifLoopMode;
-  tiers: GifTierCollection;
-}
-
-interface Av1TierSettings {
-  quality: number;
-  cpuPreset: number;
-  audioBitrateKbps: number;
-}
-
-interface Av1TierCollection {
-  bestQuality: Av1TierSettings;
-  quality: Av1TierSettings;
-  balanced: Av1TierSettings;
-  bestCompression: Av1TierSettings;
-  compression: Av1TierSettings;
-}
-
-interface Av1AdvancedSettings {
-  tiers: Av1TierCollection;
-}
-
-interface H264TierSettings {
-  quality: number;
-  preset: VideoPreset;
-  audioBitrateKbps: number;
-}
-
-interface H264TierCollection {
-  fast: H264TierSettings;
-  quality: H264TierSettings;
-}
-
-interface H264AdvancedSettings {
-  tiers: H264TierCollection;
-}
-
-interface H265TierSettings {
-  quality: number;
-  preset: VideoPreset;
-  audioBitrateKbps: number;
-  useAdvancedParams: boolean;
-}
-
-interface H265TierCollection {
-  bestQuality: H265TierSettings;
-  quality: H265TierSettings;
-  balanced: H265TierSettings;
-  bestCompression: H265TierSettings;
-}
-
-interface H265AdvancedSettings {
-  tiers: H265TierCollection;
-}
-
-interface AviTierSettings {
-  codec: AviCodec;
-  quality: number;
-  preset: VideoPreset;
-  audioBitrateKbps: number;
-  useAdvancedParams: boolean;
-}
-
-interface AviTierCollection {
-  bestQuality: AviTierSettings;
-  bestCompression: AviTierSettings;
-  balanced: AviTierSettings;
-}
-
-interface AviAdvancedSettings {
-  tiers: AviTierCollection;
-}
-
-interface AdvancedFormatSettings {
-  gif: GifAdvancedSettings;
-  av1: Av1AdvancedSettings;
-  h264: H264AdvancedSettings;
-  h265: H265AdvancedSettings;
-  avi: AviAdvancedSettings;
-}
-
-interface ConversionResult {
-  success: boolean;
-  outputPath: string;
-  error?: string;
-  retryWithCpuSuggested?: boolean;
-}
+type Preset = RendererPreset;
+type GifTierKey = keyof GifTierCollection;
+type Av1TierKey = keyof Av1TierCollection;
+type H264TierKey = keyof H264TierCollection;
+type H265TierKey = keyof H265TierCollection;
+type AviTierKey = keyof AviTierCollection;
+type PresetPickerModelPreset = PresetPickerItem;
 
 interface ModalOptions {
   title: string;
@@ -154,109 +74,6 @@ interface ModalOptions {
   confirmClass?: string;
   onConfirm?: () => void;
   onCancel?: () => void;
-}
-
-interface GPUEncoderError {
-  type: 'encoder_unavailable' | 'gpu_capability' | 'driver_error' | 'unknown';
-  message: string;
-  details: string;
-  suggestion: string;
-  canRetryWithCPU: boolean;
-  codec?: string;
-  gpu?: GPUVendor;
-}
-
-interface GPUCapabilityStatus {
-  available: boolean;
-  reason: string;
-  encoder: string;
-}
-
-interface GPUCapabilitiesPayload {
-  platform: string;
-  requestedCodec: GPUCodec | null;
-  checkedCodecs: GPUCodec[];
-  matrix: Partial<Record<GPUCodec, Record<GPUVendor, GPUCapabilityStatus>>>;
-  recommendedVendor: GPUVendor;
-  recommendationReason: string;
-}
-
-interface UpdateStatePayload {
-  phase:
-    | 'checking'
-    | 'available'
-    | 'not-available'
-    | 'downloading'
-    | 'downloaded'
-    | 'installing'
-    | 'error'
-    | 'disabled'
-    | 'already-checking';
-  manual: boolean;
-  message?: string;
-  percent?: number;
-}
-
-interface PresetPickerModelPreset {
-  id: string;
-  category: string;
-  categoryLabel: string;
-  displayName: string;
-  searchText: string;
-}
-
-interface PresetParentBucket {
-  key: string;
-  label: string;
-  presets: PresetPickerModelPreset[];
-}
-
-interface PresetPaneGroup {
-  key: string;
-  label: string;
-  presets: PresetPickerModelPreset[];
-}
-
-interface PresetPaneState {
-  groups: PresetPaneGroup[];
-  totalVisible: number;
-  hasMatchesOutsideActive: boolean;
-}
-
-interface PresetPickerModelApi {
-  buildPresetParentBuckets: (args: {
-    presets: PresetPickerModelPreset[];
-    recentPresetIds: string[];
-    categoryOrder: string[];
-  }) => PresetParentBucket[];
-  resolveActiveParentKey: (requestedKey: string, buckets: PresetParentBucket[]) => string;
-  pickPresetIdForParent: (
-    currentSelectedId: string,
-    parentPresets: PresetPickerModelPreset[]
-  ) => string;
-  buildPresetPaneState: (args: {
-    buckets: PresetParentBucket[];
-    activeParentKey: string;
-    query: string;
-    searchAllFormats: boolean;
-  }) => PresetPaneState;
-  isPresetVisibleInGroups: (presetId: string, groups: PresetPaneGroup[]) => boolean;
-}
-
-interface LicenseCrawlerEntry {
-  licenses: string | string[];
-  repository?: string;
-  licenseUrl?: string;
-  url?: string;
-  license?: string;
-}
-
-interface LicenseDisplayEntry {
-  name: string;
-  license: string;
-  link?: string;
-  note?: string;
-  isSpecial?: boolean;
 }
 
 let selectedFiles: string[] = [];
@@ -269,7 +86,6 @@ let lastOutputPath = '';
 let themeListenerRegistered = false;
 let convertBtnOriginalHTML = '';
 let checkUpdateDefaultHTML = '';
-let manualUpdateCheckInProgress = false;
 let updateDownloadInProgress = false;
 let updateAvailablePending = false;
 let updateReadyToInstall = false;
@@ -308,7 +124,6 @@ type QueueRunContext = {
 };
 
 let lastQueueRunContext: QueueRunContext | null = null;
-let lastQueueDisplaySnapshot: QueueSnapshot | null = null;
 
 const getAvailableVendors = (payload: GPUCapabilitiesPayload): GPUVendor[] => {
   return GPU_VENDORS.filter((vendor) => {
@@ -329,340 +144,12 @@ const normalizeUiPanels = (value: unknown): UIPanelSettings => {
 };
 
 // Extensions accepted by the file-open dialog and via drag-drop
-const ACCEPTED_VIDEO_EXTENSIONS = new Set([
-  'mp4',
-  'mkv',
-  'avi',
-  'mov',
-  'wmv',
-  'flv',
-  'webm',
-  'm4v',
-  'mpeg',
-  'mpg',
-  '3gp',
-]);
 
-const hasAcceptedVideoExtension = (filePath: string): boolean => {
-  const ext = filePath.split('.').pop()?.toLowerCase() ?? '';
-  return ACCEPTED_VIDEO_EXTENSIONS.has(ext);
-};
+const getSetupWizard = (): typeof setupWizard => setupWizard;
 
-const getRequiredElement = <T extends HTMLElement>(id: string): T => {
-  const element = document.getElementById(id);
-  if (!element) {
-    throw new Error(`Missing required element: #${id}`);
-  }
-  return element as T;
-};
+const isSetupWizardBlockingUi = (): boolean => setupWizard.isSetupWizardVisible();
 
-const elements = {
-  dropZone: getRequiredElement<HTMLDivElement>('dropZone'),
-  fileInput: getRequiredElement<HTMLInputElement>('fileInput'),
-  fileInfo: getRequiredElement<HTMLDivElement>('fileInfo'),
-  fileName: getRequiredElement<HTMLSpanElement>('fileName'),
-  fileDetails: getRequiredElement<HTMLSpanElement>('fileDetails'),
-  selectedFileList: getRequiredElement<HTMLUListElement>('selectedFileList'),
-  clearSelectedFilesBtn: getRequiredElement<HTMLButtonElement>('clearSelectedFilesBtn'),
-  browseFilesBtn: getRequiredElement<HTMLButtonElement>('browseFilesBtn'),
-  betaLabel: getRequiredElement<HTMLSpanElement>('betaLabel'),
-  presetPanelSection: getRequiredElement<HTMLElement>('presetPanelSection'),
-  presetPanelToggle: getRequiredElement<HTMLButtonElement>('presetPanelToggle'),
-  presetPanelBody: getRequiredElement<HTMLDivElement>('presetPanelBody'),
-  presetPanelSummary: getRequiredElement<HTMLSpanElement>('presetPanelSummary'),
-  presetSearch: getRequiredElement<HTMLInputElement>('presetSearch'),
-  presetSearchAllCheck: getRequiredElement<HTMLInputElement>('presetSearchAllCheck'),
-  presetSearchScopeLabel: getRequiredElement<HTMLLabelElement>('presetSearchScopeLabel'),
-  presetCountLabel: getRequiredElement<HTMLSpanElement>('presetCountLabel'),
-  presetParentList: getRequiredElement<HTMLDivElement>('presetParentList'),
-  presetSelectionPreview: getRequiredElement<HTMLDivElement>('presetSelectionPreview'),
-  presetCardList: getRequiredElement<HTMLDivElement>('presetCardList'),
-  gpuPanelSection: getRequiredElement<HTMLElement>('gpuPanelSection'),
-  gpuPanelToggle: getRequiredElement<HTMLButtonElement>('gpuPanelToggle'),
-  gpuPanelSummary: getRequiredElement<HTMLSpanElement>('gpuPanelSummary'),
-  gpuPanelBody: getRequiredElement<HTMLDivElement>('gpuPanelBody'),
-  refreshGpuCapsBtn: getRequiredElement<HTMLButtonElement>('refreshGpuCapsBtn'),
-  gpuModeAuto: getRequiredElement<HTMLInputElement>('gpuModeAuto'),
-  gpuModeManual: getRequiredElement<HTMLInputElement>('gpuModeManual'),
-  gpuManualRow: getRequiredElement<HTMLDivElement>('gpuManualRow'),
-  gpuManualVendorSelect: getRequiredElement<HTMLSelectElement>('gpuManualVendorSelect'),
-  gpuCapabilityMatrix: getRequiredElement<HTMLDivElement>('gpuCapabilityMatrix'),
-  convertBtn: getRequiredElement<HTMLButtonElement>('convertBtn'),
-  cancelBtn: getRequiredElement<HTMLButtonElement>('cancelBtn'),
-  progressContainer: getRequiredElement<HTMLDivElement>('progressContainer'),
-  progressFill: getRequiredElement<HTMLDivElement>('progressFill'),
-  conversionQueue: getRequiredElement<HTMLDivElement>('conversionQueue'),
-  conversionQueueList: getRequiredElement<HTMLUListElement>('conversionQueueList'),
-  retryFailedQueueBtn: getRequiredElement<HTMLButtonElement>('retryFailedQueueBtn'),
-  progressPercent: getRequiredElement<HTMLSpanElement>('progressPercent'),
-  progressBatchSummary: getRequiredElement<HTMLSpanElement>('progressBatchSummary'),
-  progressTime: getRequiredElement<HTMLSpanElement>('progressTime'),
-  progressEta: getRequiredElement<HTMLSpanElement>('progressEta'),
-  progressSpeed: getRequiredElement<HTMLSpanElement>('progressSpeed'),
-  statusMessage: getRequiredElement<HTMLDivElement>('statusMessage'),
-  showInFolderBtn: getRequiredElement<HTMLButtonElement>('showInFolderBtn'),
-  settingsBtn: getRequiredElement<HTMLButtonElement>('settingsBtn'),
-  supportBtn: getRequiredElement<HTMLButtonElement>('supportBtn'),
-  titlebar: getRequiredElement<HTMLElement>('titlebar'),
-  windowControls: getRequiredElement<HTMLDivElement>('windowControls'),
-  windowMinimizeBtn: getRequiredElement<HTMLButtonElement>('windowMinimizeBtn'),
-  windowMaximizeBtn: getRequiredElement<HTMLButtonElement>('windowMaximizeBtn'),
-  windowCloseBtn: getRequiredElement<HTMLButtonElement>('windowCloseBtn'),
-  settingsModal: getRequiredElement<HTMLDivElement>('settingsModal'),
-  settingsGeneralTab: getRequiredElement<HTMLButtonElement>('settingsGeneralTab'),
-  settingsAdvancedFormatsTab: getRequiredElement<HTMLButtonElement>('settingsAdvancedFormatsTab'),
-  settingsDebugTab: getRequiredElement<HTMLButtonElement>('settingsDebugTab'),
-  settingsGeneralPanel: getRequiredElement<HTMLDivElement>('settingsGeneralPanel'),
-  settingsAdvancedFormatsPanel: getRequiredElement<HTMLDivElement>('settingsAdvancedFormatsPanel'),
-  settingsDebugPanel: getRequiredElement<HTMLDivElement>('settingsDebugPanel'),
-  showAllGpuVendorsCheck: getRequiredElement<HTMLInputElement>('showAllGpuVendorsCheck'),
-  formatTabGif: getRequiredElement<HTMLButtonElement>('formatTabGif'),
-  formatTabAv1: getRequiredElement<HTMLButtonElement>('formatTabAv1'),
-  formatTabH264: getRequiredElement<HTMLButtonElement>('formatTabH264'),
-  formatTabH265: getRequiredElement<HTMLButtonElement>('formatTabH265'),
-  formatTabAvi: getRequiredElement<HTMLButtonElement>('formatTabAvi'),
-  formatPanelGif: getRequiredElement<HTMLDivElement>('formatPanelGif'),
-  formatPanelAv1: getRequiredElement<HTMLDivElement>('formatPanelAv1'),
-  formatPanelH264: getRequiredElement<HTMLDivElement>('formatPanelH264'),
-  formatPanelH265: getRequiredElement<HTMLDivElement>('formatPanelH265'),
-  formatPanelAvi: getRequiredElement<HTMLDivElement>('formatPanelAvi'),
-  resetGifDefaultsBtn: getRequiredElement<HTMLButtonElement>('resetGifDefaultsBtn'),
-  resetAv1DefaultsBtn: getRequiredElement<HTMLButtonElement>('resetAv1DefaultsBtn'),
-  resetH264DefaultsBtn: getRequiredElement<HTMLButtonElement>('resetH264DefaultsBtn'),
-  resetH265DefaultsBtn: getRequiredElement<HTMLButtonElement>('resetH265DefaultsBtn'),
-  resetAviDefaultsBtn: getRequiredElement<HTMLButtonElement>('resetAviDefaultsBtn'),
-  gifLoopModeSelect: getRequiredElement<HTMLSelectElement>('gifLoopModeSelect'),
-  gifBestQualityFps: getRequiredElement<HTMLInputElement>('gifBestQualityFps'),
-  gifBestQualityMaxDimension: getRequiredElement<HTMLInputElement>('gifBestQualityMaxDimension'),
-  gifBestQualityMaxColors: getRequiredElement<HTMLInputElement>('gifBestQualityMaxColors'),
-  gifBestQualityDither: getRequiredElement<HTMLSelectElement>('gifBestQualityDither'),
-  gifQualityFps: getRequiredElement<HTMLInputElement>('gifQualityFps'),
-  gifQualityMaxDimension: getRequiredElement<HTMLInputElement>('gifQualityMaxDimension'),
-  gifQualityMaxColors: getRequiredElement<HTMLInputElement>('gifQualityMaxColors'),
-  gifQualityDither: getRequiredElement<HTMLSelectElement>('gifQualityDither'),
-  gifBalancedFps: getRequiredElement<HTMLInputElement>('gifBalancedFps'),
-  gifBalancedMaxDimension: getRequiredElement<HTMLInputElement>('gifBalancedMaxDimension'),
-  gifBalancedMaxColors: getRequiredElement<HTMLInputElement>('gifBalancedMaxColors'),
-  gifBalancedDither: getRequiredElement<HTMLSelectElement>('gifBalancedDither'),
-  gifBestCompressionFps: getRequiredElement<HTMLInputElement>('gifBestCompressionFps'),
-  gifBestCompressionMaxDimension: getRequiredElement<HTMLInputElement>(
-    'gifBestCompressionMaxDimension'
-  ),
-  gifBestCompressionMaxColors: getRequiredElement<HTMLInputElement>('gifBestCompressionMaxColors'),
-  gifBestCompressionDither: getRequiredElement<HTMLSelectElement>('gifBestCompressionDither'),
-  closeSettings: getRequiredElement<HTMLButtonElement>('closeSettings'),
-  outputDirBtn: getRequiredElement<HTMLButtonElement>('outputDirBtn'),
-  outputDirResetBtn: getRequiredElement<HTMLButtonElement>('outputDirResetBtn'),
-  outputPath: getRequiredElement<HTMLSpanElement>('outputPath'),
-  themeSelect: getRequiredElement<HTMLSelectElement>('themeSelect'),
-  themeSwitcher: getRequiredElement<HTMLDivElement>('themeSwitcher'),
-  customThemeRow: getRequiredElement<HTMLDivElement>('customThemeRow'),
-  customThemeGallery: getRequiredElement<HTMLDivElement>('customThemeGallery'),
-  uiStyleSwitcher: getRequiredElement<HTMLDivElement>('uiStyleSwitcher'),
-  resetSettingsBtn: getRequiredElement<HTMLButtonElement>('resetSettingsBtn'),
-  checkUpdateBtn: getRequiredElement<HTMLButtonElement>('checkUpdateBtn'),
-  updateBadge: getRequiredElement<HTMLSpanElement>('updateBadge'),
-  autoCheckUpdatesCheck: getRequiredElement<HTMLInputElement>('autoCheckUpdatesCheck'),
-  updateChannelSelect: getRequiredElement<HTMLSelectElement>('updateChannelSelect'),
-  versionInfo: getRequiredElement<HTMLSpanElement>('versionInfo'),
-  versionLink: getRequiredElement<HTMLAnchorElement>('versionLink'),
-  ffmpegWarning: getRequiredElement<HTMLDivElement>('ffmpegWarning'),
-  dynamicModal: getRequiredElement<HTMLDivElement>('dynamicModal'),
-  viewCreditsBtn: getRequiredElement<HTMLButtonElement>('viewCreditsBtn'),
-  creditsModal: getRequiredElement<HTMLDivElement>('creditsModal'),
-  closeCredits: getRequiredElement<HTMLButtonElement>('closeCredits'),
-  licensesList: getRequiredElement<HTMLDivElement>('licensesList'),
-  debugOutputCheck: getRequiredElement<HTMLInputElement>('debugOutputCheck'),
-  advancedPresetsCheck: getRequiredElement<HTMLInputElement>('advancedPresetsCheck'),
-  removeSpacesCheck: getRequiredElement<HTMLInputElement>('removeSpacesCheck'),
-  useSystemFFmpegCheck: getRequiredElement<HTMLInputElement>('useSystemFFmpegCheck'),
-  useCpuDecodingWhenGpuCheck: getRequiredElement<HTMLInputElement>('useCpuDecodingWhenGpuCheck'),
-  moveOriginalToTrashOnSuccessCheck: getRequiredElement<HTMLInputElement>(
-    'moveOriginalToTrashOnSuccessCheck'
-  ),
-  trashOriginalNotice: getRequiredElement<HTMLParagraphElement>('trashOriginalNotice'),
-  notifyOnConversionCompleteCheck: getRequiredElement<HTMLInputElement>(
-    'notifyOnConversionCompleteCheck'
-  ),
-  preventSleepWhileConvertingCheck: getRequiredElement<HTMLInputElement>(
-    'preventSleepWhileConvertingCheck'
-  ),
-  showLogsBtn: getRequiredElement<HTMLButtonElement>('showLogsBtn'),
-  logsModal: getRequiredElement<HTMLDivElement>('logsModal'),
-  closeLogs: getRequiredElement<HTMLButtonElement>('closeLogs'),
-  logsContent: getRequiredElement<HTMLPreElement>('logsContent'),
-  clearLogsBtn: getRequiredElement<HTMLButtonElement>('clearLogsBtn'),
-  copyLogsBtn: getRequiredElement<HTMLButtonElement>('copyLogsBtn'),
-};
-
-const createFallbackPresetPickerModel = (): PresetPickerModelApi => {
-  const normalizeQueryTokens = (query: string): string[] => {
-    return query
-      .trim()
-      .toLowerCase()
-      .split(/\s+/)
-      .filter((token) => token.length > 0);
-  };
-
-  const matchesQuery = (preset: PresetPickerModelPreset, queryTokens: string[]): boolean => {
-    if (queryTokens.length === 0) {
-      return true;
-    }
-    return queryTokens.every((token) => preset.searchText.includes(token));
-  };
-
-  return {
-    buildPresetParentBuckets: ({ presets, recentPresetIds, categoryOrder }) => {
-      const grouped = new Map<string, PresetPickerModelPreset[]>();
-      presets.forEach((preset) => {
-        if (!grouped.has(preset.category)) {
-          grouped.set(preset.category, []);
-        }
-        grouped.get(preset.category)?.push(preset);
-      });
-
-      const buckets: PresetParentBucket[] = [];
-      const byId = new Map(presets.map((preset) => [preset.id, preset] as const));
-      const recents = recentPresetIds
-        .map((id) => byId.get(id))
-        .filter((preset): preset is PresetPickerModelPreset => !!preset);
-      if (recents.length > 0) {
-        buckets.push({ key: 'recent', label: 'Recent', presets: recents });
-      }
-
-      Array.from(grouped.keys())
-        .sort((left, right) => {
-          const leftIndex = categoryOrder.indexOf(left);
-          const rightIndex = categoryOrder.indexOf(right);
-          const normalizedLeft = leftIndex >= 0 ? leftIndex : categoryOrder.length + 1;
-          const normalizedRight = rightIndex >= 0 ? rightIndex : categoryOrder.length + 1;
-          return normalizedLeft - normalizedRight;
-        })
-        .forEach((category) => {
-          const categoryPresets = grouped.get(category) || [];
-          if (categoryPresets.length > 0) {
-            buckets.push({
-              key: category,
-              label: categoryPresets[0].categoryLabel,
-              presets: categoryPresets,
-            });
-          }
-        });
-      return buckets;
-    },
-    resolveActiveParentKey: (requestedKey, buckets) => {
-      if (buckets.length === 0) return '';
-      return buckets.some((bucket) => bucket.key === requestedKey) ? requestedKey : buckets[0].key;
-    },
-    pickPresetIdForParent: (currentSelectedId, parentPresets) => {
-      if (parentPresets.length === 0) return '';
-      if (parentPresets.some((preset) => preset.id === currentSelectedId)) {
-        return currentSelectedId;
-      }
-      const balanced = parentPresets.find((preset) =>
-        preset.displayName.toLowerCase().includes('balanced')
-      );
-      return balanced?.id || parentPresets[0].id;
-    },
-    buildPresetPaneState: ({ buckets, activeParentKey, query, searchAllFormats }) => {
-      const queryTokens = normalizeQueryTokens(query);
-      if (searchAllFormats) {
-        const groups = buckets
-          .map((bucket) => ({
-            key: bucket.key,
-            label: bucket.label,
-            presets: bucket.presets.filter((preset) => matchesQuery(preset, queryTokens)),
-          }))
-          .filter((group) => group.presets.length > 0);
-        return {
-          groups,
-          totalVisible: groups.reduce((count, group) => count + group.presets.length, 0),
-          hasMatchesOutsideActive: false,
-        };
-      }
-
-      const activeBucket = buckets.find((bucket) => bucket.key === activeParentKey);
-      const activeMatches = (activeBucket?.presets || []).filter((preset) =>
-        matchesQuery(preset, queryTokens)
-      );
-      const hasMatchesOutsideActive =
-        queryTokens.length > 0 &&
-        buckets.some((bucket) => {
-          if (bucket.key === activeParentKey) {
-            return false;
-          }
-          return bucket.presets.some((preset) => matchesQuery(preset, queryTokens));
-        });
-      return {
-        groups: activeBucket
-          ? [{ key: activeBucket.key, label: activeBucket.label, presets: activeMatches }]
-          : [],
-        totalVisible: activeMatches.length,
-        hasMatchesOutsideActive,
-      };
-    },
-    isPresetVisibleInGroups: (presetId, groups) => {
-      return groups.some((group) => group.presets.some((preset) => preset.id === presetId));
-    },
-  };
-};
-
-const pickerModel =
-  (window as Window & { presetPickerModel?: PresetPickerModelApi }).presetPickerModel ||
-  createFallbackPresetPickerModel();
-
-type SetupWizardApi = {
-  initSetupWizard: (deps: {
-    getSettings: () => AppSettings;
-    patchSettings: (partial: Partial<AppSettings>) => void;
-    saveSettings: (partial: Partial<AppSettings>) => Promise<void>;
-    applyTheme: () => Promise<void>;
-    applyGpuModeUi: () => void;
-    persistGpuMode: (mode: GPUMode) => Promise<void>;
-    selectOutputDirectory: () => Promise<string | undefined>;
-    openHelp: () => void;
-    focusFirstIn: (container: HTMLElement) => void;
-    isFfmpegInstalled: () => boolean;
-    prepareAppTourSpotlight: (targetId: string) => void;
-    clearAppTourSpotlight: () => void;
-  }) => void;
-  maybeOpenSetupWizard: () => void;
-  openSetupWizard: () => void;
-  isSetupWizardVisible: () => boolean;
-  getSetupWizardOverlay: () => HTMLDivElement | null;
-  skipSetupWizardFromEscape: () => void;
-};
-
-type QueueSummaryApi = {
-  summarizeQueueForUiStatus: (
-    input: {
-      total: number;
-      items: Array<{
-        status: string;
-        fileName?: string;
-        error?: string;
-        usedCpuFallback?: boolean;
-      }>;
-    },
-    options?: { wasCancelled?: boolean }
-  ) => { type: 'success' | 'error' | 'warning'; message: string };
-};
-
-const getSetupWizard = (): SetupWizardApi | undefined =>
-  (window as Window & { setupWizard?: SetupWizardApi }).setupWizard;
-
-const isSetupWizardBlockingUi = (): boolean => getSetupWizard()?.isSetupWizardVisible() ?? false;
-
-const getQueueSummary = (): QueueSummaryApi | undefined =>
-  (window as Window & { queueSummary?: QueueSummaryApi }).queueSummary;
-
-const conv2QueueUiStatus: QueueSummaryApi['summarizeQueueForUiStatus'] = (input, options) => {
-  const api = getQueueSummary();
-  if (!api) {
-    return { type: 'error', message: 'Queue summary unavailable' };
-  }
-  return api.summarizeQueueForUiStatus(input, options);
-};
+const conv2QueueUiStatus = summarizeQueueForUiStatus;
 
 const normalizeRecentPresetIds = (value: unknown): string[] => {
   if (!Array.isArray(value)) {
@@ -939,6 +426,7 @@ const renderPresetPaneGroups = (
       const card = document.createElement('button');
       card.type = 'button';
       card.className = `preset-card${pickerPreset.id === selectedPresetId ? ' is-selected' : ''}`;
+      card.dataset.presetId = pickerPreset.id;
 
       const detailsDiv = document.createElement('div');
       detailsDiv.className = 'preset-card-details';
@@ -1571,23 +1059,6 @@ const formatPanels = [
   elements.formatPanelAvi,
 ];
 
-const formatFileSize = (bytes: number): string => {
-  if (bytes === 0) return '0 B';
-  const k = 1024;
-  const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
-  const i = Math.floor(Math.log(bytes) / Math.log(k));
-  return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
-};
-
-const formatDuration = (seconds: number): string => {
-  const h = Math.floor(seconds / 3600);
-  const m = Math.floor((seconds % 3600) / 60);
-  const s = Math.floor(seconds % 60);
-  if (h > 0) return `${h}h ${m}m ${s}s`;
-  if (m > 0) return `${m}m ${s}s`;
-  return `${s}s`;
-};
-
 const setSettingsPanel = (
   panelId: 'settingsGeneralPanel' | 'settingsAdvancedFormatsPanel' | 'settingsDebugPanel'
 ): void => {
@@ -1624,102 +1095,6 @@ const setFormatPanel = (panelId: FormatPanelId): void => {
     tab.setAttribute('aria-selected', isActive ? 'true' : 'false');
     tab.setAttribute('tabindex', isActive ? '0' : '-1');
   });
-};
-
-const getFocusableElements = (container: HTMLElement): HTMLElement[] => {
-  return Array.from(
-    container.querySelectorAll<HTMLElement>(
-      'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
-    )
-  ).filter((element) => element.offsetParent !== null);
-};
-
-const focusFirstInteractiveElement = (container: HTMLElement): void => {
-  const focusables = getFocusableElements(container);
-  if (focusables.length > 0) {
-    focusables[0].focus();
-  }
-};
-
-const getTopVisibleModal = (): HTMLDivElement | null => {
-  if (getSetupWizard()?.isSetupWizardVisible()) {
-    return getSetupWizard()?.getSetupWizardOverlay() ?? null;
-  }
-  if (elements.dynamicModal.classList.contains('visible')) {
-    return elements.dynamicModal;
-  }
-  if (elements.settingsModal.classList.contains('visible')) {
-    return elements.settingsModal;
-  }
-  if (elements.logsModal.classList.contains('visible')) {
-    return elements.logsModal;
-  }
-  if (elements.creditsModal.classList.contains('visible')) {
-    return elements.creditsModal;
-  }
-  return null;
-};
-
-const trapFocusInModal = (event: KeyboardEvent, modalOverlay: HTMLDivElement): void => {
-  let container: HTMLElement | null = null;
-  if (modalOverlay.id === 'setupWizardModal' && modalOverlay.classList.contains('spotlight-mode')) {
-    container = modalOverlay.querySelector<HTMLElement>('.setup-wizard-callout');
-  } else {
-    container = modalOverlay.querySelector<HTMLElement>('.setup-wizard-dialog, .modal');
-  }
-  if (!container || container.hidden) {
-    return;
-  }
-  const focusables = getFocusableElements(container);
-  if (focusables.length === 0) {
-    return;
-  }
-  const first = focusables[0];
-  const last = focusables[focusables.length - 1];
-  const active = document.activeElement as HTMLElement | null;
-  if (event.shiftKey) {
-    if (active === first || !active || !container.contains(active)) {
-      event.preventDefault();
-      last.focus();
-    }
-    return;
-  }
-  if (active === last || !active || !container.contains(active)) {
-    event.preventDefault();
-    first.focus();
-  }
-};
-
-const handleTabKeyboardNavigation = (
-  event: KeyboardEvent,
-  tabs: HTMLButtonElement[],
-  onSelect: (tab: HTMLButtonElement) => void
-): void => {
-  if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) {
-    return;
-  }
-
-  event.preventDefault();
-
-  const currentIndex = tabs.findIndex((tab) => tab === document.activeElement);
-  if (currentIndex < 0) {
-    return;
-  }
-
-  let nextIndex = currentIndex;
-  if (event.key === 'Home') {
-    nextIndex = 0;
-  } else if (event.key === 'End') {
-    nextIndex = tabs.length - 1;
-  } else if (event.key === 'ArrowRight') {
-    nextIndex = (currentIndex + 1) % tabs.length;
-  } else if (event.key === 'ArrowLeft') {
-    nextIndex = (currentIndex - 1 + tabs.length) % tabs.length;
-  }
-
-  const nextTab = tabs[nextIndex];
-  nextTab.focus();
-  onSelect(nextTab);
 };
 
 const setGifControlValues = (gif: GifAdvancedSettings): void => {
@@ -2183,138 +1558,6 @@ const showModal = (options: ModalOptions): void => {
   closeDynamicModal = closeByEscape;
 };
 
-const buildLicenseEntries = (
-  data: Record<string, LicenseCrawlerEntry> | null
-): LicenseDisplayEntry[] => {
-  const entries: LicenseDisplayEntry[] = [
-    {
-      name: 'FFmpeg',
-      license: 'GPL-2.0-or-later',
-      link: 'https://ffmpeg.org/',
-      note: 'Bundled GPL static builds include x264, x265, lame, libass, fribidi, freetype, fontconfig, libiconv, enca, and expat. License text: ffmpeg/LICENSE.txt. Source offer: ffmpeg/SOURCE_OFFER.txt.',
-      isSpecial: true,
-    },
-    {
-      name: 'FFmpeg license text',
-      license: 'GPL-2.0-or-later',
-      note: 'Included with this app at ffmpeg/LICENSE.txt.',
-      isSpecial: true,
-    },
-    {
-      name: 'FFmpeg source offer',
-      license: 'GPLv2 Section 3(b)',
-      note: 'Written offer included with this app at ffmpeg/SOURCE_OFFER.txt.',
-      isSpecial: true,
-    },
-    {
-      name: 'FFmpeg binaries',
-      license: 'GPL-2.0-or-later',
-      link: 'https://github.com/BurntToasters/ffmpeg-static-builds/releases/tag/ffmpeg-v8.1.2',
-      note: 'Pre-built FFmpeg 8.1.2 GPL static binaries for Windows, macOS, and Linux. Source code available at the linked release.',
-      isSpecial: true,
-    },
-    {
-      name: 'Twemoji assets',
-      license: 'CC-BY 4.0',
-      link: 'https://creativecommons.org/licenses/by/4.0/',
-      note: 'Emoji artwork from Twemoji by Twitter and other contributors. Used under CC-BY 4.0; source: github.com/jdecked/twemoji.',
-      isSpecial: true,
-    },
-    {
-      name: 'Inter fonts',
-      license: 'OFL-1.1',
-      link: 'https://github.com/rsms/inter',
-      note: 'Bundled font subsets are licensed under OFL-1.1. Full notice: fonts/OFL.txt.',
-      isSpecial: true,
-    },
-    {
-      name: 'Outfit fonts',
-      license: 'OFL-1.1',
-      link: 'https://github.com/Outfitio/Outfit-Fonts',
-      note: 'Bundled font subsets are licensed under OFL-1.1. Full notice: fonts/OFL.txt.',
-      isSpecial: true,
-    },
-  ];
-
-  if (!data || typeof data !== 'object') {
-    return entries;
-  }
-
-  const packageEntries = Object.entries(data)
-    .filter(([pkg]) => typeof pkg === 'string')
-    .map(([pkg, info]) => {
-      const entryInfo =
-        typeof info === 'object' && info !== null
-          ? (info as LicenseCrawlerEntry)
-          : { licenses: String(info) as string };
-
-      const licenses = Array.isArray(entryInfo.licenses)
-        ? entryInfo.licenses.join(', ')
-        : entryInfo.licenses || entryInfo.license || 'Unknown';
-
-      const link = entryInfo.repository || entryInfo.licenseUrl || entryInfo.url;
-
-      return {
-        name: pkg,
-        license: licenses,
-        link,
-      } as LicenseDisplayEntry;
-    })
-    .sort((a, b) => a.name.localeCompare(b.name));
-
-  return [...entries, ...packageEntries];
-};
-
-const renderLicenses = (entries: LicenseDisplayEntry[]): void => {
-  if (!elements.licensesList) return;
-
-  elements.licensesList.innerHTML = '';
-
-  entries.forEach((entry) => {
-    const item = document.createElement('div');
-    item.className = `license-item${entry.isSpecial ? ' license-highlight' : ''}`;
-
-    const header = document.createElement('div');
-    header.className = 'license-header';
-
-    const nameEl = document.createElement('div');
-    nameEl.className = 'license-name';
-    nameEl.textContent = entry.name;
-
-    const badge = document.createElement('span');
-    badge.className = 'license-badge';
-    badge.textContent = entry.license;
-
-    header.appendChild(nameEl);
-    header.appendChild(badge);
-    item.appendChild(header);
-
-    if (entry.note || entry.link) {
-      const meta = document.createElement('div');
-      meta.className = 'license-meta';
-
-      if (entry.link && /^https?:\/\//i.test(entry.link)) {
-        const linkBtn = document.createElement('button');
-        linkBtn.className = 'btn btn-xs license-link';
-        linkBtn.textContent = 'View source';
-        linkBtn.addEventListener('click', () => window.electronAPI.openExternal(entry.link!));
-        meta.appendChild(linkBtn);
-      }
-
-      if (entry.note) {
-        const note = document.createElement('span');
-        note.className = 'license-note';
-        note.textContent = entry.note;
-        meta.prepend(note);
-      }
-
-      item.appendChild(meta);
-    }
-
-    elements.licensesList.appendChild(item);
-  });
-};
-
 const openCreditsModal = async (): Promise<void> => {
   if (isSetupWizardBlockingUi()) {
     return;
@@ -2561,6 +1804,14 @@ const init = async () => {
     renderPreloadFailure();
     return;
   }
+  configureQueueView({
+    isConverting: () => isConverting,
+    hasRunContext: () => lastQueueRunContext !== null,
+    retry: (inputPath) => {
+      if (isConverting || conversionStarting) return;
+      void runConversionWorkflow([inputPath]);
+    },
+  });
   convertBtnOriginalHTML = elements.convertBtn.innerHTML;
   checkUpdateDefaultHTML = elements.checkUpdateBtn.innerHTML;
   tagAdvancedTierCards();
@@ -2577,6 +1828,7 @@ const init = async () => {
   await applyUpdateVisibility();
   syncConversionMenuState();
   getSetupWizard()?.maybeOpenSetupWizard();
+  document.documentElement.dataset.appReady = 'true';
 };
 
 const checkPlatform = async () => {
@@ -2797,6 +2049,10 @@ const setupKeyboardShortcuts = () => {
       const wizardOverlay = getSetupWizard()?.getSetupWizardOverlay() ?? null;
       if (topModal === wizardOverlay) {
         getSetupWizard()?.skipSetupWizardFromEscape();
+        return;
+      }
+      if (topModal === elements.errorDetailsModal) {
+        closeErrorDetails();
         return;
       }
       if (topModal === elements.dynamicModal) {
@@ -3088,8 +2344,13 @@ const setupEventListeners = () => {
   });
 
   elements.refreshGpuCapsBtn.addEventListener('click', () => {
-    clearGpuCapabilitiesCache();
-    void refreshGpuPanel(true);
+    void window.electronAPI
+      .refreshGpuCapabilities()
+      .catch(() => undefined)
+      .then(() => {
+        clearGpuCapabilitiesCache();
+        return refreshGpuPanel(true);
+      });
   });
 
   const persistGpuMode = async (nextMode: GPUMode): Promise<void> => {
@@ -3488,10 +2749,15 @@ const setupEventListeners = () => {
   });
 
   elements.retryFailedQueueBtn.addEventListener('click', () => {
-    if (isConverting || conversionStarting || !lastQueueDisplaySnapshot || !lastQueueRunContext) {
+    if (
+      isConverting ||
+      conversionStarting ||
+      !getLastQueueDisplaySnapshot() ||
+      !lastQueueRunContext
+    ) {
       return;
     }
-    const failedPaths = lastQueueDisplaySnapshot.items
+    const failedPaths = (getLastQueueDisplaySnapshot()?.items ?? [])
       .filter((item) => item.status === 'failed')
       .map((item) => item.inputPath);
     if (failedPaths.length === 0) {
@@ -3657,8 +2923,6 @@ const setupEventListeners = () => {
       });
       return;
     }
-
-    manualUpdateCheckInProgress = true;
     updateDownloadInProgress = false;
     setCheckUpdateButtonState(getCheckingUpdateButtonHTML(), true);
     window.electronAPI.checkForUpdates();
@@ -3668,7 +2932,6 @@ const setupEventListeners = () => {
     const phase = payload.phase;
     const percent = typeof payload.percent === 'number' ? payload.percent : undefined;
     if (phase === 'checking') {
-      manualUpdateCheckInProgress = payload.manual;
       updateDownloadInProgress = false;
       if (updateReadyToInstall) {
         return;
@@ -3690,7 +2953,6 @@ const setupEventListeners = () => {
       elements.updateBadge.classList.remove('u-hidden');
       updateAvailablePending = true;
       setCheckUpdateButtonState(getUpdateAvailableButtonHTML(), false, true);
-      manualUpdateCheckInProgress = false;
       updateDownloadInProgress = false;
       updateReadyToInstall = false;
       return;
@@ -3718,13 +2980,11 @@ const setupEventListeners = () => {
       if (phase === 'not-available' && updateReadyToInstall) {
         setCheckUpdateButtonState(getInstallUpdateButtonHTML(), false, true);
         elements.updateBadge.classList.remove('u-hidden');
-        manualUpdateCheckInProgress = false;
         updateDownloadInProgress = false;
         return;
       }
       elements.updateBadge.classList.add('u-hidden');
       setCheckUpdateButtonState(checkUpdateDefaultHTML, false);
-      manualUpdateCheckInProgress = false;
       updateDownloadInProgress = false;
       updateReadyToInstall = false;
       return;
@@ -3739,7 +2999,6 @@ const setupEventListeners = () => {
 
     if (phase === 'error') {
       const wasDownloading = updateDownloadInProgress;
-      manualUpdateCheckInProgress = false;
       updateDownloadInProgress = false;
       if (updateReadyToInstall) {
         updateAvailablePending = false;
@@ -3856,15 +3115,7 @@ const showGPUErrorStatus = (error: GPUEncoderError): void => {
   showStatus('warning', `${error.message}. ${error.suggestion}`);
 };
 
-const getFileName = (filePath: string): string => filePath.split(/[/\\]/).pop() || filePath;
-
-const getFileSelection = (): FileSelectionApi => {
-  const api = (window as Window & { conv2FileSelection?: FileSelectionApi }).conv2FileSelection;
-  if (!api) {
-    throw new Error('File selection helper failed to load');
-  }
-  return api;
-};
+const getFileSelection = (): typeof fileSelection => fileSelection;
 
 const renderSelectedFileList = (): void => {
   elements.selectedFileList.replaceChildren();
@@ -3995,117 +3246,6 @@ const resolvePreferredGpuVendor = async (
     codec,
     reason: payload.recommendationReason,
   };
-};
-
-/** Everything that affects how a single queue row is drawn. */
-const queueRowSignature = (item: QueueItemSnapshot): string =>
-  [
-    item.status,
-    item.error ?? '',
-    item.usedCpuFallback ? '1' : '0',
-    item.fileName,
-    isConverting ? '1' : '0',
-    lastQueueRunContext ? '1' : '0',
-  ].join('\u0001');
-
-const fillQueueRow = (li: HTMLLIElement, item: QueueItemSnapshot): void => {
-  li.className = `conversion-queue-item is-${item.status}`;
-  const name = document.createElement('span');
-  name.className = 'conversion-queue-name';
-  name.textContent = item.fileName;
-  name.title = item.error ? `${item.fileName}: ${item.error}` : item.fileName;
-  const status = document.createElement('span');
-  status.className = 'conversion-queue-status';
-  let statusLabel = item.status === 'done' && item.usedCpuFallback ? 'done (cpu)' : item.status;
-  if (item.status === 'failed' && item.error) {
-    statusLabel = item.error.length > 48 ? `${item.error.slice(0, 45)}…` : item.error;
-  }
-  status.textContent = statusLabel;
-  status.title = item.error || statusLabel;
-  const statusWrap = document.createElement('div');
-  statusWrap.className = 'conversion-queue-status-wrap';
-  statusWrap.append(status);
-  if (item.status === 'failed' && !isConverting && lastQueueRunContext) {
-    const retryOne = document.createElement('button');
-    retryOne.type = 'button';
-    retryOne.className = 'btn btn-secondary btn-xs conversion-queue-retry-one';
-    retryOne.textContent = 'Retry';
-    retryOne.setAttribute('aria-label', `Retry ${item.fileName}`);
-    retryOne.addEventListener('click', () => {
-      if (isConverting || conversionStarting) {
-        return;
-      }
-      void runConversionWorkflow([item.inputPath]);
-    });
-    statusWrap.append(retryOne);
-  }
-  li.replaceChildren(name, statusWrap);
-};
-
-// Rows are cached by item id so a snapshot only repaints the rows that changed.
-// A full rebuild would be O(files) per snapshot, i.e. O(files²) per batch.
-const renderedQueueRows = new Map<string, { li: HTMLLIElement; signature: string }>();
-let renderedQueueKey = '';
-
-const resetQueueRowCache = (): void => {
-  renderedQueueRows.clear();
-  renderedQueueKey = '';
-};
-
-const renderConversionQueue = (snapshot: QueueSnapshot | null) => {
-  if (snapshot && snapshot.total > 1) {
-    lastQueueDisplaySnapshot = snapshot;
-  }
-
-  const display =
-    snapshot ?? (!isConverting && lastQueueDisplaySnapshot ? lastQueueDisplaySnapshot : null);
-
-  const showBatchUi =
-    display &&
-    (display.total > 1 ||
-      display.items.some((item) => item.status === 'failed' || item.status === 'cancelled'));
-
-  if (!showBatchUi || !display) {
-    elements.conversionQueue.hidden = true;
-    elements.conversionQueueList.replaceChildren();
-    resetQueueRowCache();
-    elements.retryFailedQueueBtn.classList.add('u-hidden');
-    if (snapshot === null && isConverting) {
-      lastQueueDisplaySnapshot = null;
-    }
-    return;
-  }
-
-  elements.conversionQueue.hidden = false;
-  const failedCount = display.items.filter((item) => item.status === 'failed').length;
-  elements.retryFailedQueueBtn.classList.toggle(
-    'u-hidden',
-    isConverting || failedCount === 0 || !lastQueueRunContext
-  );
-
-  const nextKey = display.items.map((item) => item.id).join('\u0001');
-  if (nextKey !== renderedQueueKey) {
-    resetQueueRowCache();
-    const fragment = document.createDocumentFragment();
-    for (const item of display.items) {
-      const li = document.createElement('li');
-      fillQueueRow(li, item);
-      renderedQueueRows.set(item.id, { li, signature: queueRowSignature(item) });
-      fragment.appendChild(li);
-    }
-    elements.conversionQueueList.replaceChildren(fragment);
-    renderedQueueKey = nextKey;
-    return;
-  }
-
-  for (const item of display.items) {
-    const cached = renderedQueueRows.get(item.id);
-    if (!cached) continue;
-    const signature = queueRowSignature(item);
-    if (signature === cached.signature) continue;
-    fillQueueRow(cached.li, item);
-    cached.signature = signature;
-  }
 };
 
 const finishConversionUi = () => {
@@ -4254,7 +3394,18 @@ const runConversionWorkflow = async (inputPathsOverride?: string[]) => {
 
     if (totalFiles === 1) {
       const uiStatus = conv2QueueUiStatus({ total: totalFiles, items }, { wasCancelled });
-      showStatus(uiStatus.type, uiStatus.message);
+      const failed = items[0]?.status === 'failed' ? items[0] : undefined;
+      showStatus(
+        uiStatus.type,
+        uiStatus.message,
+        failed?.errorDetail
+          ? {
+              title: `Error details: ${failed.fileName}`,
+              summary: failed.error,
+              detail: failed.errorDetail,
+            }
+          : undefined
+      );
       if (items[0]?.status === 'done') {
         elements.showInFolderBtn.classList.remove('u-hidden');
       } else {
@@ -4307,21 +3458,6 @@ const cancelConversion = async () => {
       `Failed to cancel conversion: ${err instanceof Error ? err.message : String(err)}`
     );
   }
-};
-
-const showStatus = (type: 'success' | 'error' | 'warning', message: string) => {
-  elements.statusMessage.className = `status-message visible ${type}`;
-  let textEl = elements.statusMessage.querySelector('.status-text');
-  if (!textEl) {
-    textEl = document.createElement('span');
-    textEl.className = 'status-text';
-    elements.statusMessage.appendChild(textEl);
-  }
-  textEl.textContent = message;
-};
-
-const hideStatus = () => {
-  elements.statusMessage.classList.remove('visible');
 };
 
 document.addEventListener('DOMContentLoaded', init);

@@ -4,10 +4,22 @@ import { isMissingBundledBinaryPath, verifyBundledBinaryChecksum } from './ffmpe
 import * as path from 'path';
 import * as fs from 'fs';
 import * as os from 'os';
-import { GPUVendor, Preset, PresetContext, getPresetGpuCodec } from './presets';
+import {
+  GPUVendor,
+  Preset,
+  PresetContext,
+  getPresetGpuCodec,
+  resolveEncodeVendor,
+} from './presets';
+import { applyVideoFilter, planVideoPipeline } from './videoPipeline';
+import type { HwProbeStore } from './hwProbeStore';
 import { AdvancedFormatSettings } from './advancedFormats';
 import { CODEC_NAMES, GPU_ENCODERS, GPU_NAMES } from './gpuEncoders';
 import { parseOutTimeMs, parseProgress } from './ffmpegProgress';
+import { describeFFmpegFailure, ffmpegErrorDetail, NO_VIDEO_MESSAGE } from './ffmpegFailure';
+
+// Presets whose output needs a video stream from the input.
+const VIDEO_OUTPUT_CATEGORIES = new Set(['av1', 'h264', 'h265', 'avi', 'gif']);
 
 export { GPU_ENCODERS } from './gpuEncoders';
 
@@ -79,7 +91,10 @@ export interface ConversionProgress {
 export interface ConversionResult {
   success: boolean;
   outputPath: string;
+  /** User-facing, one sentence. */
   error?: string;
+  /** Raw FFmpeg stderr tail; drives GPU-retry detection and the Details view. */
+  errorDetail?: string;
   retryWithCpuSuggested?: boolean;
 }
 
@@ -106,6 +121,8 @@ export interface VideoInfo {
   audioCodec?: string;
   /** Codec names of every subtitle stream, in subtitle-stream order. */
   subtitleCodecs?: string[];
+  /** False when the probe found no video stream (audio-only files). */
+  hasVideo?: boolean;
 }
 
 let currentProcess: ChildProcess | null = null;
@@ -153,8 +170,9 @@ export const checkFFmpegInstalled = async (): Promise<boolean> => {
     checkBinaryInstalled(ffprobePath),
   ]);
   const checksumOk =
-    verifyBundledBinaryChecksum(ffmpegPath, 'ffmpeg') &&
-    verifyBundledBinaryChecksum(ffprobePath, 'ffprobe');
+    !getFFmpegPathModule().isUsingBundledFFmpeg() ||
+    (verifyBundledBinaryChecksum(ffmpegPath, 'ffmpeg') &&
+      verifyBundledBinaryChecksum(ffprobePath, 'ffprobe'));
   const result = ffmpegOk && ffprobeOk && checksumOk;
   ffmpegInstalledCache = { result, expiresAt: now + FFMPEG_INSTALLED_CACHE_TTL_MS };
   return result;
@@ -166,6 +184,31 @@ let encoderCacheInFlight: Promise<Set<string>> | null = null;
 let decoderCacheInFlight: Promise<Set<string>> | null = null;
 const hwEncoderProbeCache = new Map<string, boolean>();
 
+type HwProbeStoreFactory = (binaryPath: string) => HwProbeStore;
+let hwProbeStoreFactory: HwProbeStoreFactory | null = null;
+let hwProbeStore: { binaryPath: string; store: HwProbeStore } | null = null;
+
+/** Enables the on-disk probe cache; the store is recreated when the FFmpeg binary changes. */
+export const setHwProbeStoreFactory = (factory: HwProbeStoreFactory | null): void => {
+  hwProbeStoreFactory = factory;
+  hwProbeStore = null;
+};
+
+const getHwProbeStore = (): HwProbeStore | null => {
+  if (!hwProbeStoreFactory) return null;
+  const binaryPath = getFFmpegBinaryPath();
+  if (hwProbeStore?.binaryPath !== binaryPath) {
+    hwProbeStore = { binaryPath, store: hwProbeStoreFactory(binaryPath) };
+  }
+  return hwProbeStore.store;
+};
+
+/** Forgets probe results in memory and on disk (Refresh in the GPU panel). */
+export const clearHwProbeResults = (): void => {
+  hwEncoderProbeCache.clear();
+  getHwProbeStore()?.clear();
+};
+
 export const clearFFmpegCaches = (): void => {
   encoderCache = null;
   decoderCache = null;
@@ -173,9 +216,43 @@ export const clearFFmpegCaches = (): void => {
   decoderCacheInFlight = null;
   hwEncoderProbeCache.clear();
   ffmpegInstalledCache = null;
+  filterCache = null;
 };
 
 const FFMPEG_LIST_TIMEOUT_MS = 15_000;
+
+let filterCache: Promise<Set<string>> | null = null;
+
+/** Cached `ffmpeg -filters` names; empty set if the listing fails. */
+const getAvailableFilters = (): Promise<Set<string>> => {
+  if (filterCache) return filterCache;
+  filterCache = new Promise<Set<string>>((resolve) => {
+    const proc = spawn(getFFmpegBinaryPath(), ['-hide_banner', '-filters']);
+    let output = '';
+    const timer = setTimeout(() => proc.kill(), FFMPEG_LIST_TIMEOUT_MS);
+    proc.stdout?.on('data', (data) => {
+      output += data.toString();
+    });
+    const finish = (): void => {
+      clearTimeout(timer);
+      const filters = new Set<string>();
+      for (const line of output.split('\n')) {
+        const match = line.match(/^\s*[TSC.|]{2,3}\s+(\S+)\s+\S+->\S+/);
+        if (match) filters.add(match[1]);
+      }
+      if (filters.size === 0) filterCache = null;
+      resolve(filters);
+    };
+    proc.on('close', finish);
+    proc.on('error', finish);
+  });
+  return filterCache;
+};
+
+export const canTonemapHdr = async (): Promise<boolean> => {
+  const filters = await getAvailableFilters();
+  return filters.has('zscale') && filters.has('tonemap');
+};
 
 export const getAvailableEncoders = async (): Promise<Set<string>> => {
   if (encoderCache) {
@@ -236,6 +313,12 @@ const probeHwEncoderAvailable = async (encoder: string, signal?: AbortSignal): P
   if (cached !== undefined) return cached;
   if (signal?.aborted) return false;
 
+  const stored = getHwProbeStore()?.get(encoder);
+  if (stored !== undefined) {
+    hwEncoderProbeCache.set(encoder, stored);
+    return stored;
+  }
+
   const listed = await checkEncoderAvailable(encoder);
   if (signal?.aborted) return false;
   if (!listed) {
@@ -284,6 +367,9 @@ const probeHwEncoderAvailable = async (encoder: string, signal?: AbortSignal): P
     signal?.addEventListener('abort', handleAbort, { once: true });
 
     proc.on('close', (code) => {
+      if (settled) return;
+      // Only a real exit code is worth keeping across launches; timeouts may be transient.
+      getHwProbeStore()?.set(encoder, code === 0);
       finish(code === 0);
     });
 
@@ -728,6 +814,7 @@ export const getVideoInfo = async (inputPath: string, signal?: AbortSignal): Pro
       .filter((stream) => stream.codec_type === 'subtitle')
       .map((stream) => stream.codec_name || 'unknown');
     return {
+      hasVideo: videoStream !== undefined,
       audioCodec: audioStream?.codec_name || undefined,
       subtitleCodecs,
       duration: parseFloat(data.format?.duration || '0'),
@@ -896,9 +983,6 @@ export const ensureMp4PlaybackCompatibilityArgs = (
  * FFprobe emits "unknown", "unspecified", or "reserved" for unset fields;
  * passing those strings to FFmpeg causes an "Invalid option" error.
  */
-export const isKnownColorValue = (v: string): boolean =>
-  v !== 'unknown' && v !== 'unspecified' && v !== 'reserved' && v.length > 0;
-
 /**
  * Replaces home-directory prefixes in log output with `~` so that absolute
  * paths sent to the renderer (or pasted into bug reports) don't reveal the
@@ -1026,6 +1110,10 @@ export const convertVideo = async (
     }
     // ignore
   }
+  if (videoInfo && videoInfo.hasVideo === false && VIDEO_OUTPUT_CATEGORIES.has(preset.category)) {
+    tryDeleteOutputFile(outputPath, 'unused output reservation');
+    return { success: false, outputPath: '', error: NO_VIDEO_MESSAGE };
+  }
   if (preset.category === 'remux') {
     if (!videoInfo || !inputCodec) {
       try {
@@ -1113,38 +1201,26 @@ export const convertVideo = async (
     videoInfo?.codec
   );
 
-  // Inject color metadata passthrough and pix_fmt for video encodes (skip remux/audio/gif)
-  if (isVideoPreset && videoInfo && presetArgs.length > 0) {
-    const extraArgs: string[] = [];
-    if (videoInfo.colorPrimaries && isKnownColorValue(videoInfo.colorPrimaries))
-      extraArgs.push('-color_primaries', videoInfo.colorPrimaries);
-    if (videoInfo.colorTransfer && isKnownColorValue(videoInfo.colorTransfer))
-      extraArgs.push('-color_trc', videoInfo.colorTransfer);
-    if (videoInfo.colorSpace && isKnownColorValue(videoInfo.colorSpace))
-      extraArgs.push('-colorspace', videoInfo.colorSpace);
-    if (videoInfo.colorRange && isKnownColorValue(videoInfo.colorRange))
-      extraArgs.push('-color_range', videoInfo.colorRange);
-
-    // Preserve 10-bit depth for CPU H.265/AV1 encodes. H.264 CPU is already locked to
-    // yuv420p in the preset builder. Hardware encoders manage their own pixel format pipeline.
-    const is10bitSource =
-      videoInfo.pixFmt !== undefined &&
-      (videoInfo.pixFmt.includes('10') || videoInfo.pixFmt.includes('12'));
-    if (
-      gpu === 'cpu' &&
-      is10bitSource &&
-      (preset.category === 'h265' || preset.category === 'av1')
-    ) {
-      extraArgs.push('-pix_fmt', 'yuv420p10le');
+  // Colour tags, bit depth, HDR tone-mapping, and GPU frame residency (skip remux/audio).
+  let activeDecodeArgs = decodeArgs;
+  const needsVideoPlan = isVideoPreset || preset.category === 'gif';
+  if (needsVideoPlan && videoInfo && presetArgs.length > 0) {
+    const pipeline = planVideoPipeline({
+      category: preset.category,
+      encodeVendor: presetCodec ? resolveEncodeVendor(presetCodec, gpu) : 'cpu',
+      source: videoInfo,
+      decodeArgs,
+      canTonemap: await canTonemapHdr(),
+    });
+    activeDecodeArgs = pipeline.decodeArgs;
+    if (pipeline.filter) {
+      presetArgs = applyVideoFilter(presetArgs, pipeline.filter);
+      onLog?.('HDR source: tone-mapping to SDR (BT.709) for an 8-bit output.\n');
     }
-
-    const decodeKeepsFramesOnGpu = decodeArgs.includes('-hwaccel_output_format');
-    if (gpu !== 'cpu' && is10bitSource && presetCodec === 'h264' && !decodeKeepsFramesOnGpu) {
-      extraArgs.push('-pix_fmt', 'yuv420p');
-    }
-
-    if (extraArgs.length > 0) {
-      presetArgs = [...presetArgs.slice(0, -1), ...extraArgs, presetArgs[presetArgs.length - 1]];
+    if (pipeline.warning) onLog?.(`Warning: ${pipeline.warning}\n`);
+    const outputArgs = preset.category === 'gif' ? [] : pipeline.outputArgs;
+    if (outputArgs.length > 0) {
+      presetArgs = [...presetArgs.slice(0, -1), ...outputArgs, presetArgs[presetArgs.length - 1]];
     }
   }
   let conversionCanceled = false;
@@ -1155,7 +1231,7 @@ export const convertVideo = async (
     if (options.signal?.aborted) {
       return canceledResult();
     }
-    const args = ['-y', '-progress', 'pipe:1', ...activeDecodeArgs, ...presetArgs];
+    const args = ['-hide_banner', '-y', '-progress', 'pipe:1', ...activeDecodeArgs, ...presetArgs];
 
     if (onLog) {
       onLog(`Running command: ffmpeg ${args.join(' ')}\n`);
@@ -1305,7 +1381,12 @@ export const convertVideo = async (
           return;
         }
 
-        resolve({ success: false, outputPath, error: errorOutput });
+        resolve({
+          success: false,
+          outputPath,
+          error: describeFFmpegFailure(errorOutput),
+          errorDetail: ffmpegErrorDetail(errorOutput),
+        });
       });
 
       ffmpegProcess.on('error', (err) => {
@@ -1334,7 +1415,7 @@ export const convertVideo = async (
     });
   };
 
-  return runAttempt(decodeArgs, true);
+  return runAttempt(activeDecodeArgs, true);
 };
 
 const forceKillProcess = (processToKill: ChildProcess): void => {

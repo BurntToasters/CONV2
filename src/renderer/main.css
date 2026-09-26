@@ -9,7 +9,7 @@
 
   --text-primary: #f0f6fc;
   --text-secondary: #9198a1;
-  --text-muted: #656d76;
+  --text-muted: #8b949e;
 
   --accent: #4493f8;
   --accent-secondary: #316dca;
@@ -66,14 +66,14 @@
   --intent-quality: #4493f8;
   --intent-speed: #58a6ff;
   --intent-size: #db6d28;
-  --intent-default: #656d76;
+  --intent-default: #8b949e;
 
   --drop-zone-bg: #0d1117;
   --drop-zone-bg-hover: #151b23;
   --drop-zone-border: #30363d;
 }
 
-[data-theme='light'] {
+:root[data-theme='light'] {
   /* Light — Paper Layers (default light) */
   --bg-primary: #f6f8fa;
   --bg-secondary: #ffffff;
@@ -84,7 +84,7 @@
 
   --text-primary: #1f2328;
   --text-secondary: #59636e;
-  --text-muted: #656d76;
+  --text-muted: #555e69;
 
   --accent: #0969da;
   --accent-secondary: #0550ae;
@@ -117,10 +117,10 @@
   --tier-small: #bf3989;
   --tier-fast: #8250df;
 
-  --intent-quality: #0969da;
-  --intent-speed: #218bff;
-  --intent-size: #bc4c00;
-  --intent-default: #656d76;
+  --intent-quality: #0550ae;
+  --intent-speed: #0a5bc4;
+  --intent-size: #953800;
+  --intent-default: #555e69;
 
   --drop-zone-bg: #ffffff;
   --drop-zone-bg-hover: #eaeef2;
@@ -133,7 +133,7 @@
   background-image: none;
 }
 
-[data-theme='midnight-blue'] {
+:root[data-theme='midnight-blue'] {
   /* Custom — Midnight Blue (Sapphire successor) */
   --bg-primary: #0a0e17;
   --bg-secondary: #12182a;
@@ -144,7 +144,7 @@
 
   --text-primary: #f0f4fc;
   --text-secondary: #a8b4cc;
-  --text-muted: #7a869e;
+  --text-muted: #9aa6be;
 
   --accent: #007aff;
   --accent-secondary: #0056b3;
@@ -177,17 +177,17 @@
   --tier-small: #ec4899;
   --tier-fast: #6366f1;
 
-  --intent-quality: #3b82f6;
-  --intent-speed: #007aff;
+  --intent-quality: #79a8ff;
+  --intent-speed: #5fb0ff;
   --intent-size: #f97316;
-  --intent-default: #7a869e;
+  --intent-default: #9aa6be;
 
   --drop-zone-bg: #12182a;
   --drop-zone-bg-hover: #1a2238;
   --drop-zone-border: rgba(201, 209, 217, 0.14);
 }
 
-[data-theme='high-contrast-dark'] {
+:root[data-theme='high-contrast-dark'] {
   /* Custom — High Contrast Dark */
   --bg-primary: #000000;
   --bg-secondary: #0a0a0a;
@@ -2356,15 +2356,30 @@ html[data-custom-titlebar='true'] .settings-modal.modal {
   max-height: calc(85vh - var(--titlebar-height));
 }
 
-.conversion-queue-error {
-  display: block;
+/* Failed rows: the full reason wraps under the file name, actions stay on the right. */
+.conversion-queue-item.is-failed {
+  grid-template-columns: 1fr;
+}
+
+.conversion-queue-item.is-failed .conversion-queue-status-wrap {
+  justify-content: space-between;
+}
+
+.conversion-queue-item.is-failed .conversion-queue-status {
+  flex: 1;
   font-size: var(--text-xs);
-  color: var(--text-muted);
-  margin-top: 2px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  max-width: 100%;
+  line-height: 1.4;
+}
+
+.conversion-queue-details {
+  flex-shrink: 0;
+}
+
+.error-details-summary {
+  margin: 0 20px 12px;
+  color: var(--text-primary);
+  font-size: var(--text-sm);
+  line-height: 1.5;
 }
 
 .conversion-queue-status-wrap {
@@ -2441,4 +2456,21 @@ html[data-custom-titlebar='true'] .settings-modal.modal {
 
 .preset-selection-preview {
   font-size: 13px;
+}
+
+/* prefers-contrast: more — every theme promotes secondary text and solidifies borders. */
+@media (prefers-contrast: more) {
+  :root,
+  :root[data-theme] {
+    --text-muted: var(--text-secondary);
+    --border-subtle: var(--border-hover);
+    --border: var(--border-hover);
+  }
+}
+
+/* Apply the saved theme instantly on launch instead of animating from the default dark palette. */
+html:not([data-app-ready='true']) *,
+html:not([data-app-ready='true']) *::before,
+html:not([data-app-ready='true']) *::after {
+  transition: none !important;
 }

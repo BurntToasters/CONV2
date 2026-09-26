@@ -158,3 +158,24 @@ test('createEmptyQueueSnapshot defaults', () => {
   assert.equal(empty.total, 0);
   assert.deepEqual(empty.items, []);
 });
+
+// A bare "gpu" substring used to trigger CPU retries for unrelated failures.
+test('shouldRetryWithCpu ignores unrelated text that merely contains "gpu"', () => {
+  const unrelated = {
+    success: false,
+    outputPath: '',
+    error: 'FFmpeg error: Invalid argument',
+    errorDetail: 'Error opening output /Users/gpuser/out.mp4: Is a directory',
+  };
+  assert.equal(shouldRetryWithCpu(unrelated, 'nvidia', true), false);
+});
+
+test('shouldRetryWithCpu still retries real hardware failures found only in errorDetail', () => {
+  const nvenc = {
+    success: false,
+    outputPath: '',
+    error: 'The encoder could not start with these settings.',
+    errorDetail: '[h264_nvenc @ 0x1] OpenEncodeSessionEx failed: unsupported device (2)',
+  };
+  assert.equal(shouldRetryWithCpu(nvenc, 'nvidia', true), true);
+});
