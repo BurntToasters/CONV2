@@ -1,7 +1,7 @@
 {
   "name": "conv2",
   "desktopName": "com.burnttoasters.conv2",
-  "version": "1.6.0-beta.3",
+  "version": "1.6.0-beta.4",
   "description": "A cross platform FFMPEG GUI front-end making it easy for quick video conversion!",
   "homepage": "https://github.com/BurntToasters/CONV2#readme",
   "bugs": {
@@ -63,7 +63,8 @@
     "sync:main:destructive": "node build-scripts/git-sync.js main",
     "b": "npm run sync:beta:destructive",
     "r": "npm run sync:main:destructive",
-    "u": "npm update && npm run release:prepare && npm run format && npm run test:all",
+    "sync:changelog": "node build/sync-changelog.js",
+    "u": "npm update && npm run sync:changelog && npm run release:prepare && npm run format && npm run test:all",
     "restore:release": "node build/restore-release.js",
     "release:draft": "dotenv -- node build-scripts/ensure-draft-release.js",
     "release:wait-draft": "dotenv -- node build-scripts/ensure-draft-release.js --wait",
@@ -112,8 +113,8 @@
     "release:finalize": "npm run release:mirror"
   },
   "engines": {
-    "node": "24.x",
-    "npm": "11.x"
+    "node": "^24.18.0",
+    "npm": "^12.0.2"
   },
   "devDependencies": {
     "@electron/notarize": "^3.0.0",
