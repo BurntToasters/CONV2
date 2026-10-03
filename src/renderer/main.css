@@ -555,6 +555,11 @@ a:hover {
   gap: 6px;
 }
 
+[data-theme='light'] .ffmpeg-warning h3 {
+  /* #cf222e on the tinted error background is 4.44:1; 4.5:1 is the AA floor. */
+  color: #b42318;
+}
+
 .ffmpeg-warning h3::before {
   content: '';
   width: 12px;
