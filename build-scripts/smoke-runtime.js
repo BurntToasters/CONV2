@@ -22,6 +22,9 @@ function runRuntimeSmoke(skipCompile = false) {
   }
 
   const smokeArgs = ['.', '--dev', '--smoke'];
+  if (process.env.CI) {
+    smokeArgs.push('--no-sandbox');
+  }
   const env = {
     ...process.env,
     CONV2_SMOKE: '1',

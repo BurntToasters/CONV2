@@ -24,7 +24,7 @@ async function launchApp({ settings, label = 'app', userDataDir: reuseDir } = {}
 
   const app = await electron.launch({
     executablePath: electronBinary,
-    args: [ROOT],
+    args: process.env.CI ? [ROOT, '--no-sandbox'] : [ROOT],
     cwd: ROOT,
     env,
     timeout: 60_000,
