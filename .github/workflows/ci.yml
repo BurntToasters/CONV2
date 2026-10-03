@@ -110,6 +110,7 @@ jobs:
       - name: Configure Electron sandbox
         if: runner.os == 'Linux'
         run: |
+          node node_modules/electron/install.js
           sudo chown root:root node_modules/electron/dist/chrome-sandbox
           sudo chmod 4755 node_modules/electron/dist/chrome-sandbox
           sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
@@ -198,6 +199,7 @@ jobs:
       - name: Configure Electron sandbox
         if: runner.os == 'Linux'
         run: |
+          node node_modules/electron/install.js
           sudo chown root:root node_modules/electron/dist/chrome-sandbox
           sudo chmod 4755 node_modules/electron/dist/chrome-sandbox
           sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
