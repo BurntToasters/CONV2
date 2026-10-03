@@ -82,7 +82,10 @@ async function launchApp({ settings, label = 'app', userDataDir: reuseDir } = {}
         // already gone
       }
       await Promise.race([exited, new Promise((r) => setTimeout(r, 5000))]);
-      if (!keepProfile) fs.rmSync(userDataDir, { recursive: true, force: true });
+      if (!keepProfile) {
+        // Windows can return EPERM while the exited app still holds the profile.
+        fs.rmSync(userDataDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
+      }
     },
   };
 }
