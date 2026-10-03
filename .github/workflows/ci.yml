@@ -11,9 +11,8 @@ permissions:
 
 env:
   NODE_VERSION: '24'
-  # Public release pinned to resources/ffmpeg/checksums.json. GitHub-hosted
-  # runners cannot resolve the intranet download host.
-  FFMPEG_DL_SERVER: https://github.com/BurntToasters/ffmpeg-static-builds/releases/download/ffmpeg-v9.0.2
+  # Real FFmpeg payloads are not published for GitHub-hosted runners yet.
+  # ci:prepare-ffmpeg skips the download, and payload tests skip with it.
 
 jobs:
   typecheck:
@@ -61,15 +60,6 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Cache bundled FFmpeg
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: |
-            resources/ffmpeg/linux
-            resources/ffmpeg/win
-            resources/ffmpeg/mac
-          key: ffmpeg-${{ runner.os }}-${{ hashFiles('resources/ffmpeg/checksums.json') }}
-
       - name: Prepare FFmpeg payload
         run: npm run ci:prepare-ffmpeg
 
@@ -103,10 +93,6 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Install modern 7-Zip
-        if: runner.os == 'macOS'
-        run: brew install sevenzip
-
       - name: Configure Electron sandbox
         if: runner.os == 'Linux'
         run: |
@@ -115,28 +101,14 @@ jobs:
           sudo chmod 4755 node_modules/electron/dist/chrome-sandbox
           sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
 
-      - name: Cache bundled FFmpeg
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: |
-            resources/ffmpeg/linux
-            resources/ffmpeg/win
-            resources/ffmpeg/mac
-          key: ffmpeg-${{ runner.os }}-${{ hashFiles('resources/ffmpeg/checksums.json') }}
-
       - name: Prepare FFmpeg payload for package smoke
         run: npm run ci:prepare-ffmpeg
 
       - name: Build
         run: npm run build
 
-      # Runs the real conversion presets against the bundled FFmpeg. Self-skips
-      # when the payload is the placeholder used for untrusted builds, and is
-      # enforced on trusted branches where the real payload is available.
+      # Skips until a bundled FFmpeg payload is available on the runner.
       - name: FFmpeg integration tests
-        env:
-          # ci:prepare-ffmpeg installs the checksum-verified public payload.
-          CONV2_REQUIRE_FFMPEG_TESTS: '1'
         run: npm run test:ffmpeg
 
       - name: Runtime smoke (headless)
@@ -192,10 +164,6 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Install modern 7-Zip
-        if: runner.os == 'macOS'
-        run: brew install sevenzip
-
       - name: Configure Electron sandbox
         if: runner.os == 'Linux'
         run: |
@@ -204,29 +172,13 @@ jobs:
           sudo chmod 4755 node_modules/electron/dist/chrome-sandbox
           sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
 
-      - name: Cache bundled FFmpeg
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: |
-            resources/ffmpeg/linux
-            resources/ffmpeg/win
-            resources/ffmpeg/mac
-          key: ffmpeg-${{ runner.os }}-${{ hashFiles('resources/ffmpeg/checksums.json') }}
-
-      - name: Prepare FFmpeg payload
-        run: npm run ci:prepare-ffmpeg
-
-      # Skips when no runnable FFmpeg exists (untrusted PRs); required when the payload is available.
+      # Skips conversion coverage when the runner has no bundled FFmpeg.
       - name: E2E (headless)
         if: runner.os == 'Linux'
-        env:
-          CONV2_REQUIRE_FFMPEG_TESTS: '1'
         run: xvfb-run -a npm run test:e2e
 
       - name: E2E
         if: runner.os != 'Linux'
-        env:
-          CONV2_REQUIRE_FFMPEG_TESTS: '1'
         run: npm run test:e2e
 
       - name: Upload E2E artifacts

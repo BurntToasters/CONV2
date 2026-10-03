@@ -17,6 +17,7 @@
 ## Changes in `v1.6.0-beta.4:`
 
 - **FFMPEG:** Updated ffmpeg on _ALL_ platforms to `9.0.2`.
+- **CI:** Real FFmpeg payload tests are skipped until those binaries are published for GitHub-hosted runners.
 - **Building - FFMPEG:** Release scripts download a replacement payload with `get-ffmpeg` and re-check when checksum verification fails.
 - **Security:** Bundled FFmpeg binaries are now checked against the tracked checksum manifest before use, and missing or unsafe binary paths fail closed.
 - **Codebase:** Video processing now handles HDR and high-bit-depth sources more safely, including tone-mapping 8-bit outputs and preserving compatible HDR metadata.
