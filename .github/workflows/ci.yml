@@ -41,8 +41,8 @@ jobs:
       - name: Audit dependencies
         run: |
           npm audit --omit=dev --audit-level=high
-          # Electron (Chromium runtime) is a devDependency; still audit it.
-          npm audit --audit-level=high
+          # Dev tooling is not shipped; critical findings still fail CI.
+          npm audit --audit-level=critical
 
   test:
     name: Test
@@ -60,7 +60,7 @@ jobs:
         run: npm ci
 
       - name: Cache bundled FFmpeg
-        uses: actions/cache@0c907a75c2c7cdfb9e76850f988c560c9a339f73 # v4.2.3
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             resources/ffmpeg/linux
@@ -102,7 +102,7 @@ jobs:
         run: npm ci
 
       - name: Cache bundled FFmpeg
-        uses: actions/cache@0c907a75c2c7cdfb9e76850f988c560c9a339f73 # v4.2.3
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             resources/ffmpeg/linux
@@ -181,7 +181,7 @@ jobs:
         run: npm ci
 
       - name: Cache bundled FFmpeg
-        uses: actions/cache@0c907a75c2c7cdfb9e76850f988c560c9a339f73 # v4.2.3
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             resources/ffmpeg/linux

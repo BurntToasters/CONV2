@@ -76,7 +76,7 @@ test('retired updater channel alias is gone', () => {
   assert.doesNotMatch(source, /shouldAcceptUpdateForChannel/);
 });
 
-test('Electron stays on the 43.7 patch line', () => {
+test('Electron stays on the 44.5 patch line', () => {
   const pkg = JSON.parse(read('package.json'));
-  assert.match(String(pkg.devDependencies.electron), /\^?43\.7\./);
+  assert.match(String(pkg.devDependencies.electron), /\^?44\.5\./);
 });
