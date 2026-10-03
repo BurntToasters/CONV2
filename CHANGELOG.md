@@ -23,7 +23,7 @@
 - **Testing:** Added cross-platform Electron end-to-end coverage for accessibility, UI workflows, package contents, and real FFmpeg conversions.
 - **Security:** Release uploads now use the GitHub CLI credential store instead of `GH_TOKEN` or `GITHUB_TOKEN` environment secrets.
 - **Codebase:** Release tooling now guards destructive branch syncs and skips beta artifact mirroring unless explicitly overridden.
-- **Electron:** Updated Electron to `43.7.3`.
+- **Electron:** Updated Electron to `44.5.0`.
 - **PKG:** Updated packages.
 
 ## Changes in `v1.6.0-beta.3:`
