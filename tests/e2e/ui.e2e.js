@@ -311,7 +311,8 @@ test(
     });
     try {
       await addFiles(ctx.window, [fixtures.long]);
-      await selectPreset(ctx.window, 'h265-best-quality');
+      // veryslow best-quality does not finish inside the CI idle budget on FFmpeg 9.
+      await selectPreset(ctx.window, 'h265-balanced');
       await ctx.window.click('#convertBtn');
       await waitForRunning(ctx.window);
       await ctx.stubMessageBox([0]);
