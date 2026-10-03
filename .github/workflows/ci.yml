@@ -11,7 +11,9 @@ permissions:
 
 env:
   NODE_VERSION: '24'
-  FFMPEG_DL_SERVER: ${{ secrets.FFMPEG_DL_SERVER }}
+  # Public release pinned to resources/ffmpeg/checksums.json. GitHub-hosted
+  # runners cannot resolve the intranet download host.
+  FFMPEG_DL_SERVER: https://github.com/BurntToasters/ffmpeg-static-builds/releases/download/ffmpeg-v9.0.2
 
 jobs:
   typecheck:
@@ -121,10 +123,8 @@ jobs:
       # enforced on trusted branches where the real payload is available.
       - name: FFmpeg integration tests
         env:
-          # ci:prepare-ffmpeg installs a checksum-verified payload whenever the
-          # download secret is configured, so that is exactly when these tests
-          # must not be allowed to silently skip.
-          CONV2_REQUIRE_FFMPEG_TESTS: ${{ secrets.FFMPEG_DL_SERVER != '' && '1' || '0' }}
+          # ci:prepare-ffmpeg installs the checksum-verified public payload.
+          CONV2_REQUIRE_FFMPEG_TESTS: '1'
         run: npm run test:ffmpeg
 
       - name: Runtime smoke (headless)
@@ -196,13 +196,13 @@ jobs:
       - name: E2E (headless)
         if: runner.os == 'Linux'
         env:
-          CONV2_REQUIRE_FFMPEG_TESTS: ${{ secrets.FFMPEG_DL_SERVER != '' && '1' || '0' }}
+          CONV2_REQUIRE_FFMPEG_TESTS: '1'
         run: xvfb-run -a npm run test:e2e
 
       - name: E2E
         if: runner.os != 'Linux'
         env:
-          CONV2_REQUIRE_FFMPEG_TESTS: ${{ secrets.FFMPEG_DL_SERVER != '' && '1' || '0' }}
+          CONV2_REQUIRE_FFMPEG_TESTS: '1'
         run: npm run test:e2e
 
       - name: Upload E2E artifacts

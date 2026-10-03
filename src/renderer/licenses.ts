@@ -42,8 +42,8 @@ export const buildLicenseEntries = (
     {
       name: 'FFmpeg binaries',
       license: 'GPL-2.0-or-later',
-      link: 'https://github.com/BurntToasters/ffmpeg-static-builds/releases/tag/ffmpeg-v8.1.2',
-      note: 'Pre-built FFmpeg 8.1.2 GPL static binaries for Windows, macOS, and Linux. Source code available at the linked release.',
+      link: 'https://github.com/BurntToasters/ffmpeg-static-builds/releases/tag/ffmpeg-v9.0.2',
+      note: 'Pre-built FFmpeg 9.0.2 GPL static binaries for Windows, macOS, and Linux. Source code available at the linked release.',
       isSpecial: true,
     },
     {
