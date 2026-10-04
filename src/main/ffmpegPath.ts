@@ -6,6 +6,11 @@ import {
   createPrivateExecutableDirectory,
   removePrivateExecutableDirectory,
 } from './executableTemp';
+import {
+  bundledBinaryFileName,
+  bundledFFmpegRelDirs,
+  resolveExecutableOnPath,
+} from './ffmpegPathCandidates';
 
 let cachedFFmpegPath: string | null = null;
 let cachedFFprobePath: string | null = null;
@@ -75,6 +80,17 @@ export const setUseSystemFFmpeg = (value: boolean): void => {
   cachedFFprobePath = null;
 };
 
+let ffmpegOverride: string | null = null;
+let ffprobeOverride: string | null = null;
+
+/** Absolute binaries from resolveDevOverrides; take precedence over bundled/system lookup. */
+export const setFFmpegBinaryOverrides = (ffmpeg?: string, ffprobe?: string): void => {
+  ffmpegOverride = ffmpeg ?? null;
+  ffprobeOverride = ffprobe ?? null;
+  cachedFFmpegPath = null;
+  cachedFFprobePath = null;
+};
+
 const getBundledFFmpegDir = (): string | null => {
   const candidateBaseDirs: string[] = [];
 
@@ -93,7 +109,7 @@ const getBundledFFmpegDir = (): string | null => {
   );
 
   const seen = new Set<string>();
-  const ffmpegName = process.platform === 'win32' ? 'ffmpeg.exe' : 'ffmpeg';
+  const ffmpegName = bundledBinaryFileName(process.platform, 'ffmpeg');
 
   for (const baseDir of candidateBaseDirs) {
     const normalizedBaseDir = path.resolve(baseDir);
@@ -106,24 +122,10 @@ const getBundledFFmpegDir = (): string | null => {
       continue;
     }
 
-    if (fs.existsSync(path.join(normalizedBaseDir, ffmpegName))) {
-      return normalizedBaseDir;
-    }
-
-    if (process.platform === 'darwin' || process.platform === 'win32') {
-      const archDir = path.join(normalizedBaseDir, process.arch);
-      if (fs.existsSync(path.join(archDir, ffmpegName))) {
-        return archDir;
-      }
-
-      const x64Dir = path.join(normalizedBaseDir, 'x64');
-      if (process.arch === 'x64' && fs.existsSync(path.join(x64Dir, ffmpegName))) {
-        return x64Dir;
-      }
-
-      const arm64Dir = path.join(normalizedBaseDir, 'arm64');
-      if (process.arch === 'arm64' && fs.existsSync(path.join(arm64Dir, ffmpegName))) {
-        return arm64Dir;
+    for (const relDir of bundledFFmpegRelDirs(process.platform, process.arch)) {
+      const candidateDir = relDir ? path.join(normalizedBaseDir, relDir) : normalizedBaseDir;
+      if (fs.existsSync(path.join(candidateDir, ffmpegName))) {
+        return candidateDir;
       }
     }
   }
@@ -145,9 +147,15 @@ export const getFFmpegPath = (): string => {
     return cachedFFmpegPath;
   }
 
+  if (ffmpegOverride) {
+    cachedFFmpegPath = ffmpegOverride;
+    return ffmpegOverride;
+  }
+
   if (useSystemFFmpeg) {
-    cachedFFmpegPath = 'ffmpeg';
-    return 'ffmpeg';
+    // Pin one absolute binary so later PATH changes cannot swap it mid-session.
+    cachedFFmpegPath = resolveExecutableOnPath('ffmpeg', process.env) ?? 'ffmpeg';
+    return cachedFFmpegPath;
   }
 
   const bundledDir = getBundledFFmpegDir();
@@ -179,9 +187,15 @@ export const getFFprobePath = (): string => {
     return cachedFFprobePath;
   }
 
+  if (ffprobeOverride) {
+    cachedFFprobePath = ffprobeOverride;
+    return ffprobeOverride;
+  }
+
   if (useSystemFFmpeg) {
-    cachedFFprobePath = 'ffprobe';
-    return 'ffprobe';
+    // Pin one absolute binary so later PATH changes cannot swap it mid-session.
+    cachedFFprobePath = resolveExecutableOnPath('ffprobe', process.env) ?? 'ffprobe';
+    return cachedFFprobePath;
   }
 
   const bundledDir = getBundledFFmpegDir();
@@ -208,13 +222,8 @@ export const getFFprobePath = (): string => {
   return 'ffprobe';
 };
 
-export const hasBundledFFmpeg = (): boolean => {
-  const ffmpegPath = getFFmpegPath();
-  if (ffmpegPath === 'ffmpeg') {
-    return false;
-  }
-  return fs.existsSync(ffmpegPath);
-};
+/** Bundled binaries are checksum-verified; system and dev-override binaries are the user's choice. */
+export const isUsingBundledFFmpeg = (): boolean => !useSystemFFmpeg && !ffmpegOverride;
 
 export const clearFFmpegPathCache = (): void => {
   cachedFFmpegPath = null;

@@ -2,23 +2,19 @@
 
 const path = require('node:path');
 
-/**
- * electron-builder publishes its own artifacts. Flatpak bundles are created
- * afterwards by build-scripts/flatpak.js, so they must be explicitly uploaded
- * alongside the generated signatures and checksum manifest.
- *
- * @param {string[]} artifactFiles filenames found in release/
- * @param {string[]} signatureFiles absolute paths to detached signatures
- * @param {string} checksumFile absolute path to the checksum manifest
- * @param {string} releaseDir absolute release directory
- * @returns {string[]} absolute paths to upload
- */
-function getReleaseUploadFiles(artifactFiles, signatureFiles, checksumFile, releaseDir) {
-  const flatpakBundles = artifactFiles
-    .filter((file) => file.toLowerCase().endsWith('.flatpak'))
-    .map((file) => path.join(releaseDir, file));
-
-  return [...flatpakBundles, ...signatureFiles, checksumFile];
+function isReleaseUploadName(name) {
+  return (
+    /\.(?:dmg|zip|exe|msi|appimage|deb|rpm|appx|msix|flatpak|blockmap|asc)$/i.test(name) ||
+    /^SHA256SUMS-[A-Za-z0-9_-]+\.txt$/.test(name) ||
+    /^(?:latest|beta|alpha)(?:-[A-Za-z0-9_-]+)?\.ya?ml$/i.test(name)
+  );
 }
 
-module.exports = { getReleaseUploadFiles };
+function getReleaseUploadFiles(releaseEntries, releaseDir) {
+  return releaseEntries
+    .filter(isReleaseUploadName)
+    .sort()
+    .map((file) => path.join(releaseDir, file));
+}
+
+module.exports = { getReleaseUploadFiles, isReleaseUploadName };

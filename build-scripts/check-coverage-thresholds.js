@@ -40,6 +40,10 @@ const THRESHOLDS = {
   'main/presetProjection.js': 95,
   'main/gpuEncoders.js': 95,
   'renderer/presetPickerModel.js': 85,
+  'main/ffmpegPathCandidates.js': 85,
+  'main/ffmpegIntegrity.js': 80,
+  'main/ffmpegProcessControl.js': 60,
+  'shared/fileSelection.js': 88,
 };
 
 if (!fs.existsSync(lcovPath)) {

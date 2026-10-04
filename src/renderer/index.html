@@ -18,7 +18,7 @@
         <div class="titlebar-drag titlebar-leading">
           <div class="logo">
             <img src="../../assets/icon.png" alt="" aria-hidden="true" />
-            <h1>CONV2</h1>
+            <h1>CONV2 <span class="beta-label u-hidden" id="betaLabel">Beta</span></h1>
           </div>
         </div>
         <div class="titlebar-actions">
@@ -87,7 +87,7 @@
         </div>
       </header>
 
-      <div class="app">
+      <main class="app">
         <div class="ffmpeg-warning u-hidden" id="ffmpegWarning">
           <h3>FFmpeg Not Found</h3>
           <p>Please install FFmpeg and add it to your system PATH to use CONV2.</p>
@@ -96,15 +96,16 @@
         <div
           class="drop-zone"
           id="dropZone"
-          role="button"
+          role="region"
           tabindex="0"
-          aria-label="Select one or more video files"
+          aria-label="Video file drop target"
+          aria-describedby="dropZoneHelp"
         >
           <div class="drop-zone-content">
             <img src="../../assets/twemoji/1f3ac.svg" alt="Video" class="drop-zone-icon" />
             <p class="drop-zone-title">Drop your video here</p>
-            <p class="drop-zone-subtitle">or click to browse one or more files</p>
-            <button class="btn btn-secondary">
+            <p class="drop-zone-subtitle" id="dropZoneHelp">or click to browse one or more files</p>
+            <button type="button" class="btn btn-secondary" id="browseFilesBtn">
               <svg
                 class="btn-icon"
                 viewBox="0 0 24 24"
@@ -128,6 +129,12 @@
           <div class="file-info-content">
             <span class="filename" id="fileName"></span>
             <span class="file-details" id="fileDetails"></span>
+          </div>
+          <ul class="selected-file-list" id="selectedFileList" aria-label="Selected files"></ul>
+          <div class="file-info-actions">
+            <button type="button" class="btn btn-secondary btn-xs" id="clearSelectedFilesBtn">
+              Clear files
+            </button>
           </div>
         </div>
 
@@ -308,19 +315,21 @@
               <span id="progressEta"></span>
             </div>
           </div>
-          <div class="conversion-queue" id="conversionQueue" hidden>
-            <div class="conversion-queue-header">
-              <span>Queue</span>
-              <button
-                type="button"
-                class="btn btn-secondary btn-xs u-hidden"
-                id="retryFailedQueueBtn"
-              >
-                Retry failed
-              </button>
-            </div>
-            <ul class="conversion-queue-list" id="conversionQueueList"></ul>
+        </div>
+
+        <!-- Outside #progressContainer so results stay visible after a run ends. -->
+        <div class="conversion-queue" id="conversionQueue" hidden>
+          <div class="conversion-queue-header">
+            <span>Queue</span>
+            <button
+              type="button"
+              class="btn btn-secondary btn-xs u-hidden"
+              id="retryFailedQueueBtn"
+            >
+              Retry failed
+            </button>
           </div>
+          <ul class="conversion-queue-list" id="conversionQueueList"></ul>
         </div>
 
         <div class="status-row">
@@ -335,6 +344,14 @@
             <span class="status-text"></span>
           </div>
           <div class="status-actions">
+            <button
+              type="button"
+              class="btn btn-secondary btn-xs u-hidden"
+              id="statusDetailsBtn"
+              aria-haspopup="dialog"
+            >
+              Details
+            </button>
             <button class="btn btn-secondary btn-xs u-hidden" id="showLogsBtn">
               <svg
                 class="btn-icon"
@@ -386,7 +403,7 @@
             <span class="kbd-action">Close</span>
           </span>
         </div>
-      </div>
+      </main>
     </div>
 
     <div class="modal-overlay" id="settingsModal">
@@ -451,8 +468,14 @@
 
             <div class="settings-row settings-row-appearance">
               <span class="settings-label">Theme</span>
-              <div class="theme-switcher" id="themeSwitcher">
-                <button class="theme-option" data-theme="system" type="button">
+              <div class="theme-switcher" id="themeSwitcher" role="radiogroup" aria-label="Theme">
+                <button
+                  class="theme-option"
+                  data-theme="system"
+                  type="button"
+                  role="radio"
+                  aria-checked="false"
+                >
                   <img
                     src="../../assets/twemoji/1f4bb.svg"
                     alt=""
@@ -461,7 +484,13 @@
                   />
                   Auto
                 </button>
-                <button class="theme-option" data-theme="dark" type="button">
+                <button
+                  class="theme-option"
+                  data-theme="dark"
+                  type="button"
+                  role="radio"
+                  aria-checked="false"
+                >
                   <img
                     src="../../assets/twemoji/1f319.svg"
                     alt=""
@@ -470,7 +499,13 @@
                   />
                   Dark
                 </button>
-                <button class="theme-option" data-theme="light" type="button">
+                <button
+                  class="theme-option"
+                  data-theme="light"
+                  type="button"
+                  role="radio"
+                  aria-checked="false"
+                >
                   <img
                     src="../../assets/twemoji/2600.svg"
                     alt=""
@@ -479,7 +514,15 @@
                   />
                   Light
                 </button>
-                <button class="theme-option" data-theme="custom" type="button">Custom</button>
+                <button
+                  class="theme-option"
+                  data-theme="custom"
+                  type="button"
+                  role="radio"
+                  aria-checked="false"
+                >
+                  Custom
+                </button>
               </div>
               <select id="themeSelect" class="u-hidden">
                 <option value="system">Auto</option>
@@ -528,9 +571,30 @@
 
             <div class="settings-row settings-row-appearance">
               <span class="settings-label">Interface Style</span>
-              <div class="theme-switcher" id="uiStyleSwitcher">
-                <button class="theme-option" data-style="glass" type="button">Glow / Glass</button>
-                <button class="theme-option" data-style="flat" type="button">Flat UI</button>
+              <div
+                class="theme-switcher"
+                id="uiStyleSwitcher"
+                role="radiogroup"
+                aria-label="Interface style"
+              >
+                <button
+                  class="theme-option"
+                  data-style="glass"
+                  type="button"
+                  role="radio"
+                  aria-checked="false"
+                >
+                  Glow / Glass
+                </button>
+                <button
+                  class="theme-option"
+                  data-style="flat"
+                  type="button"
+                  role="radio"
+                  aria-checked="false"
+                >
+                  Flat UI
+                </button>
               </div>
             </div>
 
@@ -1910,7 +1974,11 @@
               <strong>Auto</strong> picks the best encoder when possible.
               <strong>Manual</strong> lets you override the vendor on the main window GPU panel.
             </p>
-            <div class="gpu-mode-toggle setup-wizard-gpu-toggle" role="radiogroup">
+            <div
+              class="gpu-mode-toggle setup-wizard-gpu-toggle"
+              role="radiogroup"
+              aria-label="GPU encoder mode"
+            >
               <label class="mode-chip">
                 <input type="radio" name="wizardGpuMode" id="wizardGpuModeAuto" value="auto" />
                 <span>Auto</span>
@@ -2053,6 +2121,33 @@
       </div>
     </div>
 
+    <div class="modal-overlay" id="errorDetailsModal">
+      <div
+        class="modal logs-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="errorDetailsTitle"
+        aria-describedby="errorDetailsSummary"
+        tabindex="-1"
+      >
+        <div class="modal-header">
+          <h2 id="errorDetailsTitle">Error details</h2>
+          <button class="modal-close" id="closeErrorDetails" aria-label="Close error details">
+            &times;
+          </button>
+        </div>
+        <p class="error-details-summary" id="errorDetailsSummary"></p>
+        <div class="logs-body">
+          <pre id="errorDetailsContent"></pre>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-primary btn-sm" id="copyErrorDetailsBtn">
+            Copy
+          </button>
+        </div>
+      </div>
+    </div>
+
     <div class="modal-overlay" id="logsModal">
       <div
         class="modal logs-modal"
@@ -2105,10 +2200,6 @@
       </div>
     </div>
 
-    <script src="exports-shim.js"></script>
-    <script src="../shared/queueSummary.js"></script>
-    <script src="presetPickerModel.js"></script>
-    <script src="setupWizard.js"></script>
-    <script src="renderer.js"></script>
+    <script type="module" src="js/renderer/renderer.js"></script>
   </body>
 </html>

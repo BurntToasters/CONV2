@@ -5,7 +5,6 @@ const {
   isPrereleaseVersion,
   compareVersions,
   shouldAcceptUpdate,
-  shouldAcceptUpdateForChannel,
 } = require('../dist/main/updaterPolicy.js');
 
 test('recognizes beta, alpha, and release-candidate versions', () => {
@@ -33,7 +32,6 @@ test('beta channel keeps newer prerelease offers eligible', () => {
 
 test('stable channel rejects older stable when current is newer beta', () => {
   assert.equal(shouldAcceptUpdate('1.5.1', '1.6.0-beta.2'), false);
-  assert.equal(shouldAcceptUpdateForChannel('1.5.1', '1.6.0-beta.2', false), false);
 });
 
 test('stable channel accepts matching or newer stable from beta', () => {

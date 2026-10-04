@@ -121,3 +121,14 @@ test('allowDowngrade is forced false after channel apply', () => {
   updater.setUpdateChannel('stable');
   assert.equal(autoUpdater.allowDowngrade, false);
 });
+
+// Failure mode: electron-updater installs on quit an update the machine dropped.
+test('install-on-quit is withdrawn when a channel change drops the ready update', () => {
+  const windowRef = createWindow();
+  updater.initUpdater(windowRef);
+  updater.setUpdateChannel('stable');
+  autoUpdater.emit('update-downloaded', { version: '1.6.2' });
+  assert.equal(autoUpdater.autoInstallOnAppQuit, true, 'ready update should install on quit');
+  updater.setUpdateChannel('beta');
+  assert.equal(autoUpdater.autoInstallOnAppQuit, false, 'dropped update still installs on quit');
+});

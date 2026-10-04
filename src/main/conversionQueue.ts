@@ -1,25 +1,8 @@
 import type { ConversionProgress, ConversionResult } from './ffmpeg';
 import type { GPUVendor } from './presets';
+import type { QueueItemSnapshot, QueueItemStatus, QueueSnapshot } from '../shared/appContract';
 
-export type QueueItemStatus = 'pending' | 'running' | 'done' | 'failed' | 'cancelled';
-
-export interface QueueItemSnapshot {
-  id: string;
-  inputPath: string;
-  fileName: string;
-  status: QueueItemStatus;
-  error?: string;
-  outputPath?: string;
-  usedCpuFallback?: boolean;
-}
-
-export interface QueueSnapshot {
-  active: boolean;
-  presetId: string;
-  currentIndex: number;
-  total: number;
-  items: QueueItemSnapshot[];
-}
+export type { QueueItemSnapshot, QueueItemStatus, QueueSnapshot };
 
 export interface QueueRunOptions {
   inputPaths: string[];
@@ -171,6 +154,7 @@ export const runConversionQueue = async (
     } else {
       item.status = 'failed';
       item.error = result.error;
+      item.errorDetail = result.errorDetail;
       item.usedCpuFallback = usedCpuFallback || undefined;
     }
 
@@ -194,7 +178,7 @@ export const shouldRetryWithCpu = (
   if (result.error === 'Conversion cancelled') {
     return false;
   }
-  const message = (result.error || '').toLowerCase();
+  const message = `${result.error || ''}\n${result.errorDetail || ''}`.toLowerCase();
   const inputErrorMarkers = [
     'error opening input',
     'no such file or directory',
@@ -219,7 +203,9 @@ export const shouldRetryWithCpu = (
     'no capable devices found',
     'cannot load nvencode',
     'hardware acceleration',
-    'gpu',
+    'openencodesessionex',
+    'cuda',
+    'd3d11',
   ];
   return gpuMarkers.some((marker) => message.includes(marker));
 };

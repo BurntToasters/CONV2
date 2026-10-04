@@ -125,9 +125,57 @@ test('runConversionQueue cancels remainder after a cancelled item', async () => 
   assert.equal(result.active, false);
 });
 
+test('runConversionQueue cancels every item when cancelled before the first convert', async () => {
+  let calls = 0;
+  const result = await runConversionQueue(
+    {
+      inputPaths: ['/tmp/a.mp4', '/tmp/b.mp4'],
+      presetId: 'h264-quality',
+      gpu: 'cpu',
+      showDebugOutput: false,
+    },
+    {
+      onSnapshot: () => {},
+      onProgress: () => {},
+      convertOne: async () => {
+        calls += 1;
+        return { success: true, outputPath: '/out/x.mp4' };
+      },
+      shouldRetryWithCpu,
+      hasVideoCodec: true,
+      isCancelled: () => true,
+    }
+  );
+
+  assert.equal(calls, 0);
+  assert.equal(result.items[0].status, 'cancelled');
+  assert.equal(result.items[1].status, 'cancelled');
+});
+
 test('createEmptyQueueSnapshot defaults', () => {
   const empty = createEmptyQueueSnapshot();
   assert.equal(empty.active, false);
   assert.equal(empty.total, 0);
   assert.deepEqual(empty.items, []);
+});
+
+// A bare "gpu" substring used to trigger CPU retries for unrelated failures.
+test('shouldRetryWithCpu ignores unrelated text that merely contains "gpu"', () => {
+  const unrelated = {
+    success: false,
+    outputPath: '',
+    error: 'FFmpeg error: Invalid argument',
+    errorDetail: 'Error opening output /Users/gpuser/out.mp4: Is a directory',
+  };
+  assert.equal(shouldRetryWithCpu(unrelated, 'nvidia', true), false);
+});
+
+test('shouldRetryWithCpu still retries real hardware failures found only in errorDetail', () => {
+  const nvenc = {
+    success: false,
+    outputPath: '',
+    error: 'The encoder could not start with these settings.',
+    errorDetail: '[h264_nvenc @ 0x1] OpenEncodeSessionEx failed: unsupported device (2)',
+  };
+  assert.equal(shouldRetryWithCpu(nvenc, 'nvidia', true), true);
 });

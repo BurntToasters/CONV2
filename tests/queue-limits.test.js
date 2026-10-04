@@ -12,30 +12,7 @@ test('the queue exposes a bounded batch size', () => {
   assert.ok(MAX_QUEUE_ITEMS > 0 && Number.isFinite(MAX_QUEUE_ITEMS));
 });
 
-test('queue IPC validates the payload before reading its fields', () => {
-  const source = fs.readFileSync(path.join(ROOT, 'src', 'main', 'main.ts'), 'utf8');
-  const handlerStart = source.indexOf("ipcMain.handle(\n  'start-conversion-queue'");
-  assert.ok(handlerStart > -1, 'start-conversion-queue handler not found');
-  const handler = source.slice(handlerStart, handlerStart + 4000);
-
-  // The busy branch must not dereference payload before it has been validated.
-  assert.doesNotMatch(handler, /\(payload\.inputPaths \|\| \[\]\)/);
-  assert.match(handler, /Array\.isArray\(payload\?\.inputPaths\)/);
-
-  const guardIndex = handler.indexOf('Array.isArray(payload?.inputPaths)');
-  const busyIndex = handler.indexOf('isConversionActive');
-  assert.ok(
-    guardIndex < busyIndex,
-    'payload validation must happen before the busy-state branch reads inputPaths'
-  );
-  assert.match(handler, /MAX_QUEUE_ITEMS/);
-});
-
-test('oversized batches are refused rather than queued', () => {
-  const source = fs.readFileSync(path.join(ROOT, 'src', 'main', 'main.ts'), 'utf8');
-  assert.match(source, /inputPaths\.length > MAX_QUEUE_ITEMS/);
-  assert.match(source, /A single batch is limited to \$\{MAX_QUEUE_ITEMS\} files/);
-});
+// Payload validation, busy, and oversized-batch refusals are covered in queue-request.test.js.
 
 test('queue still runs a normal batch to completion', async () => {
   const snapshots = [];

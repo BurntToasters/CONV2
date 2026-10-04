@@ -1,7 +1,14 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
-const { requiresRealPayload, run } = require('../build-scripts/ci-ffmpeg.js');
+const { commandRequiresShell, requiresRealPayload, run } = require('../build-scripts/ci-ffmpeg.js');
+
+test('Windows command shims run through a shell', () => {
+  assert.equal(commandRequiresShell('npm.cmd', 'win32'), true);
+  assert.equal(commandRequiresShell('NPM.CMD', 'win32'), true);
+  assert.equal(commandRequiresShell('npm', 'win32'), false);
+  assert.equal(commandRequiresShell('npm.cmd', 'linux'), false);
+});
 
 test('real FFmpeg payload is required on trusted branch pushes', () => {
   assert.equal(
@@ -25,7 +32,12 @@ test('pull requests may run structure-only package smoke', () => {
 });
 
 test('explicit payload requirement overrides event context', () => {
+  const { bundledPayloadPresent } = require('../build-scripts/ci-ffmpeg.js');
   assert.equal(requiresRealPayload({ REQUIRE_FFMPEG_PAYLOAD: '1' }), true);
+  if (bundledPayloadPresent({})) {
+    assert.doesNotThrow(() => run({ REQUIRE_FFMPEG_PAYLOAD: '1' }));
+    return;
+  }
   assert.throws(() => run({ REQUIRE_FFMPEG_PAYLOAD: '1' }), /FFMPEG_DL_SERVER is required/);
 });
 

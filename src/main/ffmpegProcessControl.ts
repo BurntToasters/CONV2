@@ -8,7 +8,8 @@ const resolveWindowsTaskkillPath = (): string => {
 
 /** Force-terminate an FFmpeg child process (Windows taskkill or POSIX process group). */
 export const forceKillFfmpegProcess = (processToKill: ChildProcess): void => {
-  if (processToKill.exitCode !== null) {
+  // A signal-killed child has exitCode null; its PID may already belong to another process.
+  if (processToKill.exitCode !== null || processToKill.signalCode) {
     return;
   }
 

@@ -22,15 +22,44 @@ function requiresRealPayload(env = process.env) {
   return env.GITHUB_EVENT_NAME === 'push' && isTrustedReleaseRef(env.GITHUB_REF || '');
 }
 
+function commandRequiresShell(command, platform = process.platform) {
+  return platform === 'win32' && /\.cmd$/iu.test(command);
+}
+
+function currentPayloadTarget(platform = process.platform, arch = process.arch) {
+  const os = platform === 'win32' ? 'win' : platform === 'darwin' ? 'mac' : 'linux';
+  const normalizedArch = arch === 'arm64' ? 'arm64' : 'x64';
+  return `${os}:${normalizedArch}`;
+}
+
+function bundledPayloadPresent(env = process.env) {
+  try {
+    execFileSync(
+      process.execPath,
+      ['build-scripts/check-ffmpeg.js', '--target', currentPayloadTarget(), '--require-checksums'],
+      { stdio: 'pipe', env }
+    );
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function run(env = process.env) {
+  if (bundledPayloadPresent(env)) {
+    console.log('[ci-ffmpeg] bundled payload already present; skipping download.');
+    return;
+  }
+
   if (!env.FFMPEG_DL_SERVER?.trim()) {
-    if (requiresRealPayload(env)) {
+    if (env.REQUIRE_FFMPEG_PAYLOAD === '1') {
       throw new Error(
         'FFMPEG_DL_SERVER is required for package smoke on trusted main/beta/next-* pushes.'
       );
     }
+    // No public binary host yet, so payload tests skip instead of failing CI.
     console.warn(
-      '[ci-ffmpeg] FFMPEG_DL_SERVER is not configured; pull-request package smoke will validate packaging structure only.'
+      '[ci-ffmpeg] FFMPEG_DL_SERVER is not configured; skipping the bundled FFmpeg download.'
     );
     return;
   }
@@ -39,7 +68,11 @@ function run(env = process.env) {
   const platform =
     process.platform === 'win32' ? 'win' : process.platform === 'darwin' ? 'mac' : 'linux';
 
-  execFileSync(npmCommand, ['run', 'get:ffmpeg'], { stdio: 'inherit', env });
+  execFileSync(npmCommand, ['run', 'get:ffmpeg'], {
+    stdio: 'inherit',
+    env,
+    shell: commandRequiresShell(npmCommand),
+  });
   execFileSync(
     process.execPath,
     [
@@ -63,4 +96,11 @@ if (require.main === module) {
   }
 }
 
-module.exports = { isTrustedReleaseRef, requiresRealPayload, run };
+module.exports = {
+  bundledPayloadPresent,
+  commandRequiresShell,
+  currentPayloadTarget,
+  isTrustedReleaseRef,
+  requiresRealPayload,
+  run,
+};

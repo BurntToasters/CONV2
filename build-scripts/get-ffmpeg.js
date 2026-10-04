@@ -209,54 +209,61 @@ function download(url, destPath) {
         return;
       }
 
-      const request = https.get(parsed, { timeout: DOWNLOAD_TIMEOUT_MS }, (res) => {
-        if ([301, 302, 303, 307, 308].includes(res.statusCode)) {
-          const location = res.headers.location;
-          res.resume();
-          if (!location) {
-            fail(new Error(`Redirect with no Location header from ${parsed.href}`));
-            return;
-          }
-          doRequest(new URL(location, parsed).href, redirectCount + 1);
-          return;
-        }
-
-        if (res.statusCode !== 200) {
-          res.resume();
-          fail(new Error(`HTTP ${res.statusCode} for ${parsed.href}`));
-          return;
-        }
-
-        const file = fs.createWriteStream(destPath);
-        let receivedBytes = 0;
-        const totalBytes = parseInt(res.headers['content-length'] || '0', 10);
-        let lastLoggedPercent = -1;
-
-        res.on('data', (chunk) => {
-          receivedBytes += chunk.length;
-          if (totalBytes > 0) {
-            const pct = Math.floor((receivedBytes / totalBytes) * 100);
-            if (pct !== lastLoggedPercent && pct % 10 === 0) {
-              process.stdout.write(`  ${pct}%\r`);
-              lastLoggedPercent = pct;
-            }
-          }
-        });
-        res.on('error', fail);
-        file.on('error', fail);
-        file.on('finish', () => {
-          file.close(() => {
-            if (settled) return;
-            if (receivedBytes === 0) {
-              fail(new Error(`Empty download response from ${parsed.href}`));
+      const request = https.get(
+        parsed,
+        {
+          timeout: DOWNLOAD_TIMEOUT_MS,
+          headers: { 'User-Agent': 'CONV2-get-ffmpeg' },
+        },
+        (res) => {
+          if ([301, 302, 303, 307, 308].includes(res.statusCode)) {
+            const location = res.headers.location;
+            res.resume();
+            if (!location) {
+              fail(new Error(`Redirect with no Location header from ${parsed.href}`));
               return;
             }
-            settled = true;
-            resolve();
+            doRequest(new URL(location, parsed).href, redirectCount + 1);
+            return;
+          }
+
+          if (res.statusCode !== 200) {
+            res.resume();
+            fail(new Error(`HTTP ${res.statusCode} for ${parsed.href}`));
+            return;
+          }
+
+          const file = fs.createWriteStream(destPath);
+          let receivedBytes = 0;
+          const totalBytes = parseInt(res.headers['content-length'] || '0', 10);
+          let lastLoggedPercent = -1;
+
+          res.on('data', (chunk) => {
+            receivedBytes += chunk.length;
+            if (totalBytes > 0) {
+              const pct = Math.floor((receivedBytes / totalBytes) * 100);
+              if (pct !== lastLoggedPercent && pct % 10 === 0) {
+                process.stdout.write(`  ${pct}%\r`);
+                lastLoggedPercent = pct;
+              }
+            }
           });
-        });
-        res.pipe(file);
-      });
+          res.on('error', fail);
+          file.on('error', fail);
+          file.on('finish', () => {
+            file.close(() => {
+              if (settled) return;
+              if (receivedBytes === 0) {
+                fail(new Error(`Empty download response from ${parsed.href}`));
+                return;
+              }
+              settled = true;
+              resolve();
+            });
+          });
+          res.pipe(file);
+        }
+      );
 
       request.on('timeout', () =>
         request.destroy(new Error(`Download timed out after ${DOWNLOAD_TIMEOUT_MS}ms`))

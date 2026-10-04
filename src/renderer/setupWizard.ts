@@ -609,31 +609,3 @@ export const skipSetupWizardFromEscape = (): void => {
     void completeWizard();
   }
 };
-
-export interface SetupWizardApi {
-  initSetupWizard: typeof initSetupWizard;
-  maybeOpenSetupWizard: typeof maybeOpenSetupWizard;
-  openSetupWizard: typeof openSetupWizard;
-  isSetupWizardVisible: typeof isSetupWizardVisible;
-  getSetupWizardOverlay: typeof getSetupWizardOverlay;
-  skipSetupWizardFromEscape: typeof skipSetupWizardFromEscape;
-}
-
-const setupWizardApi: SetupWizardApi = {
-  initSetupWizard,
-  maybeOpenSetupWizard,
-  openSetupWizard,
-  isSetupWizardVisible,
-  getSetupWizardOverlay,
-  skipSetupWizardFromEscape,
-};
-
-declare const module: { exports?: unknown } | undefined;
-
-if (typeof window !== 'undefined') {
-  (window as Window & { setupWizard?: SetupWizardApi }).setupWizard = setupWizardApi;
-}
-
-if (typeof module !== 'undefined' && module && typeof module.exports !== 'undefined') {
-  module.exports = setupWizardApi;
-}

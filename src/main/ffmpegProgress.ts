@@ -1,5 +1,23 @@
 import type { ConversionProgress } from './ffmpeg';
 
+/** Parse FFmpeg -progress stdout `out_time_ms=` (microseconds) into seconds. */
+export const parseOutTimeMs = (
+  line: string,
+  totalDuration: number
+): { percent: number; seconds: number } | null => {
+  if (!line.includes('out_time_ms=')) {
+    return null;
+  }
+  const rawTimeUs = line.split('=')[1];
+  const timeUs = parseInt(rawTimeUs, 10);
+  if (!Number.isFinite(timeUs) || timeUs < 0) {
+    return null;
+  }
+  const seconds = timeUs / 1_000_000;
+  const percent = totalDuration > 0 ? Math.min(100, (seconds / totalDuration) * 100) : 0;
+  return { percent, seconds };
+};
+
 /** Parse FFmpeg stderr progress line into a structured update. */
 export const parseProgress = (line: string, totalDuration: number): ConversionProgress | null => {
   const frameMatch = line.match(/frame=\s*(\d+)/);

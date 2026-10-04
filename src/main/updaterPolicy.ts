@@ -74,15 +74,3 @@ export const compareVersions = (left: string, right: string): number => {
 export const shouldAcceptUpdate = (offeredVersion: string, currentVersion: string): boolean => {
   return compareVersions(offeredVersion, currentVersion) > 0;
 };
-
-/**
- * @deprecated Prefer shouldAcceptUpdate. Channel no longer changes accept rules;
- * downgrade blocking applies on every channel.
- */
-export const shouldAcceptUpdateForChannel = (
-  offeredVersion: string,
-  currentVersion: string,
-  _useBetaChannel?: boolean
-): boolean => {
-  return shouldAcceptUpdate(offeredVersion, currentVersion);
-};
