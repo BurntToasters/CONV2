@@ -2813,16 +2813,20 @@ const setupEventListeners = () => {
     elements.logsContent.textContent = '';
   });
 
+  // Captured once so a second click within 2s cannot record "Copied!" as the resting label.
+  const copyLogsDefaultHTML = elements.copyLogsBtn.innerHTML;
+  let copyLogsResetTimer: ReturnType<typeof setTimeout> | null = null;
   elements.copyLogsBtn.addEventListener('click', () => {
     flushLogBuffer();
-    const originalHTML = elements.copyLogsBtn.innerHTML;
     void navigator.clipboard
       .writeText(elements.logsContent.textContent || '')
       .then(() => {
+        if (copyLogsResetTimer) clearTimeout(copyLogsResetTimer);
         elements.copyLogsBtn.innerHTML =
           '<svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>Copied!';
-        setTimeout(() => {
-          elements.copyLogsBtn.innerHTML = originalHTML;
+        copyLogsResetTimer = setTimeout(() => {
+          copyLogsResetTimer = null;
+          elements.copyLogsBtn.innerHTML = copyLogsDefaultHTML;
         }, 2000);
       })
       .catch((err) => {
@@ -2890,7 +2894,10 @@ const setupEventListeners = () => {
   elements.resetSettingsBtn.addEventListener('click', () => {
     showModal({
       title: 'Reset Settings',
-      message: 'Are you sure you want to reset all settings to defaults? The app will restart.',
+      message:
+        isConverting || conversionStarting
+          ? 'Are you sure you want to reset all settings to defaults? The running conversion will be cancelled and its partial file deleted, then the app will restart.'
+          : 'Are you sure you want to reset all settings to defaults? The app will restart.',
       confirmText: 'Reset & Restart',
       cancelText: 'Cancel',
       confirmClass: 'btn-danger',
@@ -2975,14 +2982,9 @@ const setupEventListeners = () => {
       return;
     }
 
+    // Main sends a ready update as 'downloaded', so these phases mean nothing is installable.
     if (phase === 'not-available' || phase === 'disabled') {
       updateAvailablePending = false;
-      if (phase === 'not-available' && updateReadyToInstall) {
-        setCheckUpdateButtonState(getInstallUpdateButtonHTML(), false, true);
-        elements.updateBadge.classList.remove('u-hidden');
-        updateDownloadInProgress = false;
-        return;
-      }
       elements.updateBadge.classList.add('u-hidden');
       setCheckUpdateButtonState(checkUpdateDefaultHTML, false);
       updateDownloadInProgress = false;

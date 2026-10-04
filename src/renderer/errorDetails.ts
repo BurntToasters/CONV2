@@ -34,17 +34,23 @@ elements.closeErrorDetails.addEventListener('click', closeErrorDetails);
 elements.errorDetailsModal.addEventListener('click', (event) => {
   if (event.target === elements.errorDetailsModal) closeErrorDetails();
 });
+let copyLabelTimer: ReturnType<typeof setTimeout> | null = null;
+
+const flashCopyLabel = (label: string): void => {
+  if (copyLabelTimer) clearTimeout(copyLabelTimer);
+  elements.copyErrorDetailsBtn.textContent = label;
+  copyLabelTimer = setTimeout(() => {
+    copyLabelTimer = null;
+    elements.copyErrorDetailsBtn.textContent = 'Copy';
+  }, 1500);
+};
+
 elements.copyErrorDetailsBtn.addEventListener('click', () => {
   const text = [elements.errorDetailsSummary.textContent, elements.errorDetailsContent.textContent]
     .filter(Boolean)
     .join('\n\n');
   void navigator.clipboard.writeText(text).then(
-    () => {
-      elements.copyErrorDetailsBtn.textContent = 'Copied';
-      setTimeout(() => {
-        elements.copyErrorDetailsBtn.textContent = 'Copy';
-      }, 1500);
-    },
-    () => undefined
+    () => flashCopyLabel('Copied'),
+    () => flashCopyLabel('Copy failed')
   );
 });

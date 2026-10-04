@@ -33,7 +33,7 @@ import {
   setUpdaterWindow,
 } from './updater';
 import { setUseSystemFFmpeg, setFFmpegBinaryOverrides } from './ffmpegPath';
-import { resolveDevOverrides } from './devOverrides';
+import { resolveDevOverrides, resolveLaunchFlags } from './devOverrides';
 import { clearFFmpegCaches, clearHwProbeResults, setHwProbeStoreFactory } from './ffmpeg';
 import { binaryFingerprint, createHwProbeStore } from './hwProbeStore';
 import { normalizeFileUrl, isFrameUrlTrusted } from './ipcTrust';
@@ -42,7 +42,7 @@ import { createConversionController, type ConversionController } from './convers
 import { buildGpuCapabilitiesPayload } from './gpuCapabilities';
 import { isWindowBoundsOnScreen, loadWindowState, saveWindowState } from './windowState';
 import { createFatalErrorHandler } from './fatalErrors';
-import { isAllowedNavigation, toSafeExternalUrl } from './navigationPolicy';
+import { isAllowedNavigation, isAllowedPermission, toSafeExternalUrl } from './navigationPolicy';
 import {
   ALLOWED_SETTINGS_KEYS,
   createDefaultSettings,
@@ -182,7 +182,8 @@ if (process.platform === 'darwin') {
 
 let isUpdateInstallInProgress = false;
 let trustedRendererUrl: string | null = null;
-const isRuntimeSmoke = process.argv.includes('--smoke') || process.env.CONV2_SMOKE === '1';
+const launchFlags = resolveLaunchFlags(process.argv, process.env, app.isPackaged);
+const isRuntimeSmoke = launchFlags.runtimeSmoke;
 const handleNativeThemeUpdated = (): void => {
   mainWindow?.webContents.send('theme-changed', nativeTheme.shouldUseDarkColors ? 'dark' : 'light');
 };
@@ -434,8 +435,11 @@ const createWindow = (): void => {
   attachWindowChromeListeners(mainWindow);
 
   mainWindow.webContents.session.setPermissionRequestHandler(
-    (_webContents, _permission, callback) => {
-      callback(false);
+    (webContents, permission, callback, details) => {
+      callback(
+        webContents === mainWindow?.webContents &&
+          isAllowedPermission(permission, details.requestingUrl, trustedRendererUrl)
+      );
     }
   );
   mainWindow.webContents.session.setPermissionCheckHandler(() => false);
@@ -508,7 +512,7 @@ const createWindow = (): void => {
       mainWindow?.maximize();
     }
 
-    if (process.argv.includes('--dev')) {
+    if (launchFlags.openDevTools) {
       mainWindow?.webContents.openDevTools({ mode: 'detach' });
     }
 
@@ -829,8 +833,10 @@ ipcMain.handle('reset-settings', (event: IpcMainInvokeEvent) => {
   return settings;
 });
 
-ipcMain.handle('restart-app', (event: IpcMainInvokeEvent) => {
+ipcMain.handle('restart-app', async (event: IpcMainInvokeEvent) => {
   assertTrustedIpcSender(event);
+  // app.exit skips before-quit, so stop FFmpeg here or it outlives the app (detached on POSIX).
+  if (conversions.isActive()) await conversions.stop();
   app.relaunch();
   app.exit(0);
 });

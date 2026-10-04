@@ -1,6 +1,10 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { initialUpdateState, transition } = require('../dist/main/updateMachine.js');
+const {
+  initialUpdateState,
+  shouldInstallOnQuit,
+  transition,
+} = require('../dist/main/updateMachine.js');
 
 // Failure modes for the update-check lifecycle. Written before updateMachine.ts.
 //  - a check that never ends ("already checking" forever), incl. U1: channel change mid-fallback
@@ -8,6 +12,7 @@ const { initialUpdateState, transition } = require('../dist/main/updateMachine.j
 //  - a stale Download dialog (after a channel switch) downloads the wrong feed
 //  - a background check hides a ready "Restart Now"
 //  - installing twice, or installing with nothing downloaded
+//  - an update dropped by a channel change still installs on quit
 
 const BETA = { betaFeed: true };
 const STABLE = { betaFeed: false };
@@ -240,4 +245,28 @@ test('transition never mutates the previous state', () => {
     before
   );
   assert.equal(JSON.stringify(before), snapshot);
+});
+
+test('install-on-quit follows the download the machine still owns', () => {
+  const offered = run([
+    { type: 'check', mode: 'silent' },
+    { type: 'checker-available', version: '1.6.1', accepted: true },
+  ]).state;
+  assert.equal(shouldInstallOnQuit(initialUpdateState()), false, 'nothing downloaded');
+  assert.equal(shouldInstallOnQuit(offered), false, 'offered only');
+
+  const downloading = run([{ type: 'download' }], STABLE, offered).state;
+  assert.equal(shouldInstallOnQuit(downloading), true, 'download in flight');
+  const ready = run([{ type: 'downloaded', version: '1.6.1' }], STABLE, downloading).state;
+  assert.equal(shouldInstallOnQuit(ready), true, 'download ready');
+
+  const switched = run([{ type: 'channel-changed' }], STABLE, ready).state;
+  assert.equal(shouldInstallOnQuit(switched), false, 'ready update dropped by channel change');
+
+  const switchedMidDownload = run(
+    [{ type: 'channel-changed' }, { type: 'downloaded', version: '1.6.1' }],
+    STABLE,
+    downloading
+  ).state;
+  assert.equal(shouldInstallOnQuit(switchedMidDownload), false, 'stale download finished late');
 });

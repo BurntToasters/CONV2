@@ -10,6 +10,11 @@
 //  7. Confirmed quit leaves the partial output on disk.
 //  8. Unreadable input shows raw FFmpeg output instead of an actionable message.
 //  9. A batch with one bad file hides which file failed or offers no retry.
+// 10. Copy Logs / Copy error details write nothing (clipboard permission denied).
+// 11. Copy pressed twice leaves the button stuck on "Copied!".
+// 12. Enter in a text field or on a focused button starts a conversion.
+// 13. Reset & Restart mid-conversion leaves FFmpeg running and a partial file on disk.
+// 14. A "nothing downloaded" update state leaves a stale "Restart Now" button.
 const test = require('node:test');
 const { before, after } = require('node:test');
 const assert = require('node:assert/strict');
@@ -22,6 +27,8 @@ const {
   createFixtures,
   mkTemp,
   probe,
+  processesMentioning,
+  killProcesses,
   writeArtifact,
 } = require('./helpers.js');
 
@@ -537,6 +544,206 @@ test(
     } finally {
       await ctx.close();
       fs.rmSync(outDir, { recursive: true, force: true });
+    }
+  }
+);
+
+// Menu accelerators and clipboard writes need the app active, not just the window shown.
+const focusWindow = (ctx) =>
+  ctx.app.evaluate(({ app, BrowserWindow }) => {
+    app.focus({ steal: true });
+    const win = BrowserWindow.getAllWindows()[0];
+    win.show();
+    win.focus();
+  });
+const readClipboard = (ctx) => ctx.app.evaluate(({ clipboard }) => clipboard.readText());
+const writeClipboard = (ctx, text) =>
+  ctx.app.evaluate(({ clipboard }, value) => clipboard.writeText(value), text);
+
+test(
+  'Copy Logs and Copy error details reach the system clipboard',
+  { skip, timeout: 90_000 },
+  async () => {
+    const outDir = mkTemp('ui-clipboard');
+    const ctx = await launchApp({
+      settings: returningUserSettings({ outputDirectory: outDir, showDebugOutput: true }),
+      label: 'clipboard',
+    });
+    const saved = await readClipboard(ctx);
+    try {
+      await focusWindow(ctx);
+      await writeClipboard(ctx, 'conv2-e2e-sentinel');
+      await ctx.window.click('#showLogsBtn');
+      await ctx.window.locator('#logsModal').waitFor({ state: 'visible' });
+      await ctx.window.evaluate(() => {
+        document.getElementById('logsContent').textContent = 'conv2 e2e log line';
+      });
+      await ctx.window.click('#copyLogsBtn');
+      await ctx.window.waitForTimeout(300);
+      assert.equal(await readClipboard(ctx), 'conv2 e2e log line', 'Copy Logs wrote nothing');
+      await ctx.window.click('#copyLogsBtn');
+      await ctx.window.waitForTimeout(2600);
+      assert.equal(
+        (await ctx.window.locator('#copyLogsBtn').innerText()).trim(),
+        'Copy',
+        'button stuck after a second copy'
+      );
+      await ctx.window.click('#closeLogs');
+
+      await addFiles(ctx.window, [fixtures.corrupt]);
+      await selectPreset(ctx.window, 'h264-fast');
+      await ctx.window.click('#convertBtn');
+      await waitForIdle(ctx.window);
+      await ctx.window.click('#statusDetailsBtn');
+      await ctx.window.locator('#errorDetailsModal').waitFor({ state: 'visible' });
+      await ctx.window.click('#copyErrorDetailsBtn');
+      await ctx.window.waitForTimeout(300);
+      const copied = await readClipboard(ctx);
+      assert.match(copied, /Invalid data found|moov atom/, 'Copy error details wrote nothing');
+      record('ui-clipboard', { copiedChars: copied.length });
+    } finally {
+      await writeClipboard(ctx, saved).catch(() => {});
+      await ctx.close();
+      fs.rmSync(outDir, { recursive: true, force: true });
+    }
+  }
+);
+
+test(
+  'Enter in a text field or on a button never starts a conversion',
+  { skip, timeout: 120_000 },
+  async () => {
+    const outDir = mkTemp('ui-enter');
+    const ctx = await launchApp({
+      settings: returningUserSettings({ outputDirectory: outDir }),
+      label: 'enter',
+    });
+    try {
+      await focusWindow(ctx);
+      await addFiles(ctx.window, [fixtures.standard]);
+      await selectPreset(ctx.window, 'h264-fast');
+      await ctx.window.evaluate(() => {
+        window.__queueEvents = 0;
+        window.electronAPI.onConversionQueueUpdated(() => {
+          window.__queueEvents += 1;
+        });
+      });
+      const queueEvents = () => ctx.window.evaluate(() => window.__queueEvents);
+
+      await ctx.window.locator('#presetSearch').focus();
+      await ctx.window.keyboard.type('fast');
+      await ctx.window.keyboard.press('Enter');
+      await ctx.window.locator('#presetPanelToggle').focus();
+      await ctx.window.keyboard.press('Enter');
+      await ctx.window.waitForTimeout(1500);
+      assert.equal(await queueEvents(), 0, 'Enter in a field or on a button started a run');
+      assert.deepEqual(listOutputs(outDir, 'standard'), []);
+
+      // Control: Enter with nothing focused is the documented shortcut.
+      await ctx.window.evaluate(() => document.activeElement?.blur());
+      await ctx.window.keyboard.press('Enter');
+      await waitForIdle(ctx.window);
+      assert.ok(
+        (await queueEvents()) > 0,
+        `Enter shortcut no longer starts a run: ${await statusText(ctx.window)}`
+      );
+      assert.equal(listOutputs(outDir, 'standard').length, 1);
+      record('ui-enter', { ok: true });
+    } finally {
+      await ctx.close();
+      fs.rmSync(outDir, { recursive: true, force: true });
+    }
+  }
+);
+
+test(
+  'Reset & Restart mid-conversion stops FFmpeg and removes the partial file',
+  { skip, timeout: 120_000 },
+  async () => {
+    const outDir = mkTemp('ui-reset-restart');
+    const marker = path.join(outDir, '..', `${path.basename(outDir)}.relaunched`);
+    const ctx = await launchApp({
+      settings: returningUserSettings({ outputDirectory: outDir }),
+      label: 'reset-restart',
+    });
+    try {
+      await addFiles(ctx.window, [fixtures.long]);
+      await selectPreset(ctx.window, 'h265-best-quality');
+      await ctx.window.click('#convertBtn');
+      await waitForRunning(ctx.window);
+      assert.equal(listOutputs(outDir, 'long').length, 1, 'expected an in-progress output');
+      // Record the relaunch instead of spawning an app the test cannot control.
+      await ctx.app.evaluate(({ app }, file) => {
+        app.relaunch = () => process.mainModule.require('fs').writeFileSync(file, '1');
+      }, marker);
+
+      await ctx.window.click('#settingsBtn');
+      await ctx.window.locator('#settingsModal').waitFor({ state: 'visible' });
+      await ctx.window.click('#resetSettingsBtn');
+      await ctx.window.locator('#dynamicModal').waitFor({ state: 'visible' });
+      const warning = await ctx.window.locator('#dynamicModal .modal-body p').innerText();
+      assert.match(warning, /conversion/i, 'reset prompt does not mention the running job');
+      await ctx.window.click('#modalConfirm');
+
+      const code = await Promise.race([
+        ctx.exited,
+        new Promise((r) => setTimeout(() => r('timeout'), 20_000)),
+      ]);
+      assert.notEqual(code, 'timeout', 'app did not restart');
+      await new Promise((r) => setTimeout(r, 1000));
+      assert.equal(fs.existsSync(marker), true, 'relaunch was not requested');
+      assert.deepEqual(processesMentioning(outDir), [], 'FFmpeg outlived the restart');
+      assert.deepEqual(listOutputs(outDir, 'long'), [], 'partial output left behind');
+      record('ui-reset-restart', { exitCode: code });
+    } finally {
+      killProcesses(processesMentioning(outDir));
+      await ctx.close();
+      fs.rmSync(outDir, { recursive: true, force: true });
+      fs.rmSync(marker, { force: true });
+    }
+  }
+);
+
+test(
+  'an update state with nothing downloaded clears a stale Restart Now',
+  { skip, timeout: 60_000 },
+  async () => {
+    const ctx = await launchApp({ settings: returningUserSettings(), label: 'update-state' });
+    const sendUpdateState = (payload) =>
+      ctx.app.evaluate(
+        ({ BrowserWindow }, p) =>
+          BrowserWindow.getAllWindows()[0].webContents.send('update-state', p),
+        payload
+      );
+    const button = () =>
+      ctx.window.evaluate(() => {
+        const btn = document.getElementById('checkUpdateBtn');
+        return {
+          text: btn.textContent.trim(),
+          highlighted: btn.classList.contains('btn-update-available'),
+        };
+      });
+    try {
+      await sendUpdateState({
+        phase: 'downloaded',
+        manual: false,
+        message: 'Version 9.9.9 downloaded.',
+      });
+      await ctx.window.waitForFunction(() =>
+        /Restart Now/.test(document.getElementById('checkUpdateBtn').textContent)
+      );
+      await sendUpdateState({
+        phase: 'not-available',
+        manual: false,
+        message: 'Update channel changed.',
+      });
+      await ctx.window.waitForTimeout(300);
+      const after = await button();
+      assert.doesNotMatch(after.text, /Restart Now/, 'stale install button');
+      assert.equal(after.highlighted, false);
+      record('ui-update-state', after);
+    } finally {
+      await ctx.close();
     }
   }
 );

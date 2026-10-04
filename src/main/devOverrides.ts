@@ -26,3 +26,21 @@ export const resolveDevOverrides = (env: NodeJS.ProcessEnv, isPackaged: boolean)
   if (isAbsoluteKind(env.CONV2_FFPROBE_PATH, 'file')) result.ffprobePath = env.CONV2_FFPROBE_PATH;
   return result;
 };
+
+export interface LaunchFlags {
+  openDevTools: boolean;
+  runtimeSmoke: boolean;
+}
+
+/** `--dev` and `--smoke` are dev/CI aids; a shipped build must not open DevTools or self-exit. */
+export const resolveLaunchFlags = (
+  argv: string[],
+  env: NodeJS.ProcessEnv,
+  isPackaged: boolean
+): LaunchFlags => {
+  if (isPackaged) return { openDevTools: false, runtimeSmoke: false };
+  return {
+    openDevTools: argv.includes('--dev'),
+    runtimeSmoke: argv.includes('--smoke') || env.CONV2_SMOKE === '1',
+  };
+};

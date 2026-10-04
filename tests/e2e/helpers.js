@@ -156,6 +156,37 @@ function createFixtures(dir) {
 
 const mkTemp = (label) => fs.mkdtempSync(path.join(os.tmpdir(), `conv2-e2e-${label}-`));
 
+/** PIDs of processes whose command line contains needle (detects orphaned FFmpeg). */
+function processesMentioning(needle) {
+  const listing =
+    process.platform === 'win32'
+      ? execFileSync(
+          'powershell.exe',
+          [
+            '-NoProfile',
+            '-Command',
+            'Get-CimInstance Win32_Process | ForEach-Object { "$($_.ProcessId) $($_.CommandLine)" }',
+          ],
+          { encoding: 'utf8' }
+        )
+      : execFileSync('ps', ['-axo', 'pid=,args='], { encoding: 'utf8' });
+  return listing
+    .split(/\r?\n/)
+    .filter((line) => line.includes(needle) && !line.includes('Get-CimInstance'))
+    .map((line) => Number(line.trim().split(/\s+/)[0]))
+    .filter((pid) => Number.isInteger(pid) && pid !== process.pid);
+}
+
+const killProcesses = (pids) => {
+  for (const pid of pids) {
+    try {
+      process.kill(pid, 'SIGKILL');
+    } catch {
+      // already gone
+    }
+  }
+};
+
 /** Writes one JSON artifact under coverage/e2e and returns its path. */
 function writeArtifact(name, data) {
   fs.mkdirSync(ARTIFACT_DIR, { recursive: true });
@@ -173,5 +204,7 @@ module.exports = {
   probe,
   createFixtures,
   mkTemp,
+  processesMentioning,
+  killProcesses,
   writeArtifact,
 };

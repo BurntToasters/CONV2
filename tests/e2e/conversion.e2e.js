@@ -11,6 +11,8 @@
 //  - HDR10 into CPU H.265 loses 10-bit or HDR tags
 //  - 5.1 audio breaks the Opus/AAC encoders
 //  - MKV text subtitles break MP4 remux; WebM remux of AAC is not explained up front
+//  - each conversion leaves an abort listener on the shared queue signal, so a later
+//    cancel force-kills long-dead processes (and whatever reused their PIDs)
 const test = require('node:test');
 const { before, after } = require('node:test');
 const assert = require('node:assert/strict');
@@ -18,6 +20,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { launchApp, returningUserSettings } = require('./app.js');
 const {
+  ROOT,
   FFMPEG,
   ffmpegSkipReason,
   createFixtures,
@@ -199,5 +202,37 @@ test(
     const h265 = await convert(fixtures.hdr10, 'h265-quality', 'apple');
     expectDone(h265);
     assert.equal(h265.probe.videoTag, 'hvc1');
+  }
+);
+
+test(
+  'conversions sharing one queue signal leave no abort listeners behind',
+  { skip, timeout: 60_000 },
+  async () => {
+    const remaining = await ctx.app.evaluate(
+      async (_electron, { input, output, mainDir }) => {
+        const load = (id) =>
+          process.mainModule.require(id.startsWith('./') ? `${mainDir}/${id.slice(2)}` : id);
+        const { convertVideo } = load('./ffmpeg');
+        const { getPresetById } = load('./presets');
+        const { getEventListeners } = load('events');
+        const controller = new AbortController();
+        for (let i = 0; i < 3; i += 1) {
+          const result = await convertVideo(
+            input,
+            output,
+            getPresetById('remux-mkv'),
+            'cpu',
+            () => {},
+            undefined,
+            { signal: controller.signal }
+          );
+          if (!result.success) throw new Error(result.error);
+        }
+        return getEventListeners(controller.signal, 'abort').length;
+      },
+      { input: fixtures.standard, output: outDir, mainDir: path.join(ROOT, 'dist', 'main') }
+    );
+    assert.equal(remaining, 0, `${remaining} stale abort listeners`);
   }
 );

@@ -94,6 +94,11 @@ export const initialUpdateState = (): UpdateState => ({
   epoch: 0,
 });
 
+/** electron-updater installs any downloaded file on quit; allow it only for one this machine still owns. */
+export const shouldInstallOnQuit = (state: UpdateState): boolean =>
+  state.downloaded !== null ||
+  (state.downloadEpoch !== null && state.downloadEpoch === state.epoch);
+
 const send = (
   phase: UpdatePhase,
   manual: boolean,

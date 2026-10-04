@@ -37,11 +37,15 @@ export const findChecksumsManifest = (startDir: string): string | null => {
   return null;
 };
 
-export const sha256File = (filePath: string): string => {
-  const hash = crypto.createHash('sha256');
-  hash.update(fs.readFileSync(filePath));
-  return hash.digest('hex');
-};
+/** Streams the file so hashing a ~50 MB binary does not block the main process. */
+export const sha256File = (filePath: string): Promise<string> =>
+  new Promise((resolve, reject) => {
+    const hash = crypto.createHash('sha256');
+    fs.createReadStream(filePath)
+      .on('data', (chunk) => hash.update(chunk))
+      .on('error', reject)
+      .on('end', () => resolve(hash.digest('hex')));
+  });
 
 export const expectedChecksumForBinary = (
   manifestPath: string,
@@ -55,12 +59,12 @@ export const expectedChecksumForBinary = (
   return typeof digest === 'string' && digest.length > 0 ? digest : null;
 };
 
-export const verifyBundledBinaryChecksum = (
+export const verifyBundledBinaryChecksum = async (
   binaryPath: string,
   binary: 'ffmpeg' | 'ffprobe',
   platform = process.platform,
   arch = process.arch
-): boolean => {
+): Promise<boolean> => {
   if (binaryPath === binary || isMissingBundledBinaryPath(binaryPath)) {
     return !isMissingBundledBinaryPath(binaryPath);
   }
@@ -79,5 +83,9 @@ export const verifyBundledBinaryChecksum = (
   if (!expected) {
     return true;
   }
-  return sha256File(binaryPath) === expected;
+  try {
+    return (await sha256File(binaryPath)) === expected;
+  } catch {
+    return false;
+  }
 };

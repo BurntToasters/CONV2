@@ -141,8 +141,8 @@ const buildTemplate = (deps: ApplicationMenuDeps): MenuItemConstructorOptions[] 
     label: 'Convert',
     submenu: [
       {
+        // No accelerator: bare Enter is handled in the renderer, which ignores fields and buttons.
         label: 'Start Conversion',
-        accelerator: 'Enter',
         click: () => deps.sendMenuAction('start-conversion'),
       },
       {

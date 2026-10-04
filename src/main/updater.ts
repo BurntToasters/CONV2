@@ -6,6 +6,7 @@ import * as path from 'path';
 import { isPrereleaseVersion, shouldAcceptUpdate } from './updaterPolicy';
 import {
   initialUpdateState,
+  shouldInstallOnQuit,
   transition,
   type UpdateEffect,
   type UpdateEvent,
@@ -177,6 +178,8 @@ const runEffect = (effect: UpdateEffect): void => {
 function dispatch(event: UpdateEvent): UpdateEffect[] {
   const result = transition(state, event, { betaFeed: shouldUseBetaChannel() });
   state = result.state;
+  // Set before effects run: a starting download must already allow install on quit.
+  autoUpdater.autoInstallOnAppQuit = shouldInstallOnQuit(state);
   for (const effect of result.effects) runEffect(effect);
   return result.effects;
 }
@@ -279,7 +282,7 @@ export const initUpdater = (window: BrowserWindow): void => {
   }
 
   autoUpdater.autoDownload = false;
-  autoUpdater.autoInstallOnAppQuit = true;
+  autoUpdater.autoInstallOnAppQuit = shouldInstallOnQuit(state);
   applyUpdaterChannel(false);
 
   if (listenersRegistered) {

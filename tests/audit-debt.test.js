@@ -80,3 +80,23 @@ test('Electron stays on the 44.5 patch line', () => {
   const pkg = JSON.parse(read('package.json'));
   assert.match(String(pkg.devDependencies.electron), /\^?44\.5\./);
 });
+
+// Windows refuses to spawn npm.cmd without a shell (EINVAL since the CVE-2024-27980 fix).
+test('release and smoke scripts spawn npm through a shell on Windows', () => {
+  for (const file of ['build-scripts/release-beta.js', 'build-scripts/smoke-runtime.js']) {
+    assert.match(read(file), /shell: process\.platform === 'win32'/, file);
+  }
+});
+
+test('beta release only runs plain release:* script names', () => {
+  const { isReleaseScriptName } = require('../build-scripts/release-beta.js');
+  assert.equal(isReleaseScriptName('release:win'), true);
+  assert.equal(isReleaseScriptName('release:linux:all'), true);
+  assert.equal(isReleaseScriptName('release:win & calc'), false);
+  assert.equal(isReleaseScriptName('build:win'), false);
+});
+
+// A bare Enter accelerator swallows Enter in text fields and on buttons and starts a run.
+test('Start Conversion has no bare Enter menu accelerator', () => {
+  assert.doesNotMatch(read('src/main/applicationMenu.ts'), /accelerator: 'Enter'/);
+});

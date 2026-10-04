@@ -30,6 +30,17 @@ export const toSafeExternalUrl = (value: unknown): string | null => {
   return parsed.toString();
 };
 
+// Copy buttons need clipboard writes; everything else (camera, notifications, ...) stays denied.
+const RENDERER_PERMISSIONS = new Set(['clipboard-sanitized-write']);
+
+/** True only for permissions the bundled renderer page needs. */
+export const isAllowedPermission = (
+  permission: string,
+  requestingUrl: string | undefined,
+  trustedUrl: string | null
+): boolean =>
+  RENDERER_PERMISSIONS.has(permission) && isAllowedNavigation(requestingUrl ?? '', trustedUrl);
+
 /** The window may only ever show the bundled renderer page. */
 export const isAllowedNavigation = (targetUrl: string, trustedUrl: string | null): boolean => {
   if (!trustedUrl) return false;

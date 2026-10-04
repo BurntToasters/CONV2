@@ -13,6 +13,8 @@ const {
   verifyBundledBinaryChecksum,
 } = require('../dist/main/ffmpegIntegrity.js');
 
+// Failure modes: hashing a ~50 MB binary blocks the main thread; a swapped binary passes.
+
 test('missing bundled sentinels fail closed', () => {
   assert.equal(isMissingBundledBinaryPath('/res/ffmpeg/__missing_ffmpeg'), true);
   assert.equal(isMissingBundledBinaryPath('/res/ffmpeg/ffmpeg'), false);
@@ -24,7 +26,7 @@ test('runtime target keys match checksums.json', () => {
   assert.equal(runtimeFfmpegTarget('linux', 'x64'), 'linux:x64');
 });
 
-test('checksum verify matches a staged binary and rejects a swap', () => {
+test('checksum verify matches a staged binary and rejects a swap', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'conv2-hash-'));
   const binaryPath = path.join(dir, 'nested', 'ffmpeg');
   fs.mkdirSync(path.dirname(binaryPath), { recursive: true });
@@ -38,17 +40,19 @@ test('checksum verify matches a staged binary and rejects a swap', () => {
   );
 
   assert.equal(findChecksumsManifest(path.dirname(binaryPath)), path.join(dir, 'checksums.json'));
-  assert.equal(sha256File(binaryPath), digest);
+  const pending = sha256File(binaryPath);
+  assert.ok(pending instanceof Promise, 'hashing must not block the main thread');
+  assert.equal(await pending, digest);
   assert.equal(
     expectedChecksumForBinary(path.join(dir, 'checksums.json'), 'mac:arm64', 'ffmpeg'),
     digest
   );
-  assert.equal(verifyBundledBinaryChecksum(binaryPath, 'ffmpeg', 'darwin', 'arm64'), true);
+  assert.equal(await verifyBundledBinaryChecksum(binaryPath, 'ffmpeg', 'darwin', 'arm64'), true);
 
   fs.writeFileSync(binaryPath, 'tampered');
-  assert.equal(verifyBundledBinaryChecksum(binaryPath, 'ffmpeg', 'darwin', 'arm64'), false);
+  assert.equal(await verifyBundledBinaryChecksum(binaryPath, 'ffmpeg', 'darwin', 'arm64'), false);
 });
 
-test('PATH / system binaries skip checksums', () => {
-  assert.equal(verifyBundledBinaryChecksum('ffmpeg', 'ffmpeg', 'darwin', 'arm64'), true);
+test('PATH / system binaries skip checksums', async () => {
+  assert.equal(await verifyBundledBinaryChecksum('ffmpeg', 'ffmpeg', 'darwin', 'arm64'), true);
 });

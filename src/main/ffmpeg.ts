@@ -165,15 +165,20 @@ export const checkFFmpegInstalled = async (): Promise<boolean> => {
   }
   const ffmpegPath = getFFmpegBinaryPath();
   const ffprobePath = getFFprobeBinaryPath();
-  const [ffmpegOk, ffprobeOk] = await Promise.all([
-    checkBinaryInstalled(ffmpegPath),
-    checkBinaryInstalled(ffprobePath),
-  ]);
+  // Verify bundled binaries before running them, so a swapped binary is never executed.
   const checksumOk =
     !getFFmpegPathModule().isUsingBundledFFmpeg() ||
-    (verifyBundledBinaryChecksum(ffmpegPath, 'ffmpeg') &&
-      verifyBundledBinaryChecksum(ffprobePath, 'ffprobe'));
-  const result = ffmpegOk && ffprobeOk && checksumOk;
+    (
+      await Promise.all([
+        verifyBundledBinaryChecksum(ffmpegPath, 'ffmpeg'),
+        verifyBundledBinaryChecksum(ffprobePath, 'ffprobe'),
+      ])
+    ).every(Boolean);
+  const result =
+    checksumOk &&
+    (
+      await Promise.all([checkBinaryInstalled(ffmpegPath), checkBinaryInstalled(ffprobePath)])
+    ).every(Boolean);
   ffmpegInstalledCache = { result, expiresAt: now + FFMPEG_INSTALLED_CACHE_TTL_MS };
   return result;
 };
@@ -979,11 +984,6 @@ export const ensureMp4PlaybackCompatibilityArgs = (
 };
 
 /**
- * Returns true only for colour-space values that are safe to pass to FFmpeg.
- * FFprobe emits "unknown", "unspecified", or "reserved" for unset fields;
- * passing those strings to FFmpeg causes an "Invalid option" error.
- */
-/**
  * Replaces home-directory prefixes in log output with `~` so that absolute
  * paths sent to the renderer (or pasted into bug reports) don't reveal the
  * system username.
@@ -1339,6 +1339,7 @@ export const convertVideo = async (
       });
 
       ffmpegProcess.on('close', async (code) => {
+        options.signal?.removeEventListener('abort', onAbortSignal);
         flushAndCleanupProgressTimer();
         if (currentProcess === ffmpegProcess) {
           currentProcess = null;
@@ -1390,6 +1391,7 @@ export const convertVideo = async (
       });
 
       ffmpegProcess.on('error', (err) => {
+        options.signal?.removeEventListener('abort', onAbortSignal);
         flushAndCleanupProgressTimer();
         if (currentProcess === ffmpegProcess) {
           currentProcess = null;

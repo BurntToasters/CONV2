@@ -3,7 +3,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { resolveDevOverrides } = require('../dist/main/devOverrides.js');
+const { resolveDevOverrides, resolveLaunchFlags } = require('../dist/main/devOverrides.js');
 
 // Failure modes for test-only env overrides. Written before devOverrides.ts.
 
@@ -54,4 +54,26 @@ test('missing files and wrong kinds are rejected', () => {
 
 test('empty values are ignored', () => {
   assert.deepEqual(resolveDevOverrides({ CONV2_FFMPEG_PATH: '' }, false), {});
+});
+
+// Failure modes for debug launch flags: a shipped build opens DevTools on `--dev`, or `--smoke`
+// writes into the working directory and exits; dev and CI smoke runs lose them.
+test('packaged builds ignore --dev and --smoke', () => {
+  const flags = resolveLaunchFlags(['app', '--dev', '--smoke'], { CONV2_SMOKE: '1' }, true);
+  assert.deepEqual(flags, { openDevTools: false, runtimeSmoke: false });
+});
+
+test('unpackaged builds honour --dev, --smoke and CONV2_SMOKE', () => {
+  assert.deepEqual(resolveLaunchFlags(['app', '--dev', '--smoke'], {}, false), {
+    openDevTools: true,
+    runtimeSmoke: true,
+  });
+  assert.deepEqual(resolveLaunchFlags(['app'], { CONV2_SMOKE: '1' }, false), {
+    openDevTools: false,
+    runtimeSmoke: true,
+  });
+  assert.deepEqual(resolveLaunchFlags(['app'], {}, false), {
+    openDevTools: false,
+    runtimeSmoke: false,
+  });
 });
