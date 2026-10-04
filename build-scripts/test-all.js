@@ -3,6 +3,7 @@ const fs = require('fs');
 const path = require('path');
 const yaml = require('js-yaml');
 const { DOMParser } = require('@xmldom/xmldom');
+const { clearQualityGateProof, recordSuccessfulQualityGate } = require('./release-session');
 const scriptVersion = '1.0.0';
 const testVersion = require('../package.json').version;
 
@@ -265,11 +266,19 @@ function runConfigChecks() {
 // `--checks-only` runs just the static syntax/config gates. CI already runs
 // compile, unit tests, format, and typecheck as dedicated jobs, so this avoids
 // duplicating them while still enforcing the config contract.
+// `--require-clean-proof` records the release quality-gate proof only on a
+// fully passing run over a clean tree, and fails when the proof is missing
+// (release VMs need it before any draft, sign, or mirror step).
 const checksOnly = process.argv.includes('--checks-only');
+const requireCleanProof = process.argv.includes('--require-clean-proof');
 
 printBanner(checksOnly ? 'CONV2 Config & Syntax Checks' : 'CONV2 Full Test Suite');
 
 function run() {
+  // A failed or interrupted run must invalidate any earlier release proof.
+  if (!checksOnly) {
+    clearQualityGateProof(process.cwd());
+  }
   if (!checksOnly) {
     const compileResult = runCommand('compile', 'npm run compile');
     results.compile.status = compileResult.ok ? 'passed' : 'failed';
@@ -323,6 +332,23 @@ function run() {
   console.log('');
   if (allPassed) {
     console.log(`${colors.green}${colors.bold}✓ All checks passed!${colors.reset}`);
+    if (!checksOnly) {
+      const qualityGate = recordSuccessfulQualityGate(process.cwd());
+      if (qualityGate.recorded) {
+        console.log(
+          `${colors.green}Release quality-gate proof recorded for this clean commit.${colors.reset}`
+        );
+      } else if (qualityGate.dirtyFiles) {
+        console.log(
+          `${colors.yellow}Release quality-gate proof NOT recorded: working tree is dirty. ` +
+            `Commit generated files and re-run test:all before any release step.${colors.reset}`
+        );
+        console.log(qualityGate.dirtyFiles);
+        if (requireCleanProof) {
+          process.exit(1);
+        }
+      }
+    }
     process.exit(0);
   }
 

@@ -4,14 +4,21 @@ const path = require('path');
 const crypto = require('crypto');
 const { getReleaseUploadFiles } = require('./release-upload-policy');
 const { assertGitHubCliAuthenticated, githubApi, uploadReleaseAsset } = require('./github-cli');
+const { assertStableReleaseOverridesAllowed, isExplicitTruthy } = require('./release-policy');
+const {
+  assertExpectedRelease,
+  assertNoMisnamedVersionDrafts,
+  isExpectedRelease,
+  listAllGithubPages,
+} = require('./release-draft-metadata');
 
 // Environment variables are loaded via the `dotenv -e .env --` prefix in npm scripts.
 
 const RELEASE_DIR = path.join(__dirname, '..', 'release');
 const GPG_KEY_ID = process.env.GPG_KEY_ID;
 const GPG_PASSPHRASE = process.env.GPG_PASSPHRASE;
-const REPO_OWNER = 'BurntToasters';
-const REPO_NAME = 'CONV2';
+const REPO_OWNER = process.env.GH_REPO_OWNER || 'BurntToasters';
+const REPO_NAME = process.env.GH_REPO_NAME || 'CONV2';
 const GH_REQUEST_RETRIES = Number.parseInt(process.env.GH_REQUEST_RETRIES || '3', 10);
 const GH_REQUEST_RETRY_DELAY_MS = Number.parseInt(
   process.env.GH_REQUEST_RETRY_DELAY_MS || '1500',
@@ -21,6 +28,48 @@ const GH_REQUEST_RETRY_DELAY_MS = Number.parseInt(
 const packageJson = require('../package.json');
 const VERSION = packageJson.version;
 const TAG_NAME = 'v' + VERSION;
+// Channel classification lives in build-scripts/release-version.js so every
+// release path agrees on beta vs stable and rejects unsupported channels.
+const { assertSupportedReleaseVersion, isBetaReleaseVersion } = require('./release-version');
+assertSupportedReleaseVersion(VERSION);
+const IS_PRERELEASE = isBetaReleaseVersion(VERSION);
+
+function currentReleaseCommit() {
+  const commit = execFileSync('git', ['rev-parse', 'HEAD'], {
+    cwd: path.join(__dirname, '..'),
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe'],
+  }).trim();
+  if (!/^[0-9a-f]{40}$/i.test(commit)) {
+    throw new Error('Could not resolve an exact release commit from git HEAD.');
+  }
+  return commit;
+}
+
+function assertReleaseTargetsCommit(release, commit, env = process.env, log = console) {
+  if (release && release.target_commitish === commit) return release;
+  if (isExplicitTruthy(env.FORCE_UPLOAD)) {
+    log.warn(
+      'WARNING: Draft release ' +
+        TAG_NAME +
+        ' targets ' +
+        ((release && release.target_commitish) || 'an unknown commit') +
+        ', not checked-out commit ' +
+        commit +
+        '. FORCE_UPLOAD=1 bypassing commit check.'
+    );
+    return release;
+  }
+  throw new Error(
+    'Draft release ' +
+      TAG_NAME +
+      ' targets ' +
+      ((release && release.target_commitish) || 'an unknown commit') +
+      ', not checked-out commit ' +
+      commit +
+      '. Delete or retarget stale draft before uploading assets. Or set FORCE_UPLOAD=1 to bypass.'
+  );
+}
 
 const args = process.argv.slice(2);
 const archArgIndex = args.findIndex((arg) => arg === '--arch');
@@ -219,93 +268,66 @@ async function githubRequestWithRetry(method, endpoint, body) {
 
 async function getOrCreateRelease() {
   console.log('\nLooking for release: ' + TAG_NAME);
+  const commit = currentReleaseCommit();
 
-  try {
-    const release = await githubRequestWithRetry(
-      'GET',
-      '/repos/' + REPO_OWNER + '/' + REPO_NAME + '/releases/tags/' + TAG_NAME
-    );
-    console.log('   Found published release: ' + (release.name || TAG_NAME));
-    return release;
-  } catch (error) {
-    if (error.statusCode === 404) {
-      console.log('   Tag not published, searching draft releases...');
-    } else {
-      throw error;
-    }
-
+  const findExisting = async () => {
     try {
-      const releases = await githubRequestWithRetry(
+      return await githubRequestWithRetry(
         'GET',
-        '/repos/' + REPO_OWNER + '/' + REPO_NAME + '/releases?per_page=100'
+        '/repos/' + REPO_OWNER + '/' + REPO_NAME + '/releases/tags/' + TAG_NAME
       );
-
-      if (!Array.isArray(releases)) {
-        throw new Error('Unexpected releases payload type');
-      }
-
-      const matchingReleases = releases.filter(function (r) {
-        return r.tag_name === TAG_NAME;
-      });
-
-      if (matchingReleases.length > 0) {
-        matchingReleases.sort(function (a, b) {
-          return b.assets.length - a.assets.length;
-        });
-        const release = matchingReleases[0];
-        console.log(
-          '   Found draft release: ' + release.name + ' (' + release.assets.length + ' assets)'
-        );
-        return release;
-      }
-    } catch (listError) {
-      throw listError;
+    } catch (error) {
+      if (error && error.statusCode !== 404) throw error;
     }
 
-    console.log('   Creating draft release for ' + TAG_NAME + '...');
-    try {
-      const release = await githubRequestWithRetry(
-        'POST',
-        '/repos/' + REPO_OWNER + '/' + REPO_NAME + '/releases',
-        {
-          tag_name: TAG_NAME,
-          name: 'CONV2 ' + VERSION,
-          draft: true,
-          prerelease: VERSION.includes('beta') || VERSION.includes('alpha'),
-        }
+    const releases = await listAllGithubPages((page, perPage) =>
+      githubRequestWithRetry(
+        'GET',
+        '/repos/' + REPO_OWNER + '/' + REPO_NAME + '/releases?per_page=' + perPage + '&page=' + page
+      )
+    );
+    assertNoMisnamedVersionDrafts(releases, TAG_NAME, VERSION);
+    // Duplicate drafts are a known GitHub failure; match ensure-draft-release.
+    const drafts = releases.filter(
+      (release) => release && release.draft && isExpectedRelease(release, TAG_NAME, VERSION)
+    );
+    if (drafts.length > 1) {
+      throw new Error(
+        'Multiple draft releases exist for ' + TAG_NAME + '. Resolve duplicates before signing.'
       );
-      console.log('   ✓ Created draft release: ' + release.name);
-      return release;
-    } catch (createError) {
-      if (createError.statusCode === 422) {
-        console.log('   Draft may already exist. Retrying release list...');
-        await sleep(2000);
-
-        const releases = await githubRequestWithRetry(
-          'GET',
-          '/repos/' + REPO_OWNER + '/' + REPO_NAME + '/releases?per_page=100'
-        );
-
-        if (Array.isArray(releases)) {
-          const release = releases.find((r) => r.tag_name === TAG_NAME);
-          if (release) {
-            console.log('   Found release after retry: ' + (release.name || TAG_NAME));
-            return release;
-          }
-        }
-      }
-
-      console.error('   ✗ FAILED: Could not create release:', createError.message);
-      throw createError;
     }
+    return drafts[0] || null;
+  };
+
+  const existing = await findExisting();
+  if (existing) {
+    const validated = assertExpectedRelease(existing, TAG_NAME, VERSION, 'Signing release');
+    if (validated.draft) {
+      console.log(
+        '   Found draft release: ' +
+          (validated.name || TAG_NAME) +
+          ' (' +
+          (validated.assets ? validated.assets.length : 0) +
+          ' assets)'
+      );
+      return assertReleaseTargetsCommit(validated, commit);
+    }
+    console.log('   Found published release: ' + (validated.name || TAG_NAME));
+    return validated;
   }
+
+  throw new Error(
+    'No GitHub release exists for ' +
+      TAG_NAME +
+      '. Create the draft with npm run release:draft on Windows first; Mac/Linux wait for that draft.'
+  );
 }
 
 async function uploadSignatures(release, filesToUpload) {
   if (!release || !release.upload_url) {
     throw new Error('No release found for tag ' + TAG_NAME + ', cannot upload signatures');
   }
-  if (!release.draft && process.env.ALLOW_ASSET_REPLACE !== 'true') {
+  if (!release.draft && !isExplicitTruthy(process.env.ALLOW_ASSET_REPLACE)) {
     throw new Error(
       'Refusing to upload assets to published release ' +
         TAG_NAME +
@@ -323,7 +345,9 @@ async function uploadSignatures(release, filesToUpload) {
     process.stdout.write('   Uploading: ' + fileName + '... ');
 
     try {
-      uploadReleaseAsset(REPO_OWNER + '/' + REPO_NAME, release.tag_name || TAG_NAME, filePath);
+      // Upload against the release upload URL so untagged placeholder drafts
+      // work the same as tagged ones; the tag alone cannot address them.
+      uploadReleaseAsset(release.upload_url, filePath);
       console.log('✓');
     } catch (error) {
       console.log('✗ ' + error.message);
@@ -339,6 +363,7 @@ async function uploadSignatures(release, filesToUpload) {
 }
 
 async function main() {
+  assertStableReleaseOverridesAllowed(process.env, VERSION);
   const platform = getPlatformName(TARGET_ARCH);
   let uploadFailed = false;
 
@@ -435,3 +460,10 @@ main().catch((error) => {
   console.error(error);
   process.exit(1);
 });
+
+module.exports = {
+  assertReleaseTargetsCommit,
+  currentReleaseCommit,
+  getOrCreateRelease,
+  listAllGithubPages,
+};

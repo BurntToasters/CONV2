@@ -3,6 +3,8 @@ const path = require('path');
 
 require('dotenv').config();
 
+const { isBetaReleaseVersion } = require('../build-scripts/release-version');
+
 const RELEASE_DIR = path.join(__dirname, '..', 'release');
 
 const BUILD_ONLY_DIRECTORIES = [
@@ -35,13 +37,6 @@ function getAfterPackLocation(env = process.env) {
     return '';
   }
   return value.trim();
-}
-
-function isBetaReleaseVersion(version) {
-  const numeric = '(?:0|[1-9]\\d*)';
-  return new RegExp(`^${numeric}\\.${numeric}\\.${numeric}-beta\\.${numeric}$`).test(
-    String(version ?? '')
-  );
 }
 
 function readPackageVersion(repositoryRoot = path.join(__dirname, '..')) {

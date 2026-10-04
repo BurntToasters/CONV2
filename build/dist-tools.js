@@ -1,10 +1,12 @@
 const fs = require('fs');
 const path = require('path');
 const { execSync } = require('child_process');
+const { createReleaseSession, verifyQualityGate } = require('../build-scripts/release-session');
 
 const ROOT = path.resolve(__dirname, '..');
 const FLATPAK_BUILD_DIR_PREFIX = 'build-dir';
 const RENDERER_MODULES_DIR = path.join(ROOT, 'src', 'renderer', 'modules');
+const RELEASE_BUILD_SESSION = '.build-session.json';
 
 function listFlatpakBuildDirs() {
   try {
@@ -58,12 +60,46 @@ function cleanRendererModuleArtifacts() {
 
 function cleanBuildArtifacts() {
   console.log('[dist-tools] Cleaning build artifacts...');
+  // The build session proves the quality gate for this commit and environment.
+  // Later release steps verify it, so a rebuild inside the same release chain
+  // must not invalidate it.
+  const sessionPath = path.join(ROOT, 'release', RELEASE_BUILD_SESSION);
+  let preservedSession = null;
+  try {
+    preservedSession = fs.readFileSync(sessionPath);
+  } catch {
+    preservedSession = null;
+  }
+  const dirs = [path.join(ROOT, 'release'), path.join(ROOT, 'dist'), ...listFlatpakBuildDirs()];
+  for (const dir of dirs) {
+    rmDir(dir, path.relative(ROOT, dir) + '/');
+  }
+  if (preservedSession !== null) {
+    fs.mkdirSync(path.join(ROOT, 'release'), { recursive: true });
+    fs.writeFileSync(sessionPath, preservedSession, { mode: 0o600 });
+  }
+  cleanRendererModuleArtifacts();
+  console.log('[dist-tools] Clean complete.');
+}
+
+function cleanReleaseArtifacts() {
+  console.log('[dist-tools] Cleaning release artifacts...');
+  // Refuse before deleting prior artifacts if the full quality gate was not
+  // completed for this exact clean checkout and environment.
+  verifyQualityGate(ROOT);
   const dirs = [path.join(ROOT, 'release'), path.join(ROOT, 'dist'), ...listFlatpakBuildDirs()];
   for (const dir of dirs) {
     rmDir(dir, path.relative(ROOT, dir) + '/');
   }
   cleanRendererModuleArtifacts();
-  console.log('[dist-tools] Clean complete.');
+  const releaseDir = path.join(ROOT, 'release');
+  fs.mkdirSync(releaseDir, { recursive: true });
+  fs.writeFileSync(
+    path.join(releaseDir, RELEASE_BUILD_SESSION),
+    `${JSON.stringify(createReleaseSession(ROOT))}\n`,
+    { flag: 'wx', mode: 0o600 }
+  );
+  console.log('[dist-tools] Release session created for this clean commit.');
 }
 
 function copyRendererAssets() {
@@ -112,6 +148,11 @@ if (mode === 'clean') {
   process.exit(0);
 }
 
+if (mode === 'clean-release-artifacts') {
+  cleanReleaseArtifacts();
+  process.exit(0);
+}
+
 if (mode === 'copy') {
   copyRendererAssets();
   process.exit(0);
@@ -122,5 +163,5 @@ if (mode === 'compile') {
   process.exit(0);
 }
 
-console.error('Usage: node build/dist-tools.js <clean|copy|compile>');
+console.error('Usage: node build/dist-tools.js <clean|clean-release-artifacts|copy|compile>');
 process.exit(1);

@@ -188,3 +188,31 @@ jobs:
           name: e2e-${{ runner.os }}
           path: coverage/e2e/
           if-no-files-found: warn
+
+  stable-metadata:
+    name: Stable promotion metadata only
+    # A release/* branch promoted to main must remove only the beta suffix and
+    # touch exactly the synchronized release metadata set.
+    if: >-
+      ${{
+        github.event_name == 'pull_request' &&
+        github.base_ref == 'main' &&
+        startsWith(github.head_ref, 'release/')
+      }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Enforce stable metadata-only promotion
+        run: >-
+          node build-scripts/check-stable-metadata-pr.js
+          ${{ github.event.pull_request.base.sha }}
+          ${{ github.event.pull_request.head.sha }}

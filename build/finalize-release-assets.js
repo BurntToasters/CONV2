@@ -6,6 +6,7 @@ const {
   readPackageVersion,
   shouldSkipBetaMirror,
 } = require('./post-release-assets.js');
+const { assertStableReleaseOverridesAllowed } = require('../build-scripts/release-policy');
 
 function banner(message) {
   fs.writeSync(2, `[release:mirror] ${message}\n`);
@@ -24,6 +25,7 @@ banner(`version=${JSON.stringify(version)}`);
 banner(`AFTER_PACK_LOC=${JSON.stringify(getAfterPackLocation())}`);
 
 try {
+  assertStableReleaseOverridesAllowed(process.env, version);
   const skipBeta = shouldSkipBetaMirror(process.env, version);
   const skipForced = allowSkipMirror();
   if (!skipBeta && !skipForced && !getAfterPackLocation()) {
