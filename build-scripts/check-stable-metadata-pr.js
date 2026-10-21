@@ -96,17 +96,12 @@ function validateStableChangelog(baseContent, headContent, headVersion) {
   const headProductStart = headContent.indexOf('\n## What is CONV2?');
   const headNextSection = headContent.indexOf('\n## Changes in `', bodyStart);
   const historyRemoved =
-    nextSection >= 0 &&
-    headNextSection === -1 &&
-    baseProductStart >= 0 &&
-    headProductStart >= 0;
+    nextSection >= 0 && headNextSection === -1 && baseProductStart >= 0 && headProductStart >= 0;
   if (sectionStart < 0 || (!historyRemoved && nextSection < 0)) {
     throw new Error('CHANGELOG.md has no bounded stable release section.');
   }
   const prefix = promoted.slice(0, bodyStart);
-  const suffix = historyRemoved
-    ? headContent.slice(headProductStart)
-    : promoted.slice(nextSection);
+  const suffix = historyRemoved ? headContent.slice(headProductStart) : promoted.slice(nextSection);
   if (/This is a Beta build/.test(headContent)) {
     throw new Error('CHANGELOG.md stable content still has the Beta callout.');
   }
@@ -137,7 +132,10 @@ function validateStableChangelog(baseContent, headContent, headVersion) {
     const stableMsiHeading = '### MSI Installer Support';
     const baseTail = baseContent
       .slice(baseProductStart)
-      .replace('### MSI Installer Support (MSI builds are NOT provided for betas)', stableMsiHeading);
+      .replace(
+        '### MSI Installer Support (MSI builds are NOT provided for betas)',
+        stableMsiHeading
+      );
     if (baseTail !== suffix) {
       throw new Error('CHANGELOG.md product information changed during promotion.');
     }
