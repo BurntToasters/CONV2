@@ -1,9 +1,5 @@
 #!/usr/bin/env node
 import { spawnSync, execSync } from 'child_process';
-import { createRequire } from 'module';
-
-const require = createRequire(import.meta.url);
-const { confirmDiscardOrExit } = require('./git-sync-guard.js');
 
 function run(cmd, args) {
   console.log(`> ${cmd} ${args.join(' ')}`);
@@ -16,7 +12,6 @@ function run(cmd, args) {
 
 try {
   run('git', ['fetch', 'origin']);
-  await confirmDiscardOrExit(process.cwd(), null, 'VM setup (reset to upstream)');
   run('git', ['reset', '--hard', '@{u}']);
   run('git', ['clean', '-fd']);
   run('git', ['pull']);
