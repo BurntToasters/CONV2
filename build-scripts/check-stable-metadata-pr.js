@@ -77,7 +77,8 @@ function expectedMetainfo(baseContent, headVersion, date) {
 
 function validateStableChangelog(baseContent, headContent, headVersion) {
   // Mirror build/sync-changelog.js, then the promotion renames the top beta
-  // section to the stable one and drops the beta callout.
+  // section to the stable one and drops the beta callout. Stable promotion may
+  // also collapse the changelog to the current release section.
   const synced = baseContent.replace(
     /\/releases\/download\/v[^/]+\//g,
     `/releases/download/v${headVersion}/`
@@ -91,11 +92,21 @@ function validateStableChangelog(baseContent, headContent, headVersion) {
   const sectionStart = promoted.indexOf(stableHeading);
   const bodyStart = sectionStart + stableHeading.length;
   const nextSection = promoted.indexOf('\n## Changes in `', bodyStart);
-  if (sectionStart < 0 || nextSection < 0) {
+  const baseProductStart = baseContent.indexOf('\n## What is CONV2?');
+  const headProductStart = headContent.indexOf('\n## What is CONV2?');
+  const headNextSection = headContent.indexOf('\n## Changes in `', bodyStart);
+  const historyRemoved =
+    nextSection >= 0 &&
+    headNextSection === -1 &&
+    baseProductStart >= 0 &&
+    headProductStart >= 0;
+  if (sectionStart < 0 || (!historyRemoved && nextSection < 0)) {
     throw new Error('CHANGELOG.md has no bounded stable release section.');
   }
   const prefix = promoted.slice(0, bodyStart);
-  const suffix = promoted.slice(nextSection);
+  const suffix = historyRemoved
+    ? headContent.slice(headProductStart)
+    : promoted.slice(nextSection);
   if (/This is a Beta build/.test(headContent)) {
     throw new Error('CHANGELOG.md stable content still has the Beta callout.');
   }
@@ -108,8 +119,9 @@ function validateStableChangelog(baseContent, headContent, headVersion) {
   if (downloadVersions.size === 0 || [...downloadVersions].some((v) => v !== headVersion)) {
     throw new Error('CHANGELOG.md download URLs must all use the stable version.');
   }
-  // The beta callout block ("> ..." lines at the very top) must go; everything
-  // else before the notes and all older history must stay byte-identical.
+  // The beta callout block ("> ..." lines at the very top) must go. Existing
+  // history stays byte-identical unless the promotion intentionally removes it;
+  // in that form, the product information after the changelog must stay intact.
   // Offsets are measured against the matched prefix because dropping the
   // callout shifts every later byte.
   const prefixWithoutCallout = prefix.replace(/^(> [^\n]*\n)+(\n|$)/, '');
@@ -120,6 +132,15 @@ function validateStableChangelog(baseContent, headContent, headVersion) {
       : null;
   if (!matchedPrefix || !headContent.endsWith(suffix)) {
     throw new Error('CHANGELOG.md changes outside the stable release section.');
+  }
+  if (historyRemoved) {
+    const stableMsiHeading = '### MSI Installer Support';
+    const baseTail = baseContent
+      .slice(baseProductStart)
+      .replace('### MSI Installer Support (MSI builds are NOT provided for betas)', stableMsiHeading);
+    if (baseTail !== suffix) {
+      throw new Error('CHANGELOG.md product information changed during promotion.');
+    }
   }
   const currentSection = headContent.slice(
     matchedPrefix.length,
