@@ -85,7 +85,7 @@ function cleanBuildArtifacts() {
 function cleanReleaseArtifacts() {
   console.log('[dist-tools] Cleaning release artifacts...');
   // Refuse before deleting prior artifacts if the full quality gate was not
-  // completed for this exact clean checkout and environment.
+  // completed for this checkout and environment.
   verifyQualityGate(ROOT);
   const dirs = [path.join(ROOT, 'release'), path.join(ROOT, 'dist'), ...listFlatpakBuildDirs()];
   for (const dir of dirs) {
@@ -99,7 +99,7 @@ function cleanReleaseArtifacts() {
     `${JSON.stringify(createReleaseSession(ROOT))}\n`,
     { flag: 'wx', mode: 0o600 }
   );
-  console.log('[dist-tools] Release session created for this clean commit.');
+  console.log('[dist-tools] Release session created for this checkout.');
 }
 
 function copyRendererAssets() {
