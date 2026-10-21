@@ -23,6 +23,12 @@ banner(`cwd=${process.cwd()}`);
 banner(`releaseDir=${RELEASE_DIR}`);
 banner(`version=${JSON.stringify(version)}`);
 banner(`AFTER_PACK_LOC=${JSON.stringify(getAfterPackLocation())}`);
+banner(`OVERRIDE_BETA_MIRROR_SKIP=${JSON.stringify(process.env.OVERRIDE_BETA_MIRROR_SKIP ?? '')}`);
+if (shouldSkipBetaMirror(process.env, version) && getAfterPackLocation()) {
+  banner(
+    `beta version ${version}; AFTER_PACK_LOC mirror will be skipped unless OVERRIDE_BETA_MIRROR_SKIP=1`
+  );
+}
 
 try {
   assertStableReleaseOverridesAllowed(process.env, version);
@@ -33,7 +39,7 @@ try {
       `Stable release ${version} requires AFTER_PACK_LOC so artifacts are mirrored. Set AFTER_PACK_LOC or SKIP_RELEASE_MIRROR=1. Beta versions (X.Y.Z-beta.N) skip the mirror by default.`
     );
   }
-  const result = finalizeReleaseAssets({ version });
+  const result = finalizeReleaseAssets({ logger: console, version });
   if (!skipBeta && !skipForced && !result.mirrored) {
     throw new Error(`Stable release ${version} did not mirror to AFTER_PACK_LOC.`);
   }
