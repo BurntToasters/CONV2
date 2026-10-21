@@ -76,9 +76,9 @@ test('retired updater channel alias is gone', () => {
   assert.doesNotMatch(source, /shouldAcceptUpdateForChannel/);
 });
 
-test('Electron stays on the 44.5 patch line', () => {
+test('Electron stays on the 44.9 patch line', () => {
   const pkg = JSON.parse(read('package.json'));
-  assert.match(String(pkg.devDependencies.electron), /\^?44\.5\./);
+  assert.match(String(pkg.devDependencies.electron), /\^?44\.9\./);
 });
 
 // Windows refuses to spawn npm.cmd without a shell (EINVAL since the CVE-2024-27980 fix).
