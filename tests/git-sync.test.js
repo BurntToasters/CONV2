@@ -8,6 +8,7 @@ const { execFileSync, spawnSync } = require('node:child_process');
 // Failure modes: prompts block dirty syncs; local commits survive resets; ignored
 // files disappear; invalid targets touch Git; VM setup stops before installing.
 // Exercise the real CLIs in throwaway repositories before changing production code.
+// Fixtures must keep LF even when the host enables core.autocrlf.
 
 const ROOT = path.join(__dirname, '..');
 const SYNC = path.join(ROOT, 'build-scripts', 'git-sync.js');
@@ -25,6 +26,7 @@ const makeRepo = () => {
   git(work, 'config', 'user.email', 'test@example.invalid');
   git(work, 'config', 'user.name', 'Test');
   git(work, 'config', 'commit.gpgsign', 'false');
+  fs.copyFileSync(path.join(ROOT, '.gitattributes'), path.join(work, '.gitattributes'));
   fs.writeFileSync(path.join(work, '.gitignore'), 'node_modules/\n');
   fs.writeFileSync(path.join(work, 'tracked.txt'), 'original\n');
   git(work, 'add', '.');

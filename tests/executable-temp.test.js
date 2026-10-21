@@ -12,6 +12,9 @@ const {
 
 const temporaryRoots = [];
 
+// Windows mode bits do not represent POSIX ownership or execute permissions.
+// Keep content, exclusivity, symlink, and cleanup checks on every platform.
+
 const makeTemporaryRoot = () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'conv2-executable-test-'));
   temporaryRoots.push(root);
@@ -31,7 +34,9 @@ test('creates a unique private executable directory', () => {
 
   assert.notEqual(first, second);
   assert.equal(fs.lstatSync(first).isDirectory(), true);
-  assert.equal(fs.lstatSync(first).mode & 0o777, 0o700);
+  if (process.platform !== 'win32') {
+    assert.equal(fs.lstatSync(first).mode & 0o777, 0o700);
+  }
 });
 
 test('copies a regular file exclusively and marks it executable', () => {
@@ -42,7 +47,9 @@ test('copies a regular file exclusively and marks it executable', () => {
 
   const destination = copyExecutableToPrivateDirectory(source, destinationDirectory);
   assert.equal(fs.readFileSync(destination, 'utf8'), 'binary');
-  assert.equal(fs.lstatSync(destination).mode & 0o777, 0o700);
+  if (process.platform !== 'win32') {
+    assert.equal(fs.lstatSync(destination).mode & 0o777, 0o700);
+  }
   assert.throws(() => copyExecutableToPrivateDirectory(source, destinationDirectory), /EEXIST/);
 });
 
