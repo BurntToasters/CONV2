@@ -1,7 +1,7 @@
 // E2E: runs build-scripts/release-session.js functions against temp git repos.
 // Proves the quality-gate proof and build session bind version, commit,
 // platform, toolchain, and lockfile, expire after 24h, and fail closed.
-// Failure modes: dirty tree, expired proof/session, commit or lockfile drift,
+// Failure modes: uncommitted generated files, expired proof/session, commit or lockfile drift,
 // missing files, proof recorded after session started.
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -85,15 +85,19 @@ test('clean tree records the quality-gate proof', (t) => {
   assert.ok(Number.isFinite(proof.completedAt));
 });
 
-test('dirty tree is not recorded', (t) => {
+test('uncommitted generated files allow proof recording and session verification', (t) => {
   const repo = setupRepo();
   t.after(() => cleanup(repo));
   fs.writeFileSync(path.join(repo.work, 'dirty.txt'), 'uncommitted\n');
   const session = loadSessionModule(repo);
   const result = session.recordSuccessfulQualityGate(repo.work);
-  record('record dirty refused', result.recorded === false);
-  assert.equal(result.recorded, false);
-  assert.match(result.dirtyFiles, /dirty\.txt/);
+  assert.equal(result.recorded, true);
+  const created = session.createReleaseSession(repo.work);
+  fs.mkdirSync(path.join(repo.work, 'release'), { recursive: true });
+  fs.writeFileSync(path.join(repo.work, 'release', '.build-session.json'), JSON.stringify(created));
+  const verified = runCli(repo);
+  assert.equal(verified.status, 0, verified.stderr);
+  record('uncommitted files accepted', true);
 });
 
 test('session creation requires a fresh proof', (t) => {

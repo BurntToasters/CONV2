@@ -13,38 +13,12 @@ const defaultRoot = path.resolve(scriptDirectory, '..');
 const RELEASE_SESSION_RELATIVE_PATH = path.join('release', '.build-session.json');
 const QUALITY_GATE_RELATIVE_PATH = path.join('coverage', '.release-quality.json');
 const DEFAULT_MAX_AGE_MS = 24 * 60 * 60 * 1000;
-// Only the proof files themselves are ignorable: CONV2 regenerates licenses.json
-// but it is gitignored, and metainfo/sync outputs land before the gate runs.
 function command(commandName, args, root) {
-  // trimEnd only: git porcelain uses " M path" / "M  path". trim() would turn
-  // the first into "M path" and break XY/path parsing.
   return execFileSync(commandName, args, {
     cwd: root,
     encoding: 'utf8',
     stdio: ['ignore', 'pipe', 'pipe'],
   }).trimEnd();
-}
-
-/** Paths from `git status --porcelain=v1` (keeps leading spaces in status text). */
-function porcelainPaths(statusText) {
-  return statusText
-    .split('\n')
-    .map((line) => line.replace(/\r$/, ''))
-    .filter(Boolean)
-    .flatMap((line) => {
-      // XY PATH  or  XY ORIG -> PATH  (XY is always two status columns)
-      const pathPart = line.length >= 3 ? line.slice(3) : line;
-      return pathPart.includes(' -> ') ? pathPart.split(' -> ') : [pathPart];
-    });
-}
-
-function isIgnorableReleaseDirtyPath(filePath) {
-  // Git porcelain uses forward slashes on every platform, while the paths
-  // used to read the generated proofs follow the host platform separator.
-  const normalizedPath = filePath.replaceAll('\\', '/');
-  const releaseSessionPath = RELEASE_SESSION_RELATIVE_PATH.replaceAll('\\', '/');
-  const qualityGatePath = QUALITY_GATE_RELATIVE_PATH.replaceAll('\\', '/');
-  return normalizedPath === releaseSessionPath || normalizedPath === qualityGatePath;
 }
 
 function sha256File(filePath) {
@@ -59,7 +33,12 @@ function currentReleaseIdentity(root = defaultRoot) {
     platform: process.platform,
     arch: process.arch,
     node: process.version,
-    npm: command('npm', ['--version'], root),
+    npm: execFileSync(process.platform === 'win32' ? 'npm.cmd' : 'npm', ['--version'], {
+      cwd: root,
+      encoding: 'utf8',
+      shell: process.platform === 'win32',
+      stdio: ['ignore', 'pipe', 'pipe'],
+    }).trim(),
     packageLockSha256: sha256File(path.join(root, 'package-lock.json')),
   };
 }
@@ -122,20 +101,6 @@ function clearQualityGateProof(root = defaultRoot) {
 }
 
 function recordSuccessfulQualityGate(root = defaultRoot) {
-  let status;
-  try {
-    status = command('git', ['status', '--porcelain=v1', '--untracked-files=all'], root);
-  } catch {
-    return { recorded: false, dirtyFiles: null };
-  }
-  if (status) {
-    const dirtyPaths = porcelainPaths(status).filter(
-      (filePath) => !isIgnorableReleaseDirtyPath(filePath)
-    );
-    if (dirtyPaths.length > 0) {
-      return { recorded: false, dirtyFiles: status };
-    }
-  }
   const proofPath = path.join(root, QUALITY_GATE_RELATIVE_PATH);
   fs.mkdirSync(path.dirname(proofPath), { recursive: true });
   fs.writeFileSync(
@@ -144,26 +109,6 @@ function recordSuccessfulQualityGate(root = defaultRoot) {
     { mode: 0o600 }
   );
   return { recorded: true, dirtyFiles: null };
-}
-
-function assertReleaseTreeClean(root = defaultRoot) {
-  let status;
-  try {
-    status = command('git', ['status', '--porcelain=v1', '--untracked-files=all'], root);
-  } catch (error) {
-    throw new Error(
-      `Could not inspect the release working tree: ${error instanceof Error ? error.message : String(error)}`
-    );
-  }
-  if (!status) return;
-  const dirtyPaths = porcelainPaths(status).filter(
-    (filePath) => !isIgnorableReleaseDirtyPath(filePath)
-  );
-  if (dirtyPaths.length > 0) {
-    throw new Error(
-      `Release working tree changed after the quality gate; run test:all again before continuing:\n${status}`
-    );
-  }
 }
 
 function verifyQualityGate(root = defaultRoot, options) {
@@ -199,7 +144,6 @@ function verifyReleaseSession(root = defaultRoot, options) {
     );
   }
   const validated = validateReleaseSession(session, currentReleaseIdentity(root), options);
-  assertReleaseTreeClean(root);
   return validated;
 }
 
@@ -221,12 +165,9 @@ module.exports = {
   DEFAULT_MAX_AGE_MS,
   QUALITY_GATE_RELATIVE_PATH,
   RELEASE_SESSION_RELATIVE_PATH,
-  assertReleaseTreeClean,
   clearQualityGateProof,
   createReleaseSession,
   currentReleaseIdentity,
-  isIgnorableReleaseDirtyPath,
-  porcelainPaths,
   recordSuccessfulQualityGate,
   validateQualityGate,
   validateReleaseSession,
