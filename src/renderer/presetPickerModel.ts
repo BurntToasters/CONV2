@@ -1,4 +1,4 @@
-interface PresetPickerItem {
+export interface PresetPickerItem {
   id: string;
   category: string;
   categoryLabel: string;
@@ -6,7 +6,7 @@ interface PresetPickerItem {
   searchText: string;
 }
 
-interface PresetParentBucket {
+export interface PresetParentBucket {
   key: string;
   label: string;
   presets: PresetPickerItem[];
@@ -18,29 +18,16 @@ interface BuildPresetBucketsArgs {
   categoryOrder: string[];
 }
 
-interface PresetPaneGroup {
+export interface PresetPaneGroup {
   key: string;
   label: string;
   presets: PresetPickerItem[];
 }
 
-interface PresetPaneState {
+export interface PresetPaneState {
   groups: PresetPaneGroup[];
   totalVisible: number;
   hasMatchesOutsideActive: boolean;
-}
-
-interface PresetPickerModelApi {
-  buildPresetParentBuckets: (args: BuildPresetBucketsArgs) => PresetParentBucket[];
-  resolveActiveParentKey: (requestedKey: string, buckets: PresetParentBucket[]) => string;
-  pickPresetIdForParent: (currentSelectedId: string, parentPresets: PresetPickerItem[]) => string;
-  buildPresetPaneState: (args: {
-    buckets: PresetParentBucket[];
-    activeParentKey: string;
-    query: string;
-    searchAllFormats: boolean;
-  }) => PresetPaneState;
-  isPresetVisibleInGroups: (presetId: string, groups: PresetPaneGroup[]) => boolean;
 }
 
 const normalizeQueryTokens = (query: string): string[] => {
@@ -51,7 +38,7 @@ const normalizeQueryTokens = (query: string): string[] => {
     .filter((token) => token.length > 0);
 };
 
-const buildPresetParentBuckets = ({
+export const buildPresetParentBuckets = ({
   presets,
   recentPresetIds,
   categoryOrder,
@@ -101,7 +88,10 @@ const buildPresetParentBuckets = ({
   return buckets;
 };
 
-const resolveActiveParentKey = (requestedKey: string, buckets: PresetParentBucket[]): string => {
+export const resolveActiveParentKey = (
+  requestedKey: string,
+  buckets: PresetParentBucket[]
+): string => {
   if (buckets.length === 0) {
     return '';
   }
@@ -111,7 +101,7 @@ const resolveActiveParentKey = (requestedKey: string, buckets: PresetParentBucke
   return buckets[0].key;
 };
 
-const pickPresetIdForParent = (
+export const pickPresetIdForParent = (
   currentSelectedId: string,
   parentPresets: PresetPickerItem[]
 ): string => {
@@ -138,7 +128,7 @@ const matchesQuery = (preset: PresetPickerItem, queryTokens: string[]): boolean 
   return queryTokens.every((token) => haystack.includes(token));
 };
 
-const buildPresetPaneState = ({
+export const buildPresetPaneState = ({
   buckets,
   activeParentKey,
   query,
@@ -201,25 +191,6 @@ const buildPresetPaneState = ({
   };
 };
 
-const isPresetVisibleInGroups = (presetId: string, groups: PresetPaneGroup[]): boolean => {
+export const isPresetVisibleInGroups = (presetId: string, groups: PresetPaneGroup[]): boolean => {
   return groups.some((group) => group.presets.some((preset) => preset.id === presetId));
 };
-
-const presetPickerModel: PresetPickerModelApi = {
-  buildPresetParentBuckets,
-  resolveActiveParentKey,
-  pickPresetIdForParent,
-  buildPresetPaneState,
-  isPresetVisibleInGroups,
-};
-
-declare const module: { exports?: unknown } | undefined;
-
-if (typeof window !== 'undefined') {
-  (window as Window & { presetPickerModel?: PresetPickerModelApi }).presetPickerModel =
-    presetPickerModel;
-}
-
-if (typeof module !== 'undefined' && module && typeof module.exports !== 'undefined') {
-  module.exports = presetPickerModel;
-}

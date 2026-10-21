@@ -2,18 +2,23 @@ const { execSync, execFileSync } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
-const https = require('https');
 const { getReleaseUploadFiles } = require('./release-upload-policy');
+const { assertGitHubCliAuthenticated, githubApi, uploadReleaseAsset } = require('./github-cli');
+const { assertStableReleaseOverridesAllowed, isExplicitTruthy } = require('./release-policy');
+const {
+  assertExpectedRelease,
+  assertNoMisnamedVersionDrafts,
+  isExpectedRelease,
+  listAllGithubPages,
+} = require('./release-draft-metadata');
 
 // Environment variables are loaded via the `dotenv -e .env --` prefix in npm scripts.
 
 const RELEASE_DIR = path.join(__dirname, '..', 'release');
 const GPG_KEY_ID = process.env.GPG_KEY_ID;
 const GPG_PASSPHRASE = process.env.GPG_PASSPHRASE;
-const GH_TOKEN = process.env.GH_TOKEN;
-const REPO_OWNER = 'BurntToasters';
-const REPO_NAME = 'CONV2';
-const GH_REQUEST_TIMEOUT_MS = Number.parseInt(process.env.GH_REQUEST_TIMEOUT_MS || '30000', 10);
+const REPO_OWNER = process.env.GH_REPO_OWNER || 'BurntToasters';
+const REPO_NAME = process.env.GH_REPO_NAME || 'CONV2';
 const GH_REQUEST_RETRIES = Number.parseInt(process.env.GH_REQUEST_RETRIES || '3', 10);
 const GH_REQUEST_RETRY_DELAY_MS = Number.parseInt(
   process.env.GH_REQUEST_RETRY_DELAY_MS || '1500',
@@ -23,6 +28,48 @@ const GH_REQUEST_RETRY_DELAY_MS = Number.parseInt(
 const packageJson = require('../package.json');
 const VERSION = packageJson.version;
 const TAG_NAME = 'v' + VERSION;
+// Channel classification lives in build-scripts/release-version.js so every
+// release path agrees on beta vs stable and rejects unsupported channels.
+const { assertSupportedReleaseVersion, isBetaReleaseVersion } = require('./release-version');
+assertSupportedReleaseVersion(VERSION);
+const IS_PRERELEASE = isBetaReleaseVersion(VERSION);
+
+function currentReleaseCommit() {
+  const commit = execFileSync('git', ['rev-parse', 'HEAD'], {
+    cwd: path.join(__dirname, '..'),
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe'],
+  }).trim();
+  if (!/^[0-9a-f]{40}$/i.test(commit)) {
+    throw new Error('Could not resolve an exact release commit from git HEAD.');
+  }
+  return commit;
+}
+
+function assertReleaseTargetsCommit(release, commit, env = process.env, log = console) {
+  if (release && release.target_commitish === commit) return release;
+  if (isExplicitTruthy(env.FORCE_UPLOAD)) {
+    log.warn(
+      'WARNING: Draft release ' +
+        TAG_NAME +
+        ' targets ' +
+        ((release && release.target_commitish) || 'an unknown commit') +
+        ', not checked-out commit ' +
+        commit +
+        '. FORCE_UPLOAD=1 bypassing commit check.'
+    );
+    return release;
+  }
+  throw new Error(
+    'Draft release ' +
+      TAG_NAME +
+      ' targets ' +
+      ((release && release.target_commitish) || 'an unknown commit') +
+      ', not checked-out commit ' +
+      commit +
+      '. Delete or retarget stale draft before uploading assets. Or set FORCE_UPLOAD=1 to bypass.'
+  );
+}
 
 const args = process.argv.slice(2);
 const archArgIndex = args.findIndex((arg) => arg === '--arch');
@@ -120,12 +167,15 @@ function signFile(filePath) {
     }
 
     if (GPG_PASSPHRASE) {
-      gpgArgs.push('--pinentry-mode', 'loopback', '--passphrase', GPG_PASSPHRASE);
+      gpgArgs.push('--pinentry-mode', 'loopback', '--passphrase-fd', '0');
     }
 
     gpgArgs.push('--output', ascFile, filePath);
 
-    execFileSync('gpg', gpgArgs, { stdio: 'pipe' });
+    execFileSync('gpg', gpgArgs, {
+      stdio: 'pipe',
+      input: GPG_PASSPHRASE ? `${GPG_PASSPHRASE}\n` : undefined,
+    });
     console.log('   ✓ Created ' + path.basename(ascFile));
     return ascFile;
   } catch (error) {
@@ -184,77 +234,7 @@ function isRetryableGithubError(error) {
 }
 
 function githubRequest(method, endpoint, body) {
-  return new Promise((resolve, reject) => {
-    const options = {
-      hostname: 'api.github.com',
-      path: endpoint,
-      method: method,
-      headers: {
-        Authorization: 'Bearer ' + GH_TOKEN,
-        'User-Agent': 'CONV2-Release-Script',
-        Accept: 'application/vnd.github.v3+json',
-        'X-GitHub-Api-Version': '2022-11-28',
-      },
-    };
-
-    if (body) {
-      options.headers['Content-Type'] = 'application/json';
-    }
-
-    const req = https.request(options, (res) => {
-      let data = '';
-      res.setEncoding('utf8');
-      res.on('data', (chunk) => (data += chunk));
-      res.on('aborted', () => {
-        const err = new Error('GitHub API response aborted for ' + method + ' ' + endpoint);
-        err.code = 'ECONNRESET';
-        reject(err);
-      });
-      res.on('end', () => {
-        const statusCode = res.statusCode || 0;
-        try {
-          if (statusCode >= 200 && statusCode < 300) {
-            resolve(data ? JSON.parse(data) : {});
-          } else {
-            const json = data ? JSON.parse(data) : {};
-            const err = new Error(
-              'GitHub API error ' +
-                statusCode +
-                ' for ' +
-                method +
-                ' ' +
-                endpoint +
-                ': ' +
-                (json.message || data || 'unknown error')
-            );
-            err.statusCode = statusCode;
-            reject(err);
-          }
-        } catch (e) {
-          const err = new Error(
-            'GitHub API invalid JSON for ' + method + ' ' + endpoint + ': ' + e.message
-          );
-          err.statusCode = statusCode;
-          reject(err);
-        }
-      });
-    });
-
-    req.setTimeout(GH_REQUEST_TIMEOUT_MS, () => {
-      const err = new Error(
-        'GitHub API timeout after ' + GH_REQUEST_TIMEOUT_MS + 'ms for ' + method + ' ' + endpoint
-      );
-      err.code = 'ETIMEDOUT';
-      req.destroy(err);
-    });
-
-    req.on('error', reject);
-
-    if (body) {
-      req.write(JSON.stringify(body));
-    }
-    req.end();
-  });
+  return Promise.resolve(githubApi(method, endpoint, body));
 }
 
 async function githubRequestWithRetry(method, endpoint, body) {
@@ -286,145 +266,73 @@ async function githubRequestWithRetry(method, endpoint, body) {
   }
 }
 
-function uploadToRelease(uploadUrl, filePath) {
-  return new Promise((resolve, reject) => {
-    const fileName = path.basename(filePath);
-    const fileContent = fs.readFileSync(filePath);
-    const contentType =
-      fileName.endsWith('.asc') || fileName.endsWith('.txt')
-        ? 'text/plain'
-        : 'application/octet-stream';
-
-    const url = new URL(uploadUrl.replace('{?name,label}', ''));
-    url.searchParams.set('name', fileName);
-
-    const options = {
-      hostname: url.hostname,
-      path: url.pathname + url.search,
-      method: 'POST',
-      headers: {
-        Authorization: 'Bearer ' + GH_TOKEN,
-        'User-Agent': 'CONV2-Release-Script',
-        Accept: 'application/vnd.github.v3+json',
-        'Content-Type': contentType,
-        'Content-Length': fileContent.length,
-      },
-    };
-
-    const req = https.request(options, (res) => {
-      let data = '';
-      res.on('data', (chunk) => (data += chunk));
-      res.on('end', () => {
-        if (res.statusCode >= 200 && res.statusCode < 300) {
-          resolve(JSON.parse(data));
-        } else if (res.statusCode === 422) {
-          reject(
-            new Error(
-              'Upload failed 422: asset already exists on release for ' +
-                fileName +
-                '. Remove existing asset before re-uploading.'
-            )
-          );
-        } else {
-          reject(new Error('Upload failed ' + res.statusCode + ': ' + data));
-        }
-      });
-    });
-
-    req.on('error', reject);
-    req.write(fileContent);
-    req.end();
-  });
-}
-
 async function getOrCreateRelease() {
   console.log('\nLooking for release: ' + TAG_NAME);
+  const commit = currentReleaseCommit();
 
-  try {
-    const release = await githubRequestWithRetry(
-      'GET',
-      '/repos/' + REPO_OWNER + '/' + REPO_NAME + '/releases/tags/' + TAG_NAME
-    );
-    console.log('   Found published release: ' + (release.name || TAG_NAME));
-    return release;
-  } catch (error) {
-    if (error.statusCode === 404) {
-      console.log('   Tag not published, searching draft releases...');
-    } else {
-      console.log('   Could not fetch release by tag: ' + error.message);
-      console.log('   Searching draft releases...');
-    }
-
+  const findExisting = async () => {
     try {
-      const releases = await githubRequestWithRetry(
+      return await githubRequestWithRetry(
         'GET',
-        '/repos/' + REPO_OWNER + '/' + REPO_NAME + '/releases?per_page=100'
+        '/repos/' + REPO_OWNER + '/' + REPO_NAME + '/releases/tags/' + TAG_NAME
       );
-
-      if (!Array.isArray(releases)) {
-        throw new Error('Unexpected releases payload type');
-      }
-
-      const matchingReleases = releases.filter(function (r) {
-        return r.tag_name === TAG_NAME;
-      });
-
-      if (matchingReleases.length > 0) {
-        matchingReleases.sort(function (a, b) {
-          return b.assets.length - a.assets.length;
-        });
-        const release = matchingReleases[0];
-        console.log(
-          '   Found draft release: ' + release.name + ' (' + release.assets.length + ' assets)'
-        );
-        return release;
-      }
-    } catch (listError) {
-      console.log('   Could not list releases: ' + listError.message);
+    } catch (error) {
+      if (error && error.statusCode !== 404) throw error;
     }
 
-    console.log('   Creating draft release for ' + TAG_NAME + '...');
-    try {
-      const release = await githubRequestWithRetry(
-        'POST',
-        '/repos/' + REPO_OWNER + '/' + REPO_NAME + '/releases',
-        {
-          tag_name: TAG_NAME,
-          name: 'CONV2 ' + VERSION,
-          draft: true,
-          prerelease: VERSION.includes('beta') || VERSION.includes('alpha'),
-        }
+    const releases = await listAllGithubPages((page, perPage) =>
+      githubRequestWithRetry(
+        'GET',
+        '/repos/' + REPO_OWNER + '/' + REPO_NAME + '/releases?per_page=' + perPage + '&page=' + page
+      )
+    );
+    assertNoMisnamedVersionDrafts(releases, TAG_NAME, VERSION);
+    // Duplicate drafts are a known GitHub failure; match ensure-draft-release.
+    const drafts = releases.filter(
+      (release) => release && release.draft && isExpectedRelease(release, TAG_NAME, VERSION)
+    );
+    if (drafts.length > 1) {
+      throw new Error(
+        'Multiple draft releases exist for ' + TAG_NAME + '. Resolve duplicates before signing.'
       );
-      console.log('   ✓ Created draft release: ' + release.name);
-      return release;
-    } catch (createError) {
-      if (createError.statusCode === 422) {
-        console.log('   Draft may already exist. Retrying release list...');
-        await sleep(2000);
-
-        const releases = await githubRequestWithRetry(
-          'GET',
-          '/repos/' + REPO_OWNER + '/' + REPO_NAME + '/releases?per_page=100'
-        );
-
-        if (Array.isArray(releases)) {
-          const release = releases.find((r) => r.tag_name === TAG_NAME);
-          if (release) {
-            console.log('   Found release after retry: ' + (release.name || TAG_NAME));
-            return release;
-          }
-        }
-      }
-
-      console.error('   ✗ FAILED: Could not create release:', createError.message);
-      throw createError;
     }
+    return drafts[0] || null;
+  };
+
+  const existing = await findExisting();
+  if (existing) {
+    const validated = assertExpectedRelease(existing, TAG_NAME, VERSION, 'Signing release');
+    if (validated.draft) {
+      console.log(
+        '   Found draft release: ' +
+          (validated.name || TAG_NAME) +
+          ' (' +
+          (validated.assets ? validated.assets.length : 0) +
+          ' assets)'
+      );
+      return assertReleaseTargetsCommit(validated, commit);
+    }
+    console.log('   Found published release: ' + (validated.name || TAG_NAME));
+    return validated;
   }
+
+  throw new Error(
+    'No GitHub release exists for ' +
+      TAG_NAME +
+      '. Create the draft with npm run release:draft on Windows first; Mac/Linux wait for that draft.'
+  );
 }
 
 async function uploadSignatures(release, filesToUpload) {
   if (!release || !release.upload_url) {
     throw new Error('No release found for tag ' + TAG_NAME + ', cannot upload signatures');
+  }
+  if (!release.draft && !isExplicitTruthy(process.env.ALLOW_ASSET_REPLACE)) {
+    throw new Error(
+      'Refusing to upload assets to published release ' +
+        TAG_NAME +
+        '. Set ALLOW_ASSET_REPLACE=true to override.'
+    );
   }
 
   console.log('\nUploading to GitHub release...');
@@ -437,10 +345,10 @@ async function uploadSignatures(release, filesToUpload) {
     process.stdout.write('   Uploading: ' + fileName + '... ');
 
     try {
-      const result = await uploadToRelease(release.upload_url, filePath);
-      if (result) {
-        console.log('✓');
-      }
+      // Upload against the release upload URL so untagged placeholder drafts
+      // work the same as tagged ones; the tag alone cannot address them.
+      uploadReleaseAsset(release.upload_url, filePath);
+      console.log('✓');
     } catch (error) {
       console.log('✗ ' + error.message);
       uploadFailures.push(fileName + ': ' + error.message);
@@ -455,10 +363,12 @@ async function uploadSignatures(release, filesToUpload) {
 }
 
 async function main() {
+  assertStableReleaseOverridesAllowed(process.env, VERSION);
   const platform = getPlatformName(TARGET_ARCH);
   let uploadFailed = false;
 
   console.log('═'.repeat(60));
+  assertGitHubCliAuthenticated();
   console.log('GPG Sign & Upload - CONV2 ' + VERSION);
   console.log('Platform: ' + platform);
   if (TARGET_ARCH) {
@@ -481,10 +391,6 @@ async function main() {
     console.warn('\n⚠ WARN: GPG_KEY_ID not set - will use default key');
   } else {
     console.log('\nGPG Key: ' + GPG_KEY_ID);
-  }
-
-  if (!GH_TOKEN) {
-    console.warn('⚠ WARN: GH_TOKEN not set - signatures will not be uploaded to GitHub');
   }
 
   const files = getFilesToSign();
@@ -519,19 +425,20 @@ async function main() {
     );
   }
 
-  const filesToUpload = getReleaseUploadFiles(files, signatureFiles, checksumFile, RELEASE_DIR);
+  const releaseEntries = fs
+    .readdirSync(RELEASE_DIR)
+    .filter((name) => fs.statSync(path.join(RELEASE_DIR, name)).isFile());
+  const filesToUpload = getReleaseUploadFiles(releaseEntries, RELEASE_DIR);
 
   console.log('\nFiles queued for upload:');
   filesToUpload.forEach((f) => console.log('   • ' + path.basename(f)));
 
-  if (GH_TOKEN) {
-    try {
-      const release = await getOrCreateRelease();
-      await uploadSignatures(release, filesToUpload);
-    } catch (error) {
-      console.error('\n✗ ERROR: GitHub upload failed:', error.message);
-      uploadFailed = true;
-    }
+  try {
+    const release = await getOrCreateRelease();
+    await uploadSignatures(release, filesToUpload);
+  } catch (error) {
+    console.error('\n✗ ERROR: GitHub upload failed:', error.message);
+    uploadFailed = true;
   }
 
   console.log('\n' + '═'.repeat(60));
@@ -544,10 +451,6 @@ async function main() {
     .filter((f) => f.endsWith('.asc') || f.startsWith('SHA256SUMS'));
   generatedFiles.forEach((f) => console.log('   • ' + f));
 
-  if (!GH_TOKEN) {
-    console.log('\n💡 TIP: To auto-upload, add GH_TOKEN to your .env file');
-  }
-
   if (uploadFailed) {
     process.exitCode = 1;
   }
@@ -557,3 +460,10 @@ main().catch((error) => {
   console.error(error);
   process.exit(1);
 });
+
+module.exports = {
+  assertReleaseTargetsCommit,
+  currentReleaseCommit,
+  getOrCreateRelease,
+  listAllGithubPages,
+};

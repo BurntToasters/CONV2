@@ -1,3 +1,4 @@
+import { GPU_ENCODERS } from './gpuEncoders';
 import {
   AdvancedFormatSettings,
   Av1TierCollection,
@@ -13,8 +14,17 @@ export type GPUVendor = 'nvidia' | 'amd' | 'intel' | 'apple' | 'cpu';
 export type PresetCategory = 'av1' | 'h264' | 'h265' | 'avi' | 'gif' | 'remux' | 'audio' | 'custom';
 export type GPUCodec = 'av1' | 'h264' | 'h265';
 
+/** Stream layout of the input, probed before arguments are built. */
+export interface SourceStreamInfo {
+  videoCodec?: string;
+  audioCodec?: string;
+  /** Codec names of the input's subtitle streams, in subtitle-stream order. */
+  subtitleCodecs?: string[];
+}
+
 export interface PresetContext {
   advancedFormatSettings?: AdvancedFormatSettings;
+  sourceStreams?: SourceStreamInfo;
 }
 
 export interface Preset {
@@ -33,31 +43,32 @@ export interface Preset {
   ) => string[];
 }
 
-const getVideoEncoder = (codec: 'h264' | 'h265' | 'av1', gpu: GPUVendor): string => {
-  const encoders: Record<string, Record<GPUVendor, string>> = {
-    h264: {
-      nvidia: 'h264_nvenc',
-      amd: 'h264_amf',
-      intel: 'h264_qsv',
-      apple: 'h264_videotoolbox',
-      cpu: 'libx264',
-    },
-    h265: {
-      nvidia: 'hevc_nvenc',
-      amd: 'hevc_amf',
-      intel: 'hevc_qsv',
-      apple: 'hevc_videotoolbox',
-      cpu: 'libx265',
-    },
-    av1: {
-      nvidia: 'av1_nvenc',
-      amd: 'av1_amf',
-      intel: 'av1_qsv',
-      apple: 'libsvtav1',
-      cpu: 'libsvtav1',
-    },
-  };
-  return encoders[codec][gpu];
+const getVideoEncoder = (codec: 'h264' | 'h265' | 'av1', gpu: GPUVendor): string =>
+  GPU_ENCODERS[codec][gpu];
+
+/**
+ * NVENC `-cq`, AMF `-qp_i`/`-qp_p` and QSV `-global_quality` are all 0-51 QP
+ * scales. AV1 tier settings allow up to 63 because libsvtav1's CRF range is
+ * 0-63, so hardware values must be clamped or FFmpeg rejects them as
+ * out-of-range option values.
+ */
+const GPU_QP_MAX = 51;
+
+/**
+ * Resolves the vendor whose argument style actually applies.
+ *
+ * Some vendor/codec pairs have no hardware encoder and fall back to the CPU
+ * encoder (Apple has no AV1 encoder, so it maps to libsvtav1). In that case the
+ * quality and preset arguments must follow the CPU form; emitting VideoToolbox
+ * flags for a software encoder would fail.
+ */
+export const resolveEncodeVendor = (codec: 'h264' | 'h265' | 'av1', gpu: GPUVendor): GPUVendor => {
+  const encoder = GPU_ENCODERS[codec]?.[gpu];
+  const cpuEncoder = GPU_ENCODERS[codec]?.cpu;
+  if (!encoder || encoder === cpuEncoder) {
+    return 'cpu';
+  }
+  return gpu;
 };
 
 const defaultAdvancedFormatSettings = createDefaultAdvancedFormatSettings();
@@ -101,15 +112,65 @@ const getGifLoopArg = (context?: PresetContext): string => {
 
 const toBitrateKbps = (value: number): string => `${value}k`;
 
+export type EncodeEffort = 'max' | 'high' | 'balanced' | 'fast';
+
+const X26X_EFFORT: Record<string, EncodeEffort> = {
+  placebo: 'max',
+  veryslow: 'max',
+  slower: 'max',
+  slow: 'high',
+  medium: 'balanced',
+  fast: 'fast',
+  faster: 'fast',
+  veryfast: 'fast',
+  superfast: 'fast',
+  ultrafast: 'fast',
+};
+
+/** Maps a tier's CPU preset (x264/x265 name or SVT-AV1 number) to a hardware effort level. */
+export const encodeEffortFromCpuPreset = (preset: unknown): EncodeEffort => {
+  if (typeof preset === 'string') return X26X_EFFORT[preset] ?? 'balanced';
+  if (typeof preset !== 'number' || !Number.isFinite(preset) || preset < 0) return 'balanced';
+  if (preset <= 3) return 'max';
+  if (preset <= 5) return 'high';
+  if (preset <= 7) return 'balanced';
+  return 'fast';
+};
+
+const NVENC_EFFORT: Record<EncodeEffort, [preset: string, multipass: string]> = {
+  max: ['p7', 'fullres'],
+  high: ['p6', 'qres'],
+  balanced: ['p5', 'disabled'],
+  fast: ['p4', 'disabled'],
+};
+const QSV_EFFORT: Record<EncodeEffort, [preset: string, lookahead: number]> = {
+  max: ['veryslow', 60],
+  high: ['slower', 40],
+  balanced: ['medium', 25],
+  fast: ['faster', 0],
+};
+const AMF_EFFORT: Record<EncodeEffort, string> = {
+  max: 'quality',
+  high: 'quality',
+  balanced: 'balanced',
+  fast: 'speed',
+};
+
 export const getQualityArgs = (
   gpu: GPUVendor,
   quality: number,
-  codec: 'h264' | 'h265' | 'av1' = 'h264'
+  codec: 'h264' | 'h265' | 'av1' = 'h264',
+  effort: EncodeEffort = 'max'
 ): string[] => {
-  switch (gpu) {
+  // Hardware QP scales stop at 51; CPU encoders keep the full requested range
+  // (libsvtav1 accepts CRF up to 63).
+  const hwQuality = String(Math.max(0, Math.min(GPU_QP_MAX, Math.round(quality))));
+
+  switch (resolveEncodeVendor(codec, gpu)) {
     case 'nvidia': {
-      // -b:v 0 enables true CQ mode; p7 = highest quality preset; multipass = two-pass encode
-      const args = ['-cq', String(quality), '-b:v', '0', '-preset', 'p7', '-multipass', 'fullres'];
+      // -b:v 0 = constant-quality mode; preset and two-pass cost follow the tier.
+      const [preset, multipass] = NVENC_EFFORT[effort];
+      const args = ['-cq', hwQuality, '-b:v', '0', '-preset', preset, '-multipass', multipass];
       if (codec !== 'av1') {
         // -tune hq, spatial/temporal AQ not supported on av1_nvenc
         args.push('-tune', 'hq', '-spatial_aq', '1', '-temporal_aq', '1');
@@ -117,31 +178,27 @@ export const getQualityArgs = (
       return args;
     }
     case 'amd':
-      // -quality quality = highest quality preset for AMF
-      return [
-        '-rc',
-        'cqp',
-        '-qp_i',
-        String(quality),
-        '-qp_p',
-        String(quality),
-        '-quality',
-        'quality',
-      ];
+      return ['-rc', 'cqp', '-qp_i', hwQuality, '-qp_p', hwQuality, '-quality', AMF_EFFORT[effort]];
     case 'intel': {
-      // look_ahead + extbrc improve quality for H.264/H.265; not supported on QSV AV1
-      const args = ['-global_quality', String(quality)];
-      if (codec !== 'av1') {
-        args.push('-look_ahead', '1', '-look_ahead_depth', '60', '-extbrc', '1');
+      const [preset, lookahead] = QSV_EFFORT[effort];
+      const args = ['-global_quality', hwQuality, '-preset', preset];
+      // Lookahead + extbrc help H.264/H.265 only; QSV AV1 rejects them.
+      if (codec !== 'av1' && lookahead > 0) {
+        args.push('-look_ahead', '1', '-look_ahead_depth', String(lookahead), '-extbrc', '1');
       }
       return args;
     }
     case 'apple': {
-      const vtQuality = Math.max(1, Math.min(100, Math.round((1 - quality / 51) * 100)));
-      return ['-q:v', String(vtQuality), '-allow_sw', '1', '-realtime', '0'];
+      const vtQuality = Math.max(
+        1,
+        Math.min(100, Math.round((1 - Number(hwQuality) / GPU_QP_MAX) * 100))
+      );
+      const args = ['-q:v', String(vtQuality), '-allow_sw', '1', '-realtime', '0'];
+      if (effort === 'fast') args.push('-prio_speed', '1');
+      return args;
     }
     default:
-      return ['-crf', String(quality)];
+      return ['-crf', String(Math.round(quality))];
   }
 };
 
@@ -190,10 +247,15 @@ const buildAv1Args = (
     '0:a?',
     '-c:v',
     encoder,
-    ...getQualityArgs(gpu, tierSettings.quality, 'av1'),
+    ...getQualityArgs(
+      gpu,
+      tierSettings.quality,
+      'av1',
+      encodeEffortFromCpuPreset(tierSettings.cpuPreset)
+    ),
   ];
 
-  if (gpu === 'cpu') {
+  if (resolveEncodeVendor('av1', gpu) === 'cpu') {
     args.push('-preset', String(tierSettings.cpuPreset));
     // libsvtav1 tuning applies to every tier for consistent perceptual quality.
     args.push('-svtav1-params', SVTAV1_ADVANCED_PARAMS);
@@ -225,10 +287,15 @@ const buildH264Args = (
     '0:a?',
     '-c:v',
     encoder,
-    ...getQualityArgs(gpu, tierSettings.quality, 'h264'),
+    ...getQualityArgs(
+      gpu,
+      tierSettings.quality,
+      'h264',
+      encodeEffortFromCpuPreset(tierSettings.preset)
+    ),
   ];
 
-  if (gpu === 'cpu') {
+  if (resolveEncodeVendor('h264', gpu) === 'cpu') {
     args.push('-preset', tierSettings.preset);
     // Force 4:2:0 8-bit output for maximum player/device compatibility
     args.push('-pix_fmt', 'yuv420p');
@@ -256,10 +323,15 @@ const buildH265Args = (
     '0:a?',
     '-c:v',
     encoder,
-    ...getQualityArgs(gpu, tierSettings.quality, 'h265'),
+    ...getQualityArgs(
+      gpu,
+      tierSettings.quality,
+      'h265',
+      encodeEffortFromCpuPreset(tierSettings.preset)
+    ),
   ];
 
-  if (gpu === 'cpu') {
+  if (resolveEncodeVendor('h265', gpu) === 'cpu') {
     args.push('-preset', tierSettings.preset);
     if (tierSettings.useAdvancedParams) {
       args.push('-x265-params', X265_ADVANCED_PARAMS);
@@ -288,10 +360,15 @@ const buildAviArgs = (
     '0:a?',
     '-c:v',
     encoder,
-    ...getQualityArgs(gpu, tierSettings.quality, tierSettings.codec),
+    ...getQualityArgs(
+      gpu,
+      tierSettings.quality,
+      tierSettings.codec,
+      encodeEffortFromCpuPreset(tierSettings.preset)
+    ),
   ];
 
-  if (gpu === 'cpu') {
+  if (resolveEncodeVendor(tierSettings.codec, gpu) === 'cpu') {
     args.push('-preset', tierSettings.preset);
     if (tierSettings.codec === 'h264') {
       // Force 4:2:0 8-bit for maximum player/device compatibility (matches buildH264Args)
@@ -302,6 +379,80 @@ const buildAviArgs = (
   }
 
   args.push('-c:a', 'libmp3lame', '-b:a', toBitrateKbps(tierSettings.audioBitrateKbps), output);
+  return args;
+};
+
+/**
+ * Text-based subtitle codecs, which FFmpeg can convert into the text subtitle
+ * format a container supports. Bitmap subtitles (PGS, DVD, DVB) have no text
+ * representation and are left out of the output instead of failing the remux.
+ */
+const TEXT_SUBTITLE_CODECS: ReadonlySet<string> = new Set([
+  'ass',
+  'jacosub',
+  'microdvd',
+  'mov_text',
+  'mpl2',
+  'pjs',
+  'realtext',
+  'sami',
+  'ssa',
+  'srt',
+  'stl',
+  'subrip',
+  'subviewer',
+  'subviewer1',
+  'text',
+  'vplayer',
+  'webvtt',
+]);
+
+export const isTextSubtitleCodec = (codec: string | undefined): boolean =>
+  typeof codec === 'string' && TEXT_SUBTITLE_CODECS.has(codec.toLowerCase());
+
+/** Text subtitle codec each container can carry. */
+const REMUX_SUBTITLE_ENCODER: Record<string, string> = {
+  mp4: 'mov_text',
+  webm: 'webvtt',
+};
+
+/**
+ * Builds remux arguments for a container.
+ *
+ * MKV can carry every stream type FFmpeg copies, so the file is preserved
+ * wholesale. MP4 and WebM cannot: copying a SubRip stream into MP4 fails with
+ * "Could not find tag for codec subrip", and `-map 0` also drags in MKV
+ * attachments that MP4 rejects. For those containers streams are mapped
+ * explicitly and text subtitles are converted to the container's text format.
+ */
+const buildRemuxArgs = (
+  input: string,
+  output: string,
+  extension: string,
+  context?: PresetContext
+): string[] => {
+  if (extension === 'mkv') {
+    return ['-i', input, '-map', '0', '-map_metadata', '0', '-c', 'copy', output];
+  }
+
+  const subtitleCodecs = context?.sourceStreams?.subtitleCodecs ?? [];
+  const textSubtitleIndices = subtitleCodecs
+    .map((codec, index) => ({ codec, index }))
+    .filter((entry) => isTextSubtitleCodec(entry.codec))
+    .map((entry) => entry.index);
+
+  const args = ['-i', input, '-map', '0:v:0?', '-map', '0:a?'];
+  for (const index of textSubtitleIndices) {
+    args.push('-map', `0:s:${index}`);
+  }
+  args.push('-map_metadata', '0', '-c', 'copy');
+
+  const subtitleEncoder = REMUX_SUBTITLE_ENCODER[extension];
+  if (textSubtitleIndices.length > 0 && subtitleEncoder) {
+    args.push('-c:s', subtitleEncoder);
+  }
+
+  args.push(output);
   return args;
 };
 
@@ -533,17 +684,7 @@ export const presets: Preset[] = [
     description: 'Copy streams to MP4 container (no re-encoding)',
     category: 'remux',
     extension: 'mp4',
-    getArgs: (input, output) => [
-      '-i',
-      input,
-      '-map',
-      '0',
-      '-map_metadata',
-      '0',
-      '-c',
-      'copy',
-      output,
-    ],
+    getArgs: (input, output, _gpu, context) => buildRemuxArgs(input, output, 'mp4', context),
   },
   {
     id: 'remux-mkv',
@@ -551,17 +692,7 @@ export const presets: Preset[] = [
     description: 'Copy streams to MKV container (no re-encoding)',
     category: 'remux',
     extension: 'mkv',
-    getArgs: (input, output) => [
-      '-i',
-      input,
-      '-map',
-      '0',
-      '-map_metadata',
-      '0',
-      '-c',
-      'copy',
-      output,
-    ],
+    getArgs: (input, output, _gpu, context) => buildRemuxArgs(input, output, 'mkv', context),
   },
   {
     id: 'remux-webm',
@@ -569,17 +700,7 @@ export const presets: Preset[] = [
     description: 'Copy streams to WebM container (no re-encoding)',
     category: 'remux',
     extension: 'webm',
-    getArgs: (input, output) => [
-      '-i',
-      input,
-      '-map',
-      '0',
-      '-map_metadata',
-      '0',
-      '-c',
-      'copy',
-      output,
-    ],
+    getArgs: (input, output, _gpu, context) => buildRemuxArgs(input, output, 'webm', context),
   },
   {
     id: 'audio-mp3',

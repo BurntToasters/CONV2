@@ -8,27 +8,36 @@ const read = (relativePath) => fs.readFileSync(path.join(ROOT, relativePath), 'u
 const escapeRegex = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 test('conversion IPC returns the redacted result', () => {
-  const source = read('src/main/main.ts');
-  assert.match(
-    source,
-    /webContents\.send\('conversion-complete', resultForRenderer\);\s*return resultForRenderer;/
-  );
+  const source = read('src/main/main.ts') + read('src/main/conversionController.ts');
+  assert.match(source, /return resultForRenderer;/);
+  assert.match(source, /error: redactPaths\(result\.error\)/);
+  assert.doesNotMatch(source, /webContents\.send\('conversion-complete'/);
+  assert.doesNotMatch(source, /emitCompleteEvent/);
+  assert.doesNotMatch(source, /ipcMain\.handle\(\s*'start-conversion'/);
 });
 
 test('conversion cancellation aborts preflight as well as FFmpeg', () => {
-  const source = read('src/main/main.ts');
-  assert.match(source, /activeConversionAbortController\?\.abort\(\)/);
-  assert.match(source, /signal: conversionAbortController\.signal/);
-  assert.match(source, /cancelActiveConversion\(!!force\)/);
+  const mainSource = read('src/main/main.ts') + read('src/main/conversionController.ts');
+  const conversionIpcSource = read('src/main/conversionIpc.ts');
+  assert.match(mainSource, /activeAbortController\?\.abort\(\)/);
+  assert.match(mainSource, /signal: conversionAbortController\.signal/);
+  assert.match(
+    mainSource + conversionIpcSource,
+    /cancelActiveConversion: \(force\) => conversions\.cancel\(!!force\)/
+  );
 });
 
 test('renderer locks conversion startup before asynchronous preparation', () => {
   const source = read('src/renderer/renderer.ts');
-  assert.match(source, /if \(isConverting \|\| conversionStarting\) return;/);
   assert.match(
     source,
-    /conversionStarting = true;\s*elements\.convertBtn\.disabled = true;\s*void runConversionWorkflow\(\)/
+    /const runConversionWorkflow = async[\s\S]*?if \(isConverting \|\| conversionStarting\) \{\s*return;\s*\}/
   );
+  assert.match(
+    source,
+    /conversionStarting = true;\s*elements\.convertBtn\.disabled = true;\s*try \{\s*await waitForAdvancedSettingsIdle\(\)/
+  );
+  assert.match(source, /void runConversionWorkflow\(\)\.catch\(/);
 });
 
 test('font license notice is copied with renderer fonts', () => {
@@ -40,28 +49,40 @@ test('font license notice is copied with renderer fonts', () => {
   assert.match(notice, /These can be\s+included either as stand-alone text files/);
 });
 
-test('Flatpak bundles are uploaded with their signatures and checksums', () => {
+test('all release artifacts and updater metadata are explicitly uploaded', () => {
   const { getReleaseUploadFiles } = require('../build-scripts/release-upload-policy');
   const releaseDir = path.join(ROOT, 'release');
   const uploads = getReleaseUploadFiles(
-    ['CONV2-Win-x64-Setup.exe', 'CONV2-Linux-x86_64.flatpak', 'CONV2-Linux-aarch64.flatpak'],
     [
-      path.join(releaseDir, 'CONV2-Win-x64-Setup.exe.asc'),
-      path.join(releaseDir, 'CONV2-Linux-x86_64.flatpak.asc'),
-      path.join(releaseDir, 'CONV2-Linux-aarch64.flatpak.asc'),
+      'CONV2-Win-x64-Setup.exe',
+      'CONV2-Win-x64-Setup.exe.blockmap',
+      'CONV2-Win-x64-Setup.exe.asc',
+      'CONV2-Linux-x86_64.flatpak',
+      'SHA256SUMS-Windows.txt',
+      'beta.yml',
+      'builder-debug.yml',
     ],
-    path.join(releaseDir, 'SHA256SUMS-Linux.txt'),
     releaseDir
   );
 
   assert.deepEqual(uploads, [
     path.join(releaseDir, 'CONV2-Linux-x86_64.flatpak'),
-    path.join(releaseDir, 'CONV2-Linux-aarch64.flatpak'),
+    path.join(releaseDir, 'CONV2-Win-x64-Setup.exe'),
     path.join(releaseDir, 'CONV2-Win-x64-Setup.exe.asc'),
-    path.join(releaseDir, 'CONV2-Linux-x86_64.flatpak.asc'),
-    path.join(releaseDir, 'CONV2-Linux-aarch64.flatpak.asc'),
-    path.join(releaseDir, 'SHA256SUMS-Linux.txt'),
+    path.join(releaseDir, 'CONV2-Win-x64-Setup.exe.blockmap'),
+    path.join(releaseDir, 'SHA256SUMS-Windows.txt'),
+    path.join(releaseDir, 'beta.yml'),
   ]);
+});
+
+test('release commands disable electron-builder publishing', () => {
+  const packageJson = JSON.parse(read('package.json'));
+  for (const [name, command] of Object.entries(packageJson.scripts)) {
+    if (name.startsWith('release:') && command.includes('electron-builder')) {
+      assert.doesNotMatch(command, /--publish always/);
+      assert.match(command, /--publish never/);
+    }
+  }
 });
 
 test('Twemoji is not copied twice by electron-builder', () => {
@@ -83,7 +104,9 @@ test('stable release metadata is internally aligned', () => {
   assert.equal(lockfile.version, packageJson.version);
   assert.match(metainfo, new RegExp(`<release version="${versionPattern}"`));
   assert.match(changelog, new RegExp(String.raw`## Changes in \`v${versionPattern}:\``));
-  assert.doesNotMatch(changelog, /This is a Beta build/);
+  if (!packageJson.version.includes('-beta') && !packageJson.version.includes('-alpha')) {
+    assert.doesNotMatch(changelog, /This is a Beta build/);
+  }
   assert.match(changelog, /CONV2-Win-x64-Setup\.exe/);
   const downloadsSection = changelog.split(/^## Changes in /m, 1)[0];
   const downloadVersions = [...downloadsSection.matchAll(/releases\/download\/v([^/]+)\//g)].map(
@@ -95,4 +118,23 @@ test('stable release metadata is internally aligned', () => {
     [packageJson.version],
     'every changelog download URL must use the package version'
   );
+});
+
+const UNICODE_DASH = /[\u2013\u2014]/;
+
+test('user-facing UI copy does not use en or em dashes', () => {
+  const paths = [
+    'src/renderer/index.html',
+    'src/renderer/setupWizard.ts',
+    'src/renderer/renderer.ts',
+    'src/main/gpuRecommendation.ts',
+  ];
+  for (const relativePath of paths) {
+    const source = read(relativePath);
+    assert.equal(
+      UNICODE_DASH.test(source),
+      false,
+      `${relativePath} must not contain en dash (U+2013) or em dash (U+2014)`
+    );
+  }
 });

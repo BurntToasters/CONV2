@@ -4,23 +4,62 @@
 const { execFileSync } = require('node:child_process');
 
 const TRUSTED_RELEASE_REFS = new Set(['refs/heads/main', 'refs/heads/beta']);
+// Release-candidate branches (next-1.6.0, next-1.7.0, ...) are first-party and
+// have access to the download secret, so they get the same real-payload rigor.
+const TRUSTED_RELEASE_REF_PATTERNS = [/^refs\/heads\/next-[\w.-]+$/];
+
+function isTrustedReleaseRef(ref) {
+  if (!ref) {
+    return false;
+  }
+  return TRUSTED_RELEASE_REFS.has(ref) || TRUSTED_RELEASE_REF_PATTERNS.some((rx) => rx.test(ref));
+}
 
 function requiresRealPayload(env = process.env) {
   if (env.REQUIRE_FFMPEG_PAYLOAD === '1') {
     return true;
   }
-  return env.GITHUB_EVENT_NAME === 'push' && TRUSTED_RELEASE_REFS.has(env.GITHUB_REF || '');
+  return env.GITHUB_EVENT_NAME === 'push' && isTrustedReleaseRef(env.GITHUB_REF || '');
+}
+
+function commandRequiresShell(command, platform = process.platform) {
+  return platform === 'win32' && /\.cmd$/iu.test(command);
+}
+
+function currentPayloadTarget(platform = process.platform, arch = process.arch) {
+  const os = platform === 'win32' ? 'win' : platform === 'darwin' ? 'mac' : 'linux';
+  const normalizedArch = arch === 'arm64' ? 'arm64' : 'x64';
+  return `${os}:${normalizedArch}`;
+}
+
+function bundledPayloadPresent(env = process.env) {
+  try {
+    execFileSync(
+      process.execPath,
+      ['build-scripts/check-ffmpeg.js', '--target', currentPayloadTarget(), '--require-checksums'],
+      { stdio: 'pipe', env }
+    );
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function run(env = process.env) {
+  if (bundledPayloadPresent(env)) {
+    console.log('[ci-ffmpeg] bundled payload already present; skipping download.');
+    return;
+  }
+
   if (!env.FFMPEG_DL_SERVER?.trim()) {
-    if (requiresRealPayload(env)) {
+    if (env.REQUIRE_FFMPEG_PAYLOAD === '1') {
       throw new Error(
-        'FFMPEG_DL_SERVER is required for package smoke on trusted main/beta pushes.'
+        'FFMPEG_DL_SERVER is required for package smoke on trusted main/beta/next-* pushes.'
       );
     }
+    // No public binary host yet, so payload tests skip instead of failing CI.
     console.warn(
-      '[ci-ffmpeg] FFMPEG_DL_SERVER is not configured; pull-request package smoke will validate packaging structure only.'
+      '[ci-ffmpeg] FFMPEG_DL_SERVER is not configured; skipping the bundled FFmpeg download.'
     );
     return;
   }
@@ -29,7 +68,11 @@ function run(env = process.env) {
   const platform =
     process.platform === 'win32' ? 'win' : process.platform === 'darwin' ? 'mac' : 'linux';
 
-  execFileSync(npmCommand, ['run', 'get:ffmpeg'], { stdio: 'inherit', env });
+  execFileSync(npmCommand, ['run', 'get:ffmpeg'], {
+    stdio: 'inherit',
+    env,
+    shell: commandRequiresShell(npmCommand),
+  });
   execFileSync(
     process.execPath,
     [
@@ -53,4 +96,11 @@ if (require.main === module) {
   }
 }
 
-module.exports = { requiresRealPayload, run };
+module.exports = {
+  bundledPayloadPresent,
+  commandRequiresShell,
+  currentPayloadTarget,
+  isTrustedReleaseRef,
+  requiresRealPayload,
+  run,
+};

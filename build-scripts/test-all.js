@@ -3,6 +3,7 @@ const fs = require('fs');
 const path = require('path');
 const yaml = require('js-yaml');
 const { DOMParser } = require('@xmldom/xmldom');
+const { clearQualityGateProof, recordSuccessfulQualityGate } = require('./release-session');
 const scriptVersion = '1.0.0';
 const testVersion = require('../package.json').version;
 
@@ -41,16 +42,6 @@ ${colors.reset}`);
 function parseUnitTests(output) {
   const clean = stripAnsi(output);
   const lines = clean.split(/\r?\n/);
-
-  // vitest format: "Tests  5 passed (5)"
-  const vitestLine = lines.find((line) => line.trim().startsWith('Tests'));
-  if (vitestLine) {
-    const passedMatch = vitestLine.match(/(\d+)\s+passed/);
-    const failedMatch = vitestLine.match(/(\d+)\s+failed/);
-    results.unit.passed = passedMatch ? parseInt(passedMatch[1], 10) : 0;
-    results.unit.failed = failedMatch ? parseInt(failedMatch[1], 10) : 0;
-    return;
-  }
 
   // node --test format (spec reporter: "ℹ pass N", TAP: "# pass N")
   const passLine = lines.find((line) => /[ℹ#]\s*pass\s+\d+/.test(line));
@@ -111,6 +102,7 @@ function runSyntaxChecks() {
   const files = [
     ...collectScriptFiles(path.join(process.cwd(), 'src')),
     ...collectScriptFiles(path.join(process.cwd(), 'build-scripts')),
+    ...collectScriptFiles(path.join(process.cwd(), 'build')),
   ];
   const uniqueFiles = Array.from(new Set(files)).sort();
 
@@ -220,6 +212,17 @@ function runConfigChecks() {
       msstoreConfig.win?.target === 'appx',
       'electron-builder.msstore.yml: win.target must be appx'
     );
+    assertConfig(
+      Array.isArray(msstoreConfig.win?.extraResources) &&
+        msstoreConfig.win.extraResources.some(
+          (entry) =>
+            entry &&
+            typeof entry === 'object' &&
+            typeof entry.from === 'string' &&
+            entry.from.includes('resources/ffmpeg/win')
+        ),
+      'electron-builder.msstore.yml: win.extraResources must include FFmpeg binaries'
+    );
 
     const requiredFiles = [
       'src/main/main.ts',
@@ -229,7 +232,7 @@ function runConfigChecks() {
       'assets/icon.ico',
       'assets/conv2.icns',
       'assets/icon.png',
-      'build/appx/appxmanifest.xml',
+      'build/appxmanifest.xml',
     ];
     for (const relativePath of requiredFiles) {
       assertConfig(
@@ -242,7 +245,10 @@ function runConfigChecks() {
     const metainfoRaw = fs.readFileSync(metainfoPath, 'utf8');
     const metainfoDoc = parseXmlStrict(metainfoRaw);
     const releases = metainfoDoc.getElementsByTagName('releases');
-    assertConfig(releases.length === 1, 'metainfo.xml: must contain exactly one <releases> element');
+    assertConfig(
+      releases.length === 1,
+      'metainfo.xml: must contain exactly one <releases> element'
+    );
     const releaseNodes = releases[0].getElementsByTagName('release');
     assertConfig(releaseNodes.length >= 1, 'metainfo.xml: <releases> must contain a <release>');
   } catch (error) {
@@ -257,31 +263,49 @@ function runConfigChecks() {
   }
 }
 
-printBanner('CONV2 Full Test Suite');
+// `--checks-only` runs just the static syntax/config gates. CI already runs
+// compile, unit tests, format, and typecheck as dedicated jobs, so this avoids
+// duplicating them while still enforcing the config contract.
+// `--require-clean-proof` records the release quality-gate proof only on a
+// fully passing run over a clean tree, and fails when the proof is missing
+// (release VMs need it before any draft, sign, or mirror step).
+const checksOnly = process.argv.includes('--checks-only');
+const requireCleanProof = process.argv.includes('--require-clean-proof');
+
+printBanner(checksOnly ? 'CONV2 Config & Syntax Checks' : 'CONV2 Full Test Suite');
 
 function run() {
-  const compileResult = runCommand('compile', 'npm run compile');
-  results.compile.status = compileResult.ok ? 'passed' : 'failed';
+  // A failed or interrupted run must invalidate any earlier release proof.
+  if (!checksOnly) {
+    clearQualityGateProof(process.cwd());
+  }
+  if (!checksOnly) {
+    const compileResult = runCommand('compile', 'npm run compile');
+    results.compile.status = compileResult.ok ? 'passed' : 'failed';
 
-  const unitResult = runCommand('unit', 'npm run tests:node', parseUnitTests);
-  results.unit.status = unitResult.ok ? 'passed' : 'failed';
+    const unitResult = runCommand('unit', 'npm run tests:node', parseUnitTests);
+    results.unit.status = unitResult.ok ? 'passed' : 'failed';
 
-  const formatResult = runCommand('format', 'npm run format:check');
-  results.format.status = formatResult.ok ? 'passed' : 'failed';
+    const formatResult = runCommand('format', 'npm run format:check');
+    results.format.status = formatResult.ok ? 'passed' : 'failed';
 
-  const typecheckResult = runCommand('typecheck', 'npm run typecheck');
-  results.typecheck.status = typecheckResult.ok ? 'passed' : 'failed';
+    const typecheckResult = runCommand('typecheck', 'npm run typecheck');
+    results.typecheck.status = typecheckResult.ok ? 'passed' : 'failed';
+  }
 
   runSyntaxChecks();
   runConfigChecks();
 
   printBanner('SUMMARY');
 
-  const summaryLines = [
+  const fullSuiteLines = [
     `${colors.bold}Compile:${colors.reset}   ${results.compile.status === 'passed' ? colors.green + '✓ PASS' : colors.red + '✗ FAIL'}${colors.reset}`,
     `${colors.bold}Unit:${colors.reset}      ${results.unit.status === 'passed' ? colors.green + '✓ PASS' : colors.red + '✗ FAIL'}${colors.reset} (${results.unit.passed} passed${results.unit.failed > 0 ? `, ${results.unit.failed} failed` : ''})`,
     `${colors.bold}Format:${colors.reset}    ${results.format.status === 'passed' ? colors.green + '✓ PASS' : colors.red + '✗ FAIL'}${colors.reset}`,
     `${colors.bold}Typecheck:${colors.reset} ${results.typecheck.status === 'passed' ? colors.green + '✓ PASS' : colors.red + '✗ FAIL'}${colors.reset}`,
+  ];
+  const summaryLines = [
+    ...(checksOnly ? [] : fullSuiteLines),
     `${colors.bold}Syntax:${colors.reset}    ${results.syntax.status === 'passed' ? colors.green + '✓ PASS' : colors.red + '✗ FAIL'}${colors.reset} (${results.syntax.checked} checked${results.syntax.failed > 0 ? `, ${results.syntax.failed} failed` : ''})`,
     `${colors.bold}Config:${colors.reset}    ${results.config.status === 'passed' ? colors.green + '✓ PASS' : colors.red + '✗ FAIL'}${colors.reset} (${results.config.checks} checks${results.config.failed > 0 ? `, ${results.config.failed} failed` : ''})`,
   ];
@@ -303,10 +327,28 @@ function run() {
     }
   }
 
-  const allPassed = Object.values(results).every((r) => r.status === 'passed');
+  const relevantResults = checksOnly ? [results.syntax, results.config] : Object.values(results);
+  const allPassed = relevantResults.every((r) => r.status === 'passed');
   console.log('');
   if (allPassed) {
     console.log(`${colors.green}${colors.bold}✓ All checks passed!${colors.reset}`);
+    if (!checksOnly) {
+      const qualityGate = recordSuccessfulQualityGate(process.cwd());
+      if (qualityGate.recorded) {
+        console.log(
+          `${colors.green}Release quality-gate proof recorded for this clean commit.${colors.reset}`
+        );
+      } else if (qualityGate.dirtyFiles) {
+        console.log(
+          `${colors.yellow}Release quality-gate proof NOT recorded: working tree is dirty. ` +
+            `Commit generated files and re-run test:all before any release step.${colors.reset}`
+        );
+        console.log(qualityGate.dirtyFiles);
+        if (requireCleanProof) {
+          process.exit(1);
+        }
+      }
+    }
     process.exit(0);
   }
 

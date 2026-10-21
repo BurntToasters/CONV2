@@ -13,13 +13,15 @@
     <link rel="stylesheet" href="settings.css" />
   </head>
   <body>
-    <div class="app">
-      <header>
-        <div class="logo">
-          <img src="../../assets/icon.png" alt="CONV2" />
-          <h1>CONV2</h1>
+    <div class="app-shell">
+      <header class="titlebar" id="titlebar" data-custom-titlebar="false">
+        <div class="titlebar-drag titlebar-leading">
+          <div class="logo">
+            <img src="../../assets/icon.png" alt="" aria-hidden="true" />
+            <h1>CONV2 <span class="beta-label u-hidden" id="betaLabel">Beta</span></h1>
+          </div>
         </div>
-        <div class="header-actions">
+        <div class="titlebar-actions">
           <button class="btn btn-secondary btn-xs support-btn" id="supportBtn" title="Support">
             <img src="../../assets/twemoji/2764.svg" alt="" aria-hidden="true" class="btn-icon" />
             Support
@@ -29,9 +31,63 @@
             <span class="update-badge u-hidden" id="updateBadge">1</span>
           </button>
         </div>
+        <div class="titlebar-window-controls u-hidden" id="windowControls">
+          <button
+            type="button"
+            class="window-control"
+            id="windowMinimizeBtn"
+            aria-label="Minimize window"
+          >
+            <svg viewBox="0 0 10 1" aria-hidden="true">
+              <rect width="10" height="1" fill="currentColor" />
+            </svg>
+          </button>
+          <button
+            type="button"
+            class="window-control"
+            id="windowMaximizeBtn"
+            aria-label="Maximize window"
+          >
+            <svg class="window-control-icon-maximize" viewBox="0 0 10 10" aria-hidden="true">
+              <rect
+                x="0.5"
+                y="0.5"
+                width="9"
+                height="9"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1"
+              />
+            </svg>
+            <svg
+              class="window-control-icon-restore u-hidden"
+              viewBox="0 0 10 10"
+              aria-hidden="true"
+            >
+              <path d="M2.5 2.5h5v5H2.5z" fill="none" stroke="currentColor" stroke-width="1" />
+              <path d="M3.5 0.5h5v5H7.5" fill="none" stroke="currentColor" stroke-width="1" />
+            </svg>
+          </button>
+          <button
+            type="button"
+            class="window-control window-control-close"
+            id="windowCloseBtn"
+            aria-label="Close window"
+          >
+            <svg viewBox="0 0 10 10" aria-hidden="true">
+              <path
+                d="M1 1l8 8M9 1L1 9"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.2"
+                stroke-linecap="round"
+              />
+            </svg>
+          </button>
+        </div>
       </header>
 
-      <div class="workspace">
+      <main class="app">
         <div class="ffmpeg-warning u-hidden" id="ffmpegWarning">
           <h3>FFmpeg Not Found</h3>
           <p>Please install FFmpeg and add it to your system PATH to use CONV2.</p>
@@ -40,15 +96,16 @@
         <div
           class="drop-zone"
           id="dropZone"
-          role="button"
+          role="region"
           tabindex="0"
-          aria-label="Select one or more video files"
+          aria-label="Video file drop target"
+          aria-describedby="dropZoneHelp"
         >
           <div class="drop-zone-content">
             <img src="../../assets/twemoji/1f3ac.svg" alt="Video" class="drop-zone-icon" />
             <p class="drop-zone-title">Drop your video here</p>
-            <p class="drop-zone-subtitle">or click to browse one or more files</p>
-            <button class="btn btn-secondary">
+            <p class="drop-zone-subtitle" id="dropZoneHelp">or click to browse one or more files</p>
+            <button type="button" class="btn btn-secondary" id="browseFilesBtn">
               <svg
                 class="btn-icon"
                 viewBox="0 0 24 24"
@@ -73,9 +130,15 @@
             <span class="filename" id="fileName"></span>
             <span class="file-details" id="fileDetails"></span>
           </div>
+          <ul class="selected-file-list" id="selectedFileList" aria-label="Selected files"></ul>
+          <div class="file-info-actions">
+            <button type="button" class="btn btn-secondary btn-xs" id="clearSelectedFilesBtn">
+              Clear files
+            </button>
+          </div>
         </div>
 
-        <div class="options-panel options-redesign">
+        <div class="options-panel options-redesign" id="mainOptionsPanel">
           <section
             class="panel-shell preset-panel"
             id="presetPanelSection"
@@ -135,6 +198,7 @@
               <span class="panel-toggle-title-group">
                 <span id="gpuPanelTitle" class="panel-label">Hardware Acceleration</span>
               </span>
+              <span class="panel-summary" id="gpuPanelSummary"></span>
               <span class="panel-chevron" aria-hidden="true"></span>
             </button>
             <div class="panel-body" id="gpuPanelBody" hidden>
@@ -175,7 +239,7 @@
           </section>
         </div>
 
-        <div class="convert-section">
+        <div class="convert-section" id="convert-section">
           <button class="btn btn-primary" id="convertBtn" disabled>
             <svg
               class="btn-icon"
@@ -206,6 +270,23 @@
             </svg>
             Cancel
           </button>
+          <p class="trash-original-notice u-hidden" id="trashOriginalNotice" role="status">
+            <svg
+              class="trash-original-notice-icon"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+            >
+              <polyline points="3 6 5 6 21 6" />
+              <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
+              <path d="M10 11v6M14 11v6" />
+            </svg>
+            Originals will be moved to the trash after each successful conversion.
+          </p>
         </div>
 
         <div class="progress-container" id="progressContainer">
@@ -224,6 +305,7 @@
           </div>
           <div class="progress-info">
             <div class="progress-left">
+              <span class="progress-batch-summary" id="progressBatchSummary"></span>
               <span class="progress-percent" id="progressPercent">0%</span>
               <span class="progress-separator">&middot;</span>
               <span id="progressTime">00:00:00</span>
@@ -233,6 +315,21 @@
               <span id="progressEta"></span>
             </div>
           </div>
+        </div>
+
+        <!-- Outside #progressContainer so results stay visible after a run ends. -->
+        <div class="conversion-queue" id="conversionQueue" hidden>
+          <div class="conversion-queue-header">
+            <span>Queue</span>
+            <button
+              type="button"
+              class="btn btn-secondary btn-xs u-hidden"
+              id="retryFailedQueueBtn"
+            >
+              Retry failed
+            </button>
+          </div>
+          <ul class="conversion-queue-list" id="conversionQueueList"></ul>
         </div>
 
         <div class="status-row">
@@ -247,6 +344,14 @@
             <span class="status-text"></span>
           </div>
           <div class="status-actions">
+            <button
+              type="button"
+              class="btn btn-secondary btn-xs u-hidden"
+              id="statusDetailsBtn"
+              aria-haspopup="dialog"
+            >
+              Details
+            </button>
             <button class="btn btn-secondary btn-xs u-hidden" id="showLogsBtn">
               <svg
                 class="btn-icon"
@@ -282,23 +387,23 @@
             </button>
           </div>
         </div>
-      </div>
 
-      <div class="keyboard-hints">
-        <span class="kbd">
-          <span class="kbd-key">Ctrl</span>
-          <span class="kbd-key">O</span>
-          <span class="kbd-action">Open</span>
-        </span>
-        <span class="kbd">
-          <span class="kbd-key">Enter</span>
-          <span class="kbd-action">Convert</span>
-        </span>
-        <span class="kbd">
-          <span class="kbd-key">Esc</span>
-          <span class="kbd-action">Close</span>
-        </span>
-      </div>
+        <div class="keyboard-hints">
+          <span class="kbd">
+            <span class="kbd-key">Ctrl</span>
+            <span class="kbd-key">O</span>
+            <span class="kbd-action">Open</span>
+          </span>
+          <span class="kbd">
+            <span class="kbd-key">Enter</span>
+            <span class="kbd-action">Convert</span>
+          </span>
+          <span class="kbd">
+            <span class="kbd-key">Esc</span>
+            <span class="kbd-action">Close</span>
+          </span>
+        </div>
+      </main>
     </div>
 
     <div class="modal-overlay" id="settingsModal">
@@ -359,10 +464,18 @@
             role="tabpanel"
             aria-labelledby="settingsGeneralTab"
           >
+            <h3 class="settings-section-title settings-section-title-first">Appearance</h3>
+
             <div class="settings-row settings-row-appearance">
-              <span class="settings-label">Appearance</span>
-              <div class="theme-switcher" id="themeSwitcher">
-                <button class="theme-option" data-theme="system">
+              <span class="settings-label">Theme</span>
+              <div class="theme-switcher" id="themeSwitcher" role="radiogroup" aria-label="Theme">
+                <button
+                  class="theme-option"
+                  data-theme="system"
+                  type="button"
+                  role="radio"
+                  aria-checked="false"
+                >
                   <img
                     src="../../assets/twemoji/1f4bb.svg"
                     alt=""
@@ -371,7 +484,13 @@
                   />
                   Auto
                 </button>
-                <button class="theme-option" data-theme="dark">
+                <button
+                  class="theme-option"
+                  data-theme="dark"
+                  type="button"
+                  role="radio"
+                  aria-checked="false"
+                >
                   <img
                     src="../../assets/twemoji/1f319.svg"
                     alt=""
@@ -380,7 +499,13 @@
                   />
                   Dark
                 </button>
-                <button class="theme-option" data-theme="light">
+                <button
+                  class="theme-option"
+                  data-theme="light"
+                  type="button"
+                  role="radio"
+                  aria-checked="false"
+                >
                   <img
                     src="../../assets/twemoji/2600.svg"
                     alt=""
@@ -389,21 +514,103 @@
                   />
                   Light
                 </button>
+                <button
+                  class="theme-option"
+                  data-theme="custom"
+                  type="button"
+                  role="radio"
+                  aria-checked="false"
+                >
+                  Custom
+                </button>
               </div>
               <select id="themeSelect" class="u-hidden">
-                <option value="system">System</option>
+                <option value="system">Auto</option>
                 <option value="dark">Dark</option>
                 <option value="light">Light</option>
+                <option value="custom">Custom</option>
               </select>
+            </div>
+
+            <div class="settings-row settings-row-appearance" id="customThemeRow" hidden>
+              <span class="settings-label">Custom theme</span>
+              <div
+                class="theme-swatch-gallery"
+                id="customThemeGallery"
+                role="listbox"
+                aria-label="Custom themes"
+              >
+                <button
+                  type="button"
+                  class="theme-swatch"
+                  data-custom-theme="midnight-blue"
+                  role="option"
+                  title="Midnight Blue"
+                >
+                  <span
+                    class="theme-swatch-preview theme-swatch-midnight"
+                    aria-hidden="true"
+                  ></span>
+                  <span class="theme-swatch-label">Midnight Blue</span>
+                </button>
+                <button
+                  type="button"
+                  class="theme-swatch"
+                  data-custom-theme="high-contrast-dark"
+                  role="option"
+                  title="High Contrast Dark"
+                >
+                  <span
+                    class="theme-swatch-preview theme-swatch-contrast"
+                    aria-hidden="true"
+                  ></span>
+                  <span class="theme-swatch-label">High Contrast</span>
+                </button>
+              </div>
             </div>
 
             <div class="settings-row settings-row-appearance">
               <span class="settings-label">Interface Style</span>
-              <div class="theme-switcher" id="uiStyleSwitcher">
-                <button class="theme-option" data-style="glass">Glow / Glass</button>
-                <button class="theme-option" data-style="flat">Flat UI</button>
+              <div
+                class="theme-switcher"
+                id="uiStyleSwitcher"
+                role="radiogroup"
+                aria-label="Interface style"
+              >
+                <button
+                  class="theme-option"
+                  data-style="glass"
+                  type="button"
+                  role="radio"
+                  aria-checked="false"
+                >
+                  Glow / Glass
+                </button>
+                <button
+                  class="theme-option"
+                  data-style="flat"
+                  type="button"
+                  role="radio"
+                  aria-checked="false"
+                >
+                  Flat UI
+                </button>
               </div>
             </div>
+
+            <p class="settings-hint">
+              Theme and interface style apply to the main window, modals, and custom title bar on
+              Windows and macOS.
+            </p>
+
+            <div class="settings-row">
+              <span class="settings-label">Setup tour</span>
+              <button class="btn btn-secondary btn-xs" id="replaySetupWizardBtn" type="button">
+                Replay setup tour
+              </button>
+            </div>
+
+            <h3 class="settings-section-title">Conversion</h3>
 
             <div class="settings-row">
               <span class="settings-label">Output</span>
@@ -429,8 +636,11 @@
                 <span class="toggle-slider"></span>
               </label>
             </div>
+            <p class="settings-hint">
+              Decode on CPU while encoding on the GPU. Can help when hardware decode is unstable.
+            </p>
 
-            <div class="settings-row settings-row-last-in-group">
+            <div class="settings-row">
               <span class="settings-label" id="advancedPresetsLabel">Advanced Presets</span>
               <label class="toggle-switch">
                 <input
@@ -441,8 +651,11 @@
                 <span class="toggle-slider"></span>
               </label>
             </div>
+            <p class="settings-hint">
+              Show extra formats and presets (including advanced GIF options).
+            </p>
 
-            <div class="settings-row settings-row-last-in-group">
+            <div class="settings-row">
               <span class="settings-label" id="removeSpacesLabel"
                 >Remove Spaces in Output Names</span
               >
@@ -465,6 +678,48 @@
                 <span class="toggle-slider"></span>
               </label>
             </div>
+            <p class="settings-hint">
+              Moves the source file to the system trash after a successful conversion.
+            </p>
+
+            <h3 class="settings-section-title">Notifications &amp; power</h3>
+
+            <div class="settings-row">
+              <span class="settings-label" id="notifyOnConversionCompleteLabel"
+                >Notify when conversion completes</span
+              >
+              <label class="toggle-switch">
+                <input
+                  type="checkbox"
+                  id="notifyOnConversionCompleteCheck"
+                  aria-labelledby="notifyOnConversionCompleteLabel"
+                />
+                <span class="toggle-slider"></span>
+              </label>
+            </div>
+            <p class="settings-hint">
+              Shows a system notification when a conversion finishes while CONV2 is in the
+              background.
+            </p>
+
+            <div class="settings-row">
+              <span class="settings-label" id="preventSleepWhileConvertingLabel"
+                >Prevent sleep while converting</span
+              >
+              <label class="toggle-switch">
+                <input
+                  type="checkbox"
+                  id="preventSleepWhileConvertingCheck"
+                  aria-labelledby="preventSleepWhileConvertingLabel"
+                />
+                <span class="toggle-slider"></span>
+              </label>
+            </div>
+            <p class="settings-hint">
+              Keeps the system awake during an active conversion (recommended on laptops).
+            </p>
+
+            <h3 class="settings-section-title">Updates</h3>
 
             <div class="settings-row">
               <span class="settings-label" id="autoCheckUpdatesLabel">Auto-check updates</span>
@@ -635,7 +890,7 @@
                       <input
                         type="number"
                         id="gifBestQualityMaxColors"
-                        min="2"
+                        min="3"
                         max="256"
                         data-gif-tier="bestQuality"
                         data-gif-field="maxColors"
@@ -691,7 +946,7 @@
                       <input
                         type="number"
                         id="gifQualityMaxColors"
-                        min="2"
+                        min="3"
                         max="256"
                         data-gif-tier="quality"
                         data-gif-field="maxColors"
@@ -747,7 +1002,7 @@
                       <input
                         type="number"
                         id="gifBalancedMaxColors"
-                        min="2"
+                        min="3"
                         max="256"
                         data-gif-tier="balanced"
                         data-gif-field="maxColors"
@@ -803,7 +1058,7 @@
                       <input
                         type="number"
                         id="gifBestCompressionMaxColors"
-                        min="2"
+                        min="3"
                         max="256"
                         data-gif-tier="bestCompression"
                         data-gif-field="maxColors"
@@ -1598,6 +1853,253 @@
       </div>
     </div>
 
+    <div class="modal-overlay setup-wizard-overlay" id="setupWizardModal" aria-hidden="true">
+      <div class="setup-wizard-spotlight-layer" id="setupWizardSpotlightLayer" hidden>
+        <div
+          class="setup-wizard-spotlight-ring"
+          id="setupWizardSpotlightRing"
+          aria-hidden="true"
+        ></div>
+        <div
+          class="setup-wizard-callout"
+          id="setupWizardCallout"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="setupWizardCalloutTitle"
+          tabindex="-1"
+        >
+          <div class="setup-wizard-callout-header">
+            <div>
+              <p class="setup-wizard-kicker" id="setupWizardCalloutTitle">Product tour</p>
+              <span class="setup-wizard-step-label" id="setupWizardSpotlightStepLabel"></span>
+            </div>
+          </div>
+          <div class="setup-wizard-callout-body" id="setupWizardCalloutBody"></div>
+          <div class="setup-wizard-callout-actions">
+            <button class="btn btn-link setup-wizard-step-skip" type="button">Skip tour</button>
+            <div class="setup-wizard-nav">
+              <button
+                class="btn btn-secondary btn-sm"
+                id="setupWizardSpotlightBackBtn"
+                type="button"
+              >
+                Back
+              </button>
+              <button class="btn btn-primary btn-sm" id="setupWizardSpotlightNextBtn" type="button">
+                Next
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div
+        class="modal setup-wizard-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="setupWizardTitle"
+        tabindex="-1"
+      >
+        <div class="modal-header setup-wizard-header">
+          <div>
+            <p class="setup-wizard-kicker">Welcome to CONV2</p>
+            <h2 id="setupWizardTitle">Setup tour</h2>
+          </div>
+          <span class="setup-wizard-step-label" id="setupWizardStepLabel">Step 1 of 10</span>
+        </div>
+        <div class="modal-body setup-wizard-body">
+          <section class="setup-wizard-step" data-wizard-step="0">
+            <p>
+              CONV2 is a cross-platform FFmpeg front-end for quick video, audio, and GIF
+              conversions. This short tour covers appearance, defaults, and how to convert files.
+            </p>
+            <p class="setup-wizard-muted">
+              You can replay this tour anytime from Settings, or see it again after
+              <strong>Reset settings</strong> and restart.
+            </p>
+          </section>
+
+          <section class="setup-wizard-step" data-wizard-step="1" hidden>
+            <p class="setup-wizard-lead">Pick a theme and interface style.</p>
+            <div class="setup-wizard-field">
+              <span class="settings-label">Theme</span>
+              <div class="theme-switcher setup-wizard-theme-switcher">
+                <button class="theme-option wizard-theme-option" data-theme="system" type="button">
+                  Auto
+                </button>
+                <button class="theme-option wizard-theme-option" data-theme="dark" type="button">
+                  Dark
+                </button>
+                <button class="theme-option wizard-theme-option" data-theme="light" type="button">
+                  Light
+                </button>
+                <button class="theme-option wizard-theme-option" data-theme="custom" type="button">
+                  Custom
+                </button>
+              </div>
+            </div>
+            <div class="setup-wizard-field">
+              <span class="settings-label">Interface style</span>
+              <div class="theme-switcher">
+                <button class="theme-option wizard-style-option" data-style="glass" type="button">
+                  Glow / Glass
+                </button>
+                <button class="theme-option wizard-style-option" data-style="flat" type="button">
+                  Flat UI
+                </button>
+              </div>
+            </div>
+          </section>
+
+          <section class="setup-wizard-step" data-wizard-step="2" hidden>
+            <p class="setup-wizard-lead">Choose a default output folder (optional).</p>
+            <p class="setup-wizard-muted">
+              Leave empty to save converted files next to each input file.
+            </p>
+            <div class="setup-wizard-output-row">
+              <span class="output-path setup-wizard-output-path" id="wizardOutputPath"
+                >Same as input file</span
+              >
+              <button class="btn btn-secondary btn-xs" id="wizardClearOutputBtn" type="button">
+                Use input folder
+              </button>
+              <button class="btn btn-secondary btn-xs" id="wizardChooseOutputBtn" type="button">
+                Choose folder
+              </button>
+            </div>
+          </section>
+
+          <section class="setup-wizard-step" data-wizard-step="3" hidden>
+            <p class="setup-wizard-lead">Hardware acceleration</p>
+            <p class="setup-wizard-muted">
+              <strong>Auto</strong> picks the best encoder when possible.
+              <strong>Manual</strong> lets you override the vendor on the main window GPU panel.
+            </p>
+            <div
+              class="gpu-mode-toggle setup-wizard-gpu-toggle"
+              role="radiogroup"
+              aria-label="GPU encoder mode"
+            >
+              <label class="mode-chip">
+                <input type="radio" name="wizardGpuMode" id="wizardGpuModeAuto" value="auto" />
+                <span>Auto</span>
+              </label>
+              <label class="mode-chip">
+                <input type="radio" name="wizardGpuMode" id="wizardGpuModeManual" value="manual" />
+                <span>Manual</span>
+              </label>
+            </div>
+          </section>
+
+          <section class="setup-wizard-step" data-wizard-step="4" hidden>
+            <p class="setup-wizard-lead">Notifications and power</p>
+            <div class="settings-row setup-wizard-toggle-row">
+              <span class="settings-label">Notify when conversion completes</span>
+              <label class="toggle-switch">
+                <input type="checkbox" id="wizardNotifyCheck" />
+                <span class="toggle-slider"></span>
+              </label>
+            </div>
+            <div class="settings-row setup-wizard-toggle-row">
+              <span class="settings-label">Prevent sleep while converting</span>
+              <label class="toggle-switch">
+                <input type="checkbox" id="wizardPreventSleepCheck" />
+                <span class="toggle-slider"></span>
+              </label>
+            </div>
+          </section>
+
+          <section class="setup-wizard-step" data-wizard-step="5" hidden>
+            <p class="setup-wizard-lead">Update channel</p>
+            <p class="setup-wizard-muted">
+              Controls which releases you receive when checking for updates.
+            </p>
+            <div class="settings-row setup-wizard-channel-row">
+              <span class="settings-label">Channel</span>
+              <select id="wizardUpdateChannelSelect">
+                <option value="auto">Auto (follows version)</option>
+                <option value="stable">Stable</option>
+                <option value="beta">Beta</option>
+              </select>
+            </div>
+          </section>
+
+          <section
+            class="setup-wizard-step"
+            data-wizard-step="6"
+            data-wizard-presentation="spotlight"
+            data-spotlight-target="dropZone"
+            hidden
+          >
+            <p class="setup-wizard-lead">Add your videos</p>
+            <p>
+              Drop one or more files on the highlighted area, or press <kbd>Ctrl</kbd>+<kbd>O</kbd>
+              (macOS: <kbd>⌘</kbd>+<kbd>O</kbd>) to browse.
+            </p>
+            <p class="setup-wizard-muted">CONV2 queues multiple files so you can batch convert.</p>
+          </section>
+
+          <section
+            class="setup-wizard-step"
+            data-wizard-step="7"
+            data-wizard-presentation="spotlight"
+            data-spotlight-target="mainOptionsPanel"
+            hidden
+          >
+            <p class="setup-wizard-lead">Choose a conversion preset</p>
+            <p>
+              Open <strong>Conversion Preset</strong>, search with <kbd>/</kbd>, and pick a format
+              (H.264, AV1, GIF, audio extract, and more).
+            </p>
+            <p class="setup-wizard-muted">
+              Presets control quality, codec, and container. Advanced presets are in Settings.
+            </p>
+          </section>
+
+          <section
+            class="setup-wizard-step"
+            data-wizard-step="8"
+            data-wizard-presentation="spotlight"
+            data-spotlight-target="convert-section"
+            hidden
+          >
+            <p class="setup-wizard-lead">Convert and track progress</p>
+            <p>
+              Click <strong>Convert</strong> when a preset is selected. Watch per-file status in the
+              queue and retry any failures.
+            </p>
+            <p class="setup-wizard-muted wizard-ffmpeg-note" hidden>
+              FFmpeg was not detected yet. Install or bundle FFmpeg before converting.
+            </p>
+            <p class="setup-wizard-muted">
+              Use <strong>File</strong>, <strong>Convert</strong>, and <strong>Help</strong> in the
+              menu bar for more actions.
+            </p>
+            <p>
+              <button class="btn-link wizard-open-help" type="button">Open Help in browser</button>
+            </p>
+          </section>
+
+          <section class="setup-wizard-step" data-wizard-step="9" hidden>
+            <p class="setup-wizard-lead">You are ready to convert.</p>
+            <p>Change any of these options later in Settings (<kbd>Ctrl</kbd>+<kbd>,</kbd>).</p>
+          </section>
+        </div>
+        <div class="modal-actions setup-wizard-actions">
+          <button class="btn btn-link setup-wizard-skip" id="setupWizardSkipBtn" type="button">
+            Skip tour
+          </button>
+          <div class="setup-wizard-nav">
+            <button class="btn btn-secondary btn-sm" id="setupWizardBackBtn" type="button">
+              Back
+            </button>
+            <button class="btn btn-primary btn-sm" id="setupWizardNextBtn" type="button">
+              Next
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <div class="modal-overlay" id="dynamicModal">
       <div
         class="modal"
@@ -1615,6 +2117,33 @@
         <div class="modal-actions">
           <button class="btn btn-secondary btn-sm" id="modalCancel">Cancel</button>
           <button class="btn btn-primary btn-sm" id="modalConfirm">Confirm</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="modal-overlay" id="errorDetailsModal">
+      <div
+        class="modal logs-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="errorDetailsTitle"
+        aria-describedby="errorDetailsSummary"
+        tabindex="-1"
+      >
+        <div class="modal-header">
+          <h2 id="errorDetailsTitle">Error details</h2>
+          <button class="modal-close" id="closeErrorDetails" aria-label="Close error details">
+            &times;
+          </button>
+        </div>
+        <p class="error-details-summary" id="errorDetailsSummary"></p>
+        <div class="logs-body">
+          <pre id="errorDetailsContent"></pre>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-primary btn-sm" id="copyErrorDetailsBtn">
+            Copy
+          </button>
         </div>
       </div>
     </div>
@@ -1671,8 +2200,6 @@
       </div>
     </div>
 
-    <script src="exports-shim.js"></script>
-    <script src="presetPickerModel.js"></script>
-    <script src="renderer.js"></script>
+    <script type="module" src="js/renderer/renderer.js"></script>
   </body>
 </html>

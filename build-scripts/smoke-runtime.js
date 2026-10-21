@@ -6,9 +6,11 @@ const npmCmd = process.platform === 'win32' ? 'npm.cmd' : 'npm';
 const electronBinary = require('electron');
 
 function runCommand(cmd, args, options = {}) {
+  // Windows refuses to spawn npm.cmd without a shell; args here are fixed literals.
   const result = spawnSync(cmd, args, {
     cwd: ROOT,
     stdio: 'inherit',
+    shell: process.platform === 'win32',
     ...options,
   });
   if (result.status !== 0) {
@@ -22,6 +24,9 @@ function runRuntimeSmoke(skipCompile = false) {
   }
 
   const smokeArgs = ['.', '--dev', '--smoke'];
+  if (process.env.CI) {
+    smokeArgs.push('--no-sandbox');
+  }
   const env = {
     ...process.env,
     CONV2_SMOKE: '1',

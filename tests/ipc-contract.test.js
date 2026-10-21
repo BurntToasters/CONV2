@@ -27,7 +27,13 @@ const preloadOns = new Set([
 ]);
 
 // main uses ipcMain.handle('channel', ...) for invoke targets
-const mainHandles = extractAll(mainSrc, /ipcMain\.handle\(\s*['"]([a-z0-9-]+)['"]/gi);
+const windowChromeSrc = fs.readFileSync(path.join(ROOT, 'src/main/windowChrome.ts'), 'utf8');
+const conversionIpcSrc = fs.readFileSync(path.join(ROOT, 'src/main/conversionIpc.ts'), 'utf8');
+const mainHandles = new Set([
+  ...extractAll(mainSrc, /ipcMain\.handle\(\s*['"]([a-z0-9-]+)['"]/gi),
+  ...extractAll(windowChromeSrc, /ipcMain\.handle\(\s*['"]([a-z0-9-]+)['"]/gi),
+  ...extractAll(conversionIpcSrc, /ipcMain\.handle\(\s*['"]([a-z0-9-]+)['"]/gi),
+]);
 
 // main emits one-way events via webContents.send('channel', ...) or window.webContents.send
 const mainSends = new Set();
@@ -42,6 +48,18 @@ let u;
 const sendRegex2 = /\.webContents\.send\(\s*['"]([a-z0-9-]+)['"]/gi;
 while ((u = sendRegex2.exec(updaterSrc)) !== null) {
   mainSends.add(u[1]);
+}
+// conversionController emits via webContents.send and a local send('channel', ...) helper.
+const controllerSrc = fs.readFileSync(path.join(ROOT, 'src/main/conversionController.ts'), 'utf8');
+for (const m of controllerSrc.matchAll(
+  /(?:\.webContents\.send|\bsend)\(\s*['"]([a-z0-9-]+)['"]/gi
+)) {
+  mainSends.add(m[1]);
+}
+let w;
+const sendRegex3 = /\.webContents\.send\(\s*['"]([a-z0-9-]+)['"]/gi;
+while ((w = sendRegex3.exec(windowChromeSrc)) !== null) {
+  mainSends.add(w[1]);
 }
 
 test('preload declares at least one invoke channel and one event channel', () => {
@@ -103,6 +121,24 @@ test('every main-side webContents.send has a preload subscriber', () => {
     [],
     `main emits events no preload listener consumes: ${orphan.join(', ')}`
   );
+});
+
+test('retired single-job and alias channels stay gone', () => {
+  const retiredInvokes = ['start-conversion', 'select-file'];
+  const retiredEvents = [
+    'conversion-complete',
+    'update-status',
+    'update-download-progress',
+    'update-available',
+  ];
+  for (const channel of retiredInvokes) {
+    assert.equal(preloadInvokes.has(channel), false, `preload still invokes ${channel}`);
+    assert.equal(mainHandles.has(channel), false, `main still handles ${channel}`);
+  }
+  for (const channel of retiredEvents) {
+    assert.equal(preloadOns.has(channel), false, `preload still subscribes ${channel}`);
+    assert.equal(mainSends.has(channel), false, `main still sends ${channel}`);
+  }
 });
 
 test('channel names use kebab-case (no underscores or camelCase)', () => {

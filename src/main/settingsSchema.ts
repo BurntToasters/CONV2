@@ -1,10 +1,28 @@
-export const SETTINGS_SCHEMA_VERSION = 3;
+export const SETTINGS_SCHEMA_VERSION = 6;
 export const MAX_RECENT_PRESET_IDS = 8;
+
+export type ThemePreference = 'system' | 'dark' | 'light' | 'custom';
+export type CustomThemeId = 'midnight-blue' | 'high-contrast-dark';
+
+export const CUSTOM_THEME_IDS: readonly CustomThemeId[] = [
+  'midnight-blue',
+  'high-contrast-dark',
+] as const;
 
 export interface UIPanelSettings {
   presetExpanded: boolean;
   gpuExpanded: boolean;
 }
+
+export const normalizeTheme = (value: unknown): ThemePreference => {
+  return value === 'dark' || value === 'light' || value === 'system' || value === 'custom'
+    ? value
+    : 'system';
+};
+
+export const normalizeCustomTheme = (value: unknown): CustomThemeId => {
+  return value === 'high-contrast-dark' ? 'high-contrast-dark' : 'midnight-blue';
+};
 
 export const normalizeRecentPresetIds = (value: unknown): string[] => {
   if (!Array.isArray(value)) {
@@ -34,10 +52,28 @@ export const normalizeUiPanels = (value: unknown): UIPanelSettings => {
   };
 };
 
+/** New installs default false; missing key on existing settings.json means legacy user (completed). */
+export const normalizeSetupWizardCompleted = (value: unknown, hadExplicitKey: boolean): boolean => {
+  if (typeof value === 'boolean') {
+    return value;
+  }
+  return hadExplicitKey ? false : true;
+};
+
 export const isSettingsCorrupted = (value: unknown): boolean => {
   return !value || typeof value !== 'object';
 };
 
+/**
+ * Upgrades are normalization-based rather than step-by-step migrations: an
+ * outdated file is run through the same normalizers as any other input, so
+ * valid values are kept, invalid or unknown ones fall back to defaults, and the
+ * result is re-persisted at the current version.
+ *
+ * The consequence to keep in mind: if a field is ever renamed or its scale
+ * changed, that field silently resets instead of being converted. Such a change
+ * needs an explicit migration here alongside the version bump.
+ */
 export const isSettingsSchemaOutdated = (value: unknown): boolean => {
   if (!value || typeof value !== 'object') {
     return false;

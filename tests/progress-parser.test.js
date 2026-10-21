@@ -1,7 +1,22 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
-const { parseProgress } = require('../dist/main/ffmpeg.js');
+const { parseOutTimeMs, parseProgress } = require('../dist/main/ffmpeg.js');
+
+test('parses stdout out_time_ms microseconds', () => {
+  const result = parseOutTimeMs('out_time_ms=5000000', 10);
+  assert.ok(result);
+  assert.equal(result.seconds, 5);
+  assert.ok(Math.abs(result.percent - 50) < 0.001);
+});
+
+test('stdout out_time_ms rejects junk and clamps', () => {
+  assert.equal(parseOutTimeMs('frame=1', 10), null);
+  assert.equal(parseOutTimeMs('out_time_ms=nope', 10), null);
+  const over = parseOutTimeMs('out_time_ms=20000000', 10);
+  assert.ok(over);
+  assert.equal(over.percent, 100);
+});
 
 test('parses a complete ffmpeg progress line', () => {
   const line =
