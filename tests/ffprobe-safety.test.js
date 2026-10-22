@@ -22,9 +22,15 @@ const originalLoad = Module._load;
 Module._load = function patchedLoad(request, parent, isMain) {
   if (request === 'child_process') {
     return {
-      spawn: () => {
-        latestChild = new FakeChildProcess();
-        return latestChild;
+      spawn: (binary, args) => {
+        const child = new FakeChildProcess();
+        // The -version status check exits at once; only the ffprobe run is tracked.
+        if (args[0] === '-version') {
+          setImmediate(() => child.emit('close', 0));
+          return child;
+        }
+        latestChild = child;
+        return child;
       },
       spawnSync: () => ({ status: 0 }),
     };
@@ -41,6 +47,7 @@ require.cache[ffmpegPathModulePath] = {
   exports: {
     getFFmpegPath: () => '/fake/ffmpeg',
     getFFprobePath: () => '/fake/ffprobe',
+    isUsingBundledFFmpeg: () => false,
   },
 };
 
@@ -58,10 +65,19 @@ test.after(() => {
   }
 });
 
+// ffprobe spawns only after the async status gate, so wait for the child to exist.
+const nextChild = async () => {
+  latestChild = null;
+  while (!latestChild) {
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+  return latestChild;
+};
+
 test('aborting video inspection kills ffprobe and rejects as cancelled', async () => {
   const controller = new AbortController();
   const inspection = getVideoInfo('/input.mp4', controller.signal);
-  const child = latestChild;
+  const child = await nextChild();
 
   controller.abort();
 
@@ -71,7 +87,7 @@ test('aborting video inspection kills ffprobe and rejects as cancelled', async (
 
 test('oversized ffprobe output kills the child and rejects', async () => {
   const inspection = getVideoInfo('/input.mp4');
-  const child = latestChild;
+  const child = await nextChild();
 
   child.stdout.emit('data', Buffer.alloc(MAX_FFPROBE_OUTPUT_BYTES + 1));
 

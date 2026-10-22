@@ -548,13 +548,10 @@ test(
   }
 );
 
-// Menu accelerators and clipboard writes need the app active, not just the window shown.
+// Page-level focus only: app.focus/BrowserWindow.focus would activate CONV2 over the user's apps.
 const focusWindow = (ctx) =>
-  ctx.app.evaluate(({ app, BrowserWindow }) => {
-    app.focus({ steal: true });
-    const win = BrowserWindow.getAllWindows()[0];
-    win.show();
-    win.focus();
+  ctx.app.evaluate(({ BrowserWindow }) => {
+    BrowserWindow.getAllWindows()[0].webContents.focus();
   });
 const readClipboard = (ctx) => ctx.app.evaluate(({ clipboard }) => clipboard.readText());
 const writeClipboard = (ctx, text) =>

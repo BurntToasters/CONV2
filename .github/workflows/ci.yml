@@ -69,6 +69,12 @@ jobs:
       - name: Build and run tests
         run: npm run tests
 
+      # Authenticode tests skip without osslsigncode, which drops ffmpegIntegrity coverage.
+      - name: Install osslsigncode
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y osslsigncode
+
       - name: Coverage thresholds
         run: npm run test:coverage
 
@@ -139,6 +145,9 @@ jobs:
 
       - name: Verify packaged app contents
         run: node build-scripts/verify-package-contents.js release
+
+      - name: Verify packaged FFmpeg
+        run: node build-scripts/verify-packaged-ffmpeg.js release
 
       - name: Upload package contents report
         if: always()

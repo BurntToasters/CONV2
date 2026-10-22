@@ -1,6 +1,10 @@
 import { spawn, ChildProcess } from 'child_process';
 import { forceKillFfmpegProcess } from './ffmpegProcessControl';
-import { isMissingBundledBinaryPath, verifyBundledBinaryChecksum } from './ffmpegIntegrity';
+import {
+  isMissingBundledBinaryPath,
+  sha256File,
+  verifyBundledBinaryChecksum,
+} from './ffmpegIntegrity';
 import * as path from 'path';
 import * as fs from 'fs';
 import * as os from 'os';
@@ -17,6 +21,7 @@ import { AdvancedFormatSettings } from './advancedFormats';
 import { CODEC_NAMES, GPU_ENCODERS, GPU_NAMES } from './gpuEncoders';
 import { parseOutTimeMs, parseProgress } from './ffmpegProgress';
 import { describeFFmpegFailure, ffmpegErrorDetail, NO_VIDEO_MESSAGE } from './ffmpegFailure';
+import type { FFmpegStatus } from '../shared/electronApi';
 
 // Presets whose output needs a video stream from the input.
 const VIDEO_OUTPUT_CATEGORIES = new Set(['av1', 'h264', 'h265', 'avi', 'gif']);
@@ -135,52 +140,184 @@ const MAX_PROGRESS_EMIT_INTERVAL_MS = 120;
 const BINARY_CHECK_TIMEOUT_MS = 10000;
 const FFMPEG_INSTALLED_CACHE_TTL_MS = 30_000;
 
-const checkBinaryInstalled = async (binaryPath: string): Promise<boolean> => {
-  if (isMissingBundledBinaryPath(binaryPath)) {
+type BinaryName = 'ffmpeg' | 'ffprobe';
+type BinaryRunState = 'ok' | 'missing' | 'not-runnable';
+
+interface BinaryPlan {
+  name: BinaryName;
+  /** The path that is executed. */
+  effective: string;
+  /** The original bundled path that is verified; null when not bundled. */
+  source: string | null;
+}
+
+interface StatusPlan {
+  usingBundled: boolean;
+  binaries: BinaryPlan[];
+}
+
+// Failure modes:
+// - a binary swapped between checks: the gate re-stats both paths and re-verifies on any change.
+// - a temp copy differs from the bundled source: the copy is hashed against the source.
+// - a verification error or throw: fails closed as verification-failed.
+// - the -version run is the only spawn in the check, and it runs only after checksums pass.
+const fileSignature = (filePath: string): string => {
+  try {
+    const stats = fs.statSync(filePath);
+    return `${filePath}:${stats.size}:${stats.mtimeMs}`;
+  } catch {
+    return `${filePath}:absent`;
+  }
+};
+
+const sourcePathFor = (name: BinaryName, effectivePath: string): string | null => {
+  const pathModule = getFFmpegPathModule();
+  // Optional so a path module without the source lookup resolves to the effective path.
+  if (typeof pathModule.getBundledSourcePath !== 'function') {
+    return effectivePath;
+  }
+  return pathModule.getBundledSourcePath(name);
+};
+
+const resolveStatusPlan = (): StatusPlan => {
+  const usingBundled = getFFmpegPathModule().isUsingBundledFFmpeg();
+  const binaries = (['ffmpeg', 'ffprobe'] as const).map((name): BinaryPlan => {
+    const effective = name === 'ffmpeg' ? getFFmpegBinaryPath() : getFFprobeBinaryPath();
+    return { name, effective, source: usingBundled ? sourcePathFor(name, effective) : null };
+  });
+  return { usingBundled, binaries };
+};
+
+const planKey = (plan: StatusPlan): string =>
+  [
+    plan.usingBundled,
+    ...plan.binaries.flatMap((binary) => [
+      fileSignature(binary.effective),
+      binary.source === null ? '-' : fileSignature(binary.source),
+    ]),
+  ].join('|');
+
+const isMissingBinary = (binaryPath: string, usingBundled: boolean): boolean =>
+  isMissingBundledBinaryPath(binaryPath) ||
+  (usingBundled && path.isAbsolute(binaryPath) && !fs.existsSync(binaryPath));
+
+const verifyBundledBinary = async (binary: BinaryPlan): Promise<boolean> => {
+  // A bare name is a PATH lookup in builds without bundled binaries; the -version run decides.
+  if (!path.isAbsolute(binary.effective)) {
+    return true;
+  }
+  if (binary.source === null) {
     return false;
   }
-  return new Promise((resolve) => {
+  try {
+    if (!(await verifyBundledBinaryChecksum(binary.source, binary.name))) {
+      return false;
+    }
+    if (binary.source === binary.effective) {
+      return true;
+    }
+    const [copyHash, sourceHash] = await Promise.all([
+      sha256File(binary.effective),
+      sha256File(binary.source),
+    ]);
+    return copyHash === sourceHash;
+  } catch {
+    return false;
+  }
+};
+
+const runVersionCheck = (binaryPath: string): Promise<BinaryRunState> =>
+  new Promise((resolve) => {
+    let settled = false;
+    const finish = (state: BinaryRunState): void => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve(state);
+    };
     const proc = spawn(binaryPath, ['-version']);
     const timer = setTimeout(() => {
       proc.kill();
-      resolve(false);
+      finish('not-runnable');
     }, BINARY_CHECK_TIMEOUT_MS);
-    proc.on('close', (code) => {
-      clearTimeout(timer);
-      resolve(code === 0);
-    });
-    proc.on('error', () => {
-      clearTimeout(timer);
-      resolve(false);
-    });
+    proc.on('close', (code) => finish(code === 0 ? 'ok' : 'not-runnable'));
+    proc.on('error', (error) =>
+      finish((error as NodeJS.ErrnoException).code === 'ENOENT' ? 'missing' : 'not-runnable')
+    );
   });
+
+const computeFFmpegStatus = async (plan: StatusPlan): Promise<FFmpegStatus> => {
+  const fail = (reason: Exclude<FFmpegStatus['reason'], 'ok'>): FFmpegStatus => ({
+    ok: false,
+    reason,
+    usingBundled: plan.usingBundled,
+  });
+  if (plan.binaries.some((binary) => isMissingBinary(binary.effective, plan.usingBundled))) {
+    return fail('missing');
+  }
+  if (plan.usingBundled) {
+    const verified = await Promise.all(plan.binaries.map(verifyBundledBinary));
+    if (!verified.every(Boolean)) {
+      return fail('verification-failed');
+    }
+  }
+  const states = await Promise.all(
+    plan.binaries.map((binary) => runVersionCheck(binary.effective))
+  );
+  if (states.includes('missing')) return fail('missing');
+  if (states.includes('not-runnable')) return fail('not-runnable');
+  return { ok: true, reason: 'ok', usingBundled: plan.usingBundled };
 };
 
-let ffmpegInstalledCache: { result: boolean; expiresAt: number } | null = null;
+let ffmpegStatusCache: { key: string; status: FFmpegStatus; expiresAt: number } | null = null;
+let ffmpegStatusInFlight: { key: string; promise: Promise<FFmpegStatus> } | null = null;
 
-export const checkFFmpegInstalled = async (): Promise<boolean> => {
-  const now = Date.now();
-  if (ffmpegInstalledCache && now < ffmpegInstalledCache.expiresAt) {
-    return ffmpegInstalledCache.result;
+/**
+ * Gate for every spawn of ffmpeg or ffprobe. Cached per binary signature for the TTL;
+ * concurrent callers share one verification.
+ */
+export const getFFmpegStatus = async (): Promise<FFmpegStatus> => {
+  const plan = resolveStatusPlan();
+  const key = planKey(plan);
+  if (ffmpegStatusCache?.key === key && Date.now() < ffmpegStatusCache.expiresAt) {
+    return ffmpegStatusCache.status;
   }
-  const ffmpegPath = getFFmpegBinaryPath();
-  const ffprobePath = getFFprobeBinaryPath();
-  // Verify bundled binaries before running them, so a swapped binary is never executed.
-  const checksumOk =
-    !getFFmpegPathModule().isUsingBundledFFmpeg() ||
-    (
-      await Promise.all([
-        verifyBundledBinaryChecksum(ffmpegPath, 'ffmpeg'),
-        verifyBundledBinaryChecksum(ffprobePath, 'ffprobe'),
-      ])
-    ).every(Boolean);
-  const result =
-    checksumOk &&
-    (
-      await Promise.all([checkBinaryInstalled(ffmpegPath), checkBinaryInstalled(ffprobePath)])
-    ).every(Boolean);
-  ffmpegInstalledCache = { result, expiresAt: now + FFMPEG_INSTALLED_CACHE_TTL_MS };
-  return result;
+  if (ffmpegStatusInFlight?.key === key) {
+    return ffmpegStatusInFlight.promise;
+  }
+  const promise = computeFFmpegStatus(plan)
+    .catch((): FFmpegStatus => ({
+      ok: false,
+      reason: 'not-runnable',
+      usingBundled: plan.usingBundled,
+    }))
+    .then((status) => {
+      ffmpegStatusCache = { key, status, expiresAt: Date.now() + FFMPEG_INSTALLED_CACHE_TTL_MS };
+      return status;
+    })
+    .finally(() => {
+      if (ffmpegStatusInFlight?.promise === promise) {
+        ffmpegStatusInFlight = null;
+      }
+    });
+  ffmpegStatusInFlight = { key, promise };
+  return promise;
+};
+
+export const checkFFmpegInstalled = async (): Promise<boolean> => (await getFFmpegStatus()).ok;
+
+/** One-sentence conversion error for a status that is not ok. */
+const ffmpegUnavailableMessage = (status: FFmpegStatus): string => {
+  if (!status.usingBundled) {
+    return 'FFmpeg was not found on your system PATH. Install FFmpeg, or turn off System FFmpeg in Settings.';
+  }
+  if (status.reason === 'verification-failed') {
+    return "CONV2's bundled FFmpeg failed its integrity check. Reinstall CONV2, or enable System FFmpeg in Settings.";
+  }
+  if (status.reason === 'not-runnable') {
+    return "CONV2's bundled FFmpeg could not start. Reinstall CONV2.";
+  }
+  return "CONV2's bundled FFmpeg is missing. Reinstall CONV2, or enable System FFmpeg in Settings.";
 };
 
 let encoderCache: Set<string> | null = null;
@@ -220,7 +357,8 @@ export const clearFFmpegCaches = (): void => {
   encoderCacheInFlight = null;
   decoderCacheInFlight = null;
   hwEncoderProbeCache.clear();
-  ffmpegInstalledCache = null;
+  ffmpegStatusCache = null;
+  ffmpegStatusInFlight = null;
   filterCache = null;
 };
 
@@ -229,9 +367,10 @@ const FFMPEG_LIST_TIMEOUT_MS = 15_000;
 let filterCache: Promise<Set<string>> | null = null;
 
 /** Cached `ffmpeg -filters` names; empty set if the listing fails. */
-const getAvailableFilters = (): Promise<Set<string>> => {
+const getAvailableFilters = async (): Promise<Set<string>> => {
   if (filterCache) return filterCache;
-  filterCache = new Promise<Set<string>>((resolve) => {
+  if (!(await getFFmpegStatus()).ok) return new Set();
+  filterCache ??= new Promise<Set<string>>((resolve) => {
     const proc = spawn(getFFmpegBinaryPath(), ['-hide_banner', '-filters']);
     let output = '';
     const timer = setTimeout(() => proc.kill(), FFMPEG_LIST_TIMEOUT_MS);
@@ -266,8 +405,11 @@ export const getAvailableEncoders = async (): Promise<Set<string>> => {
   if (encoderCacheInFlight) {
     return encoderCacheInFlight;
   }
+  if (!(await getFFmpegStatus()).ok) {
+    return new Set();
+  }
 
-  encoderCacheInFlight = new Promise<Set<string>>((resolve) => {
+  encoderCacheInFlight ??= new Promise<Set<string>>((resolve) => {
     const proc = spawn(getFFmpegBinaryPath(), ['-encoders', '-hide_banner']);
     let output = '';
 
@@ -314,6 +456,8 @@ export const checkEncoderAvailable = async (encoder: string): Promise<boolean> =
 const HW_PROBE_TIMEOUT_MS = 8000;
 
 const probeHwEncoderAvailable = async (encoder: string, signal?: AbortSignal): Promise<boolean> => {
+  // Failure mode: a listing that fails because the binary is not ok must not be cached as "absent".
+  if (!(await getFFmpegStatus()).ok) return false;
   const cached = hwEncoderProbeCache.get(encoder);
   if (cached !== undefined) return cached;
   if (signal?.aborted) return false;
@@ -331,6 +475,7 @@ const probeHwEncoderAvailable = async (encoder: string, signal?: AbortSignal): P
     return false;
   }
 
+  if (!(await getFFmpegStatus()).ok) return false;
   return new Promise((resolve) => {
     const args = [
       '-hide_banner',
@@ -391,8 +536,11 @@ export const getAvailableDecoders = async (): Promise<Set<string>> => {
   if (decoderCacheInFlight) {
     return decoderCacheInFlight;
   }
+  if (!(await getFFmpegStatus()).ok) {
+    return new Set();
+  }
 
-  decoderCacheInFlight = new Promise<Set<string>>((resolve) => {
+  decoderCacheInFlight ??= new Promise<Set<string>>((resolve) => {
     const proc = spawn(getFFmpegBinaryPath(), ['-decoders', '-hide_banner']);
     let output = '';
 
@@ -732,6 +880,17 @@ const getHardwareDecodeArgs = async (gpu: GPUVendor, codec?: string): Promise<st
   return [];
 };
 
+// Failure modes: a crafted container can make FFmpeg open http, concat or subfile URLs. Inputs are
+// limited to local files, pipes and data URIs.
+const INPUT_PROTOCOL_ARGS = ['-protocol_whitelist', 'file,pipe,crypto,data'];
+
+/** Inserts the protocol whitelist right before the user input's -i; null if the input is absent. */
+const withInputProtocolArgs = (args: string[], inputPath: string): string[] | null => {
+  const index = args.findIndex((arg, i) => arg === '-i' && args[i + 1] === inputPath);
+  if (index === -1) return null;
+  return [...args.slice(0, index), ...INPUT_PROTOCOL_ARGS, ...args.slice(index)];
+};
+
 const FFPROBE_TIMEOUT_MS = 30_000;
 export const MAX_FFPROBE_OUTPUT_BYTES = 8 * 1024 * 1024;
 
@@ -743,6 +902,13 @@ export const wouldExceedFFprobeOutputLimit = (
 const createConversionCancelledError = (): Error => new Error('Conversion cancelled');
 
 const runFFprobe = async (args: string[], signal?: AbortSignal): Promise<string> => {
+  if (signal?.aborted) {
+    throw createConversionCancelledError();
+  }
+  const status = await getFFmpegStatus();
+  if (!status.ok) {
+    throw new Error(ffmpegUnavailableMessage(status));
+  }
   if (signal?.aborted) {
     throw createConversionCancelledError();
   }
@@ -803,7 +969,16 @@ const runFFprobe = async (args: string[], signal?: AbortSignal): Promise<string>
 
 export const getVideoInfo = async (inputPath: string, signal?: AbortSignal): Promise<VideoInfo> => {
   const output = await runFFprobe(
-    ['-v', 'quiet', '-print_format', 'json', '-show_format', '-show_streams', inputPath],
+    [
+      '-v',
+      'quiet',
+      '-print_format',
+      'json',
+      '-show_format',
+      '-show_streams',
+      ...INPUT_PROTOCOL_ARGS,
+      inputPath,
+    ],
     signal
   );
   try {
@@ -844,7 +1019,17 @@ export const getVideoDuration = async (
   signal?: AbortSignal
 ): Promise<number> => {
   const output = await runFFprobe(
-    ['-i', inputPath, '-show_entries', 'format=duration', '-v', 'quiet', '-of', 'csv=p=0'],
+    [
+      ...INPUT_PROTOCOL_ARGS,
+      '-i',
+      inputPath,
+      '-show_entries',
+      'format=duration',
+      '-v',
+      'quiet',
+      '-of',
+      'csv=p=0',
+    ],
     signal
   );
   const duration = parseFloat(output.trim());
@@ -1064,6 +1249,10 @@ export const convertVideo = async (
   if (options.signal?.aborted) {
     return { success: false, outputPath: '', error: 'Conversion cancelled' };
   }
+  const startStatus = await getFFmpegStatus();
+  if (!startStatus.ok) {
+    return { success: false, outputPath: '', error: ffmpegUnavailableMessage(startStatus) };
+  }
 
   const inputBasename = path.basename(inputPath, path.extname(inputPath));
   const basenameWithoutSpaces = inputBasename.replace(/\s+/g, '');
@@ -1200,6 +1389,12 @@ export const convertVideo = async (
     preset.getArgs(inputPath, outputPath, gpu, presetContext),
     videoInfo?.codec
   );
+  const guardedPresetArgs = withInputProtocolArgs(presetArgs, inputPath);
+  if (!guardedPresetArgs) {
+    tryDeleteOutputFile(outputPath, 'unused output reservation');
+    return { success: false, outputPath: '', error: 'Internal error: preset has no input.' };
+  }
+  presetArgs = guardedPresetArgs;
 
   // Colour tags, bit depth, HDR tone-mapping, and GPU frame residency (skip remux/audio).
   let activeDecodeArgs = decodeArgs;
@@ -1228,6 +1423,15 @@ export const convertVideo = async (
     activeDecodeArgs: string[],
     allowRetry: boolean
   ): Promise<ConversionResult> => {
+    if (options.signal?.aborted) {
+      return canceledResult();
+    }
+    // Re-checked before every spawn, since the first attempt and its retry can be seconds apart.
+    const status = await getFFmpegStatus();
+    if (!status.ok) {
+      tryDeleteOutputFile(outputPath, 'unused output reservation');
+      return { success: false, outputPath: '', error: ffmpegUnavailableMessage(status) };
+    }
     if (options.signal?.aborted) {
       return canceledResult();
     }

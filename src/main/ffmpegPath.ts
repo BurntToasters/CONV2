@@ -133,6 +133,18 @@ const getBundledFFmpegDir = (): string | null => {
   return null;
 };
 
+// Failure mode: a temp copy has no checksums.json beside it, so verification must read this path.
+/** Original bundled binary path before any private copy; null when no bundled binary exists. */
+export const getBundledSourcePath = (binaryName: 'ffmpeg' | 'ffprobe'): string | null => {
+  const bundledDir = getBundledFFmpegDir();
+  if (!bundledDir) {
+    return null;
+  }
+  const ext = process.platform === 'win32' ? '.exe' : '';
+  const sourcePath = path.join(bundledDir, `${binaryName}${ext}`);
+  return fs.existsSync(sourcePath) ? sourcePath : null;
+};
+
 const getMissingBundledBinaryPath = (binaryName: 'ffmpeg' | 'ffprobe'): string => {
   const ext = process.platform === 'win32' ? '.exe' : '';
   const basePath =
