@@ -241,7 +241,9 @@ test('stable without AFTER_PACK_LOC fails; beta skips the mirror', () => {
 });
 
 test('writes the release mirror E2E artifact', () => {
-  assert.ok(scenarios.length >= 8, 'expected every mirror scenario to run');
+  // Windows skips the symlink AFTER_PACK_LOC case, so it records one fewer scenario.
+  const expectedScenarios = process.platform === 'win32' ? 7 : 8;
+  assert.ok(scenarios.length >= expectedScenarios, 'expected every mirror scenario to run');
   assert.ok(
     scenarios.every((entry) => entry.ok),
     'every mirror scenario must pass'
