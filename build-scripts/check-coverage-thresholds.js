@@ -42,6 +42,8 @@ const THRESHOLDS = {
   'renderer/presetPickerModel.js': 85,
   'main/ffmpegPathCandidates.js': 85,
   'main/ffmpegIntegrity.js': 80,
+  // Linux CI never runs codesign, so only the non-macOS paths count there.
+  'main/ffmpegMacSignature.js': 65,
   'main/ffmpegProcessControl.js': 60,
   'shared/fileSelection.js': 88,
 };

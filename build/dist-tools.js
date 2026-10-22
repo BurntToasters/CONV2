@@ -7,6 +7,9 @@ const ROOT = path.resolve(__dirname, '..');
 const FLATPAK_BUILD_DIR_PREFIX = 'build-dir';
 const RENDERER_MODULES_DIR = path.join(ROOT, 'src', 'renderer', 'modules');
 const RELEASE_BUILD_SESSION = '.build-session.json';
+const FFMPEG_CHECKSUMS_SRC = path.join(ROOT, 'resources', 'ffmpeg', 'checksums.json');
+// Inside dist/ so app.asar's integrity fuse covers it.
+const FFMPEG_CHECKSUMS_DEST = path.join(ROOT, 'dist', 'main', 'ffmpeg-checksums.json');
 
 function listFlatpakBuildDirs() {
   try {
@@ -58,19 +61,24 @@ function cleanRendererModuleArtifacts() {
   }
 }
 
-function cleanBuildArtifacts() {
+function cleanBuildArtifacts({ includeRelease = true } = {}) {
   console.log('[dist-tools] Cleaning build artifacts...');
   // The build session proves the quality gate for this commit and environment.
   // Later release steps verify it, so a rebuild inside the same release chain
   // must not invalidate it.
   const sessionPath = path.join(ROOT, 'release', RELEASE_BUILD_SESSION);
   let preservedSession = null;
-  try {
-    preservedSession = fs.readFileSync(sessionPath);
-  } catch {
-    preservedSession = null;
+  if (includeRelease) {
+    try {
+      preservedSession = fs.readFileSync(sessionPath);
+    } catch {
+      preservedSession = null;
+    }
   }
-  const dirs = [path.join(ROOT, 'release'), path.join(ROOT, 'dist'), ...listFlatpakBuildDirs()];
+  // compile skips release/ so test:all cannot delete packages built earlier.
+  const dirs = includeRelease
+    ? [path.join(ROOT, 'release'), path.join(ROOT, 'dist'), ...listFlatpakBuildDirs()]
+    : [path.join(ROOT, 'dist')];
   for (const dir of dirs) {
     rmDir(dir, path.relative(ROOT, dir) + '/');
   }
@@ -132,12 +140,26 @@ function copyRendererAssets() {
   console.log('[dist-tools] Copy complete.');
 }
 
+function copyFfmpegChecksums() {
+  console.log('[dist-tools] Copying FFmpeg checksum manifest...');
+  // Packaged builds must not ship without the manifest, so a missing source is fatal.
+  if (!fs.existsSync(FFMPEG_CHECKSUMS_SRC)) {
+    throw new Error(
+      `Cannot embed FFmpeg checksums: ${path.relative(ROOT, FFMPEG_CHECKSUMS_SRC)} is missing.`
+    );
+  }
+  fs.mkdirSync(path.dirname(FFMPEG_CHECKSUMS_DEST), { recursive: true });
+  fs.copyFileSync(FFMPEG_CHECKSUMS_SRC, FFMPEG_CHECKSUMS_DEST);
+  console.log('  Copied ffmpeg-checksums.json');
+}
+
 function compile() {
-  cleanBuildArtifacts();
+  cleanBuildArtifacts({ includeRelease: false });
   console.log('[dist-tools] Compiling TypeScript...');
   execSync('tsc -p tsconfig.json', { cwd: ROOT, stdio: 'inherit' });
   execSync('tsc -p tsconfig.renderer.json', { cwd: ROOT, stdio: 'inherit' });
   copyRendererAssets();
+  copyFfmpegChecksums();
   console.log('[dist-tools] Compile complete.');
 }
 
@@ -155,6 +177,7 @@ if (mode === 'clean-release-artifacts') {
 
 if (mode === 'copy') {
   copyRendererAssets();
+  copyFfmpegChecksums();
   process.exit(0);
 }
 

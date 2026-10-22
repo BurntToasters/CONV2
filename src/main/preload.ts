@@ -3,6 +3,7 @@ import type {
   AppMenuActionEvent,
   ConversionMenuStatePayload,
   ElectronApi,
+  FFmpegStatus,
   GPUCapabilitiesPayload,
   GPUEncoderError,
   RendererPreset,
@@ -73,7 +74,7 @@ const api: ElectronApi = {
     subscribe('update-state', callback),
 
   // FFmpeg check
-  checkFFmpeg: (): Promise<boolean> => ipcRenderer.invoke('check-ffmpeg'),
+  checkFFmpeg: (): Promise<FFmpegStatus> => ipcRenderer.invoke('check-ffmpeg'),
 
   // App info
   getVersion: (): Promise<string> => ipcRenderer.invoke('get-version'),

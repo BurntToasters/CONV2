@@ -25,6 +25,7 @@ import type {
 } from '../main/advancedFormats';
 import type { UIPanelSettings } from '../main/settingsSchema';
 import type {
+  FFmpegStatus,
   GPUCapabilitiesPayload,
   GPUEncoderError,
   RendererPreset,
@@ -1842,10 +1843,34 @@ const checkPlatform = async () => {
   }
 };
 
+const ffmpegWarningMessage = (status: FFmpegStatus): string => {
+  if (!status.usingBundled) {
+    return 'FFmpeg was not found on your system PATH. Install FFmpeg, or turn off System FFmpeg in Settings.';
+  }
+  if (status.reason === 'verification-failed') {
+    return "CONV2's bundled FFmpeg failed its integrity check. Reinstall CONV2, or enable System FFmpeg in Settings.";
+  }
+  if (status.reason === 'not-runnable') {
+    return "CONV2's bundled FFmpeg could not start. Reinstall CONV2.";
+  }
+  return "CONV2's bundled FFmpeg is missing. Reinstall CONV2, or enable System FFmpeg in Settings.";
+};
+
 const checkFFmpeg = async () => {
-  const installed = await window.electronAPI.checkFFmpeg();
+  const status = await window.electronAPI.checkFFmpeg();
+  const installed = status.ok;
   ffmpegInstalled = installed;
   if (!installed) {
+    // textContent only: the message is composed from status fields, never from HTML.
+    const heading = elements.ffmpegWarning.querySelector('h3');
+    const message = elements.ffmpegWarning.querySelector('p');
+    const isMissing = status.reason === 'missing';
+    if (heading) {
+      heading.textContent = isMissing ? 'FFmpeg Not Found' : 'FFmpeg Unavailable';
+    }
+    if (message) {
+      message.textContent = ffmpegWarningMessage(status);
+    }
     elements.ffmpegWarning.classList.remove('u-hidden');
     if (!isConverting) {
       elements.convertBtn.disabled = true;

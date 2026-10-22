@@ -60,20 +60,23 @@ test('empty values are ignored', () => {
 // writes into the working directory and exits; dev and CI smoke runs lose them.
 test('packaged builds ignore --dev and --smoke', () => {
   const flags = resolveLaunchFlags(['app', '--dev', '--smoke'], { CONV2_SMOKE: '1' }, true);
-  assert.deepEqual(flags, { openDevTools: false, runtimeSmoke: false });
+  assert.deepEqual(flags, { openDevTools: false, runtimeSmoke: false, backgroundWindows: false });
 });
 
 test('unpackaged builds honour --dev, --smoke and CONV2_SMOKE', () => {
   assert.deepEqual(resolveLaunchFlags(['app', '--dev', '--smoke'], {}, false), {
     openDevTools: true,
     runtimeSmoke: true,
+    backgroundWindows: false,
   });
   assert.deepEqual(resolveLaunchFlags(['app'], { CONV2_SMOKE: '1' }, false), {
     openDevTools: false,
     runtimeSmoke: true,
+    backgroundWindows: false,
   });
   assert.deepEqual(resolveLaunchFlags(['app'], {}, false), {
     openDevTools: false,
     runtimeSmoke: false,
+    backgroundWindows: false,
   });
 });

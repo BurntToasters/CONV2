@@ -14,6 +14,13 @@ export type SaveSettingsPayload = Omit<Partial<AppSettings>, 'uiPanels'> & {
   uiPanels?: Partial<UIPanelSettings>;
 };
 
+/** Main-process verdict on the bundled or system FFmpeg; ok gates every spawn. */
+export interface FFmpegStatus {
+  ok: boolean;
+  reason: 'ok' | 'missing' | 'verification-failed' | 'not-runnable';
+  usingBundled: boolean;
+}
+
 export interface GPUEncoderError {
   type: 'encoder_unavailable' | 'gpu_capability' | 'driver_error' | 'unknown';
   message: string;
@@ -123,7 +130,7 @@ export interface ElectronApi {
   installUpdate: () => Promise<void>;
   isUpdatesDisabled: () => Promise<boolean>;
   onUpdateState: (callback: (payload: UpdateStatePayload) => void) => Unsubscribe;
-  checkFFmpeg: () => Promise<boolean>;
+  checkFFmpeg: () => Promise<FFmpegStatus>;
   getVersion: () => Promise<string>;
   getPlatform: () => Promise<string>;
   /** shell.showItemInFolder: reveals, never opens or executes. */

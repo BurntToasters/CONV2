@@ -18,7 +18,7 @@ import {
   createDefaultAdvancedFormatSettings,
   mergeAdvancedFormatSettings,
 } from './advancedFormats';
-import { checkFFmpegInstalled, getVideoInfo, redactPaths } from './ffmpeg';
+import { getFFmpegStatus, getVideoInfo, redactPaths } from './ffmpeg';
 import {
   initUpdater,
   checkForUpdates,
@@ -356,8 +356,10 @@ const confirmQuitDuringConversion = async (): Promise<boolean> => {
     return (await dialog.showMessageBox(options)).response === 1;
   }
   if (win.isMinimized()) win.restore();
-  win.show();
-  win.focus();
+  if (!launchFlags.backgroundWindows) {
+    win.show();
+    win.focus();
+  }
   return (await dialog.showMessageBox(win, options)).response === 1;
 };
 
@@ -399,6 +401,9 @@ const getLicensesFilePath = (): string | null => {
 
 const createWindow = (): void => {
   ensureApplicationMenu();
+  if (launchFlags.backgroundWindows && process.platform === 'darwin') {
+    app.setActivationPolicy('accessory');
+  }
   const rendererEntryPath = path.join(__dirname, '../renderer/index.html');
   trustedRendererUrl = normalizeFileUrl(pathToFileURL(rendererEntryPath).toString());
 
@@ -427,6 +432,8 @@ const createWindow = (): void => {
       nodeIntegration: false,
       sandbox: true,
       webviewTag: false,
+      // Hidden E2E windows still run timers and waits at full speed.
+      ...(launchFlags.backgroundWindows ? { backgroundThrottling: false } : {}),
     },
     icon: path.join(__dirname, '../../assets/icon.png'),
     show: false,
@@ -507,7 +514,9 @@ const createWindow = (): void => {
   }
 
   mainWindow.once('ready-to-show', () => {
-    mainWindow?.show();
+    if (!launchFlags.backgroundWindows) {
+      mainWindow?.show();
+    }
     if (windowState.isMaximized) {
       mainWindow?.maximize();
     }
@@ -779,7 +788,7 @@ ipcMain.handle('is-updates-disabled', (event: IpcMainInvokeEvent) => {
 
 ipcMain.handle('check-ffmpeg', async (event: IpcMainInvokeEvent) => {
   assertTrustedIpcSender(event);
-  return checkFFmpegInstalled();
+  return getFFmpegStatus();
 });
 
 ipcMain.handle('get-version', (event: IpcMainInvokeEvent) => {

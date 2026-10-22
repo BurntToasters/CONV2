@@ -5,4 +5,5 @@ export ELECTRON_OZONE_PLATFORM_HINT=auto
 export CONV2_DISABLE_UPDATES=1
 
 # Use Zypak for sandbox integration
-exec zypak-wrapper /app/lib/conv2/node_modules/electron/dist/electron /app/lib/conv2/dist/main/main.js "$@"
+# Pass the app directory (package.json "main") so Electron sets appPath and app.getVersion() correctly.
+exec zypak-wrapper /app/lib/conv2/electron/electron /app/lib/conv2 "$@"

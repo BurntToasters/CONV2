@@ -11,7 +11,7 @@ command: conv2
 separate-locales: false
 
 # Keep this list identical to build.flatpak.finishArgs in package.json.
-# tests/flatpak-parity.test.js enforces it. The app only needs its own
+# tests/packaging-parity.test.js enforces it. The app only needs its own
 # sandboxed /tmp, so the host /tmp is deliberately not shared.
 finish-args:
   - --share=ipc
@@ -39,18 +39,22 @@ modules:
         HUSKY: '0'
     build-commands:
       - npm ci --legacy-peer-deps
+      # ELECTRON_SKIP_BINARY_DOWNLOAD skips electron's postinstall, so fetch the runtime explicitly.
+      - node node_modules/electron/install.js
       - npm run build
       - mkdir -p /app/lib/conv2
       - mkdir -p /app/lib/conv2/resources/ffmpeg
       - cp -r dist /app/lib/conv2/
       - cp -r assets /app/lib/conv2/
-      - cp -r node_modules /app/lib/conv2/
-      - cp package.json /app/lib/conv2/
-      - cp licenses.json /app/lib/conv2/
+      - cp package.json package-lock.json licenses.json /app/lib/conv2/
+      - cp -r node_modules/electron/dist /app/lib/conv2/electron
+      - npx --no-install electron-fuses write --app /app/lib/conv2/electron/electron RunAsNode=off EnableNodeOptionsEnvironmentVariable=off EnableNodeCliInspectArguments=off EnableCookieEncryption=on
+      - cd /app/lib/conv2 && npm ci --omit=dev --ignore-scripts --legacy-peer-deps
       - |
         FF_ARCH_DIR=x64
         if [ "$FLATPAK_ARCH" = "aarch64" ]; then FF_ARCH_DIR=arm64; fi
         cp -r "resources/ffmpeg/linux/$FF_ARCH_DIR"/* /app/lib/conv2/resources/ffmpeg/
+      - cp resources/ffmpeg/checksums.json /app/lib/conv2/resources/ffmpeg/checksums.json
       - cp resources/ffmpeg/NOTICE.txt /app/lib/conv2/resources/ffmpeg/NOTICE.txt
       - cp resources/ffmpeg/ffmpeg_license.txt /app/lib/conv2/resources/ffmpeg/LICENSE.txt
       - cp resources/ffmpeg/SOURCE_OFFER.txt /app/lib/conv2/resources/ffmpeg/SOURCE_OFFER.txt

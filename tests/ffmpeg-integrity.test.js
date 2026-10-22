@@ -26,8 +26,9 @@ test('runtime target keys match checksums.json', () => {
   assert.equal(runtimeFfmpegTarget('linux', 'x64'), 'linux:x64');
 });
 
-test('checksum verify matches a staged binary and rejects a swap', async () => {
+test('checksum verify matches a staged binary and rejects a swap', async (t) => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'conv2-hash-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const binaryPath = path.join(dir, 'nested', 'ffmpeg');
   fs.mkdirSync(path.dirname(binaryPath), { recursive: true });
   fs.writeFileSync(binaryPath, 'ffmpeg-bytes');
