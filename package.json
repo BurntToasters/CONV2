@@ -124,8 +124,8 @@
     "release:finalize": "npm run release:mirror"
   },
   "engines": {
-    "node": "^24.18.0",
-    "npm": "^12.0.2"
+    "node": "^24.22.1 || >=26.13.0",
+    "npm": ">=12.2.1"
   },
   "devDependencies": {
     "@electron/notarize": "^3.0.0",
@@ -366,9 +366,9 @@
     },
     "flatpak": {
       "base": "org.electronjs.Electron2.BaseApp",
-      "baseVersion": "24.08",
+      "baseVersion": "26.08",
       "runtime": "org.freedesktop.Platform",
-      "runtimeVersion": "24.08",
+      "runtimeVersion": "26.08",
       "sdk": "org.freedesktop.Sdk",
       "finishArgs": [
         "--share=ipc",

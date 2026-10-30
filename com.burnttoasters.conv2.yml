@@ -1,11 +1,11 @@
 app-id: com.burnttoasters.conv2
 runtime: org.freedesktop.Platform
-runtime-version: '24.08'
+runtime-version: '26.08'
 sdk: org.freedesktop.Sdk
 base: org.electronjs.Electron2.BaseApp
-base-version: '24.08'
+base-version: '26.08'
 sdk-extensions:
-  # Must stay in sync with the Node major in package.json "engines".
+  # Must match a supported Node major in package.json "engines".
   - org.freedesktop.Sdk.Extension.node24
 command: conv2
 separate-locales: false

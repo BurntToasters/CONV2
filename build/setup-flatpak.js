@@ -2,7 +2,7 @@ const { execSync } = require('child_process');
 const os = require('os');
 const fs = require('fs');
 
-const RUNTIME_VERSION = '24.08';
+const RUNTIME_VERSION = '26.08';
 const ARCHS = ['x86_64', 'aarch64'];
 
 const FLATPAK_RUNTIMES = [

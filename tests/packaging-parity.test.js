@@ -38,22 +38,27 @@ test('Flatpak does not share the host /tmp', () => {
 
 test('Flatpak Node SDK extension matches the engines requirement', () => {
   const enginesNode = packageJson.engines.node;
-  const enginesMajor = enginesNode.match(/(\d+)/)?.[1];
-  assert.ok(enginesMajor, `could not read a Node major from engines.node: ${enginesNode}`);
+  const supportedMajors = [
+    ...new Set([...enginesNode.matchAll(/(\d+)\.\d+\.\d+/g)].map((m) => m[1])),
+  ];
+  assert.ok(
+    supportedMajors.length > 0,
+    `could not read any Node major from engines.node: ${enginesNode}`
+  );
 
   const extensions = flatpakManifest['sdk-extensions'] || [];
   const nodeExtension = extensions.find((entry) => /Sdk\.Extension\.node\d+$/.test(entry));
   assert.ok(nodeExtension, 'Flatpak manifest must declare a Node SDK extension');
-  assert.equal(
-    nodeExtension,
-    `org.freedesktop.Sdk.Extension.node${enginesMajor}`,
-    'Flatpak would build with a different Node major than the project supports'
+  const manifestMajor = nodeExtension.match(/Sdk\.Extension\.node(\d+)$/)?.[1];
+  assert.ok(
+    supportedMajors.includes(manifestMajor),
+    `Flatpak Node SDK major (${manifestMajor}) must be in engines.node majors (${supportedMajors.join(', ')})`
   );
 
   const buildOptions = flatpakManifest.modules?.[0]?.['build-options'] || {};
   assert.equal(
     buildOptions['append-path'],
-    `/usr/lib/sdk/node${enginesMajor}/bin`,
+    `/usr/lib/sdk/node${manifestMajor}/bin`,
     'append-path must point at the same Node SDK extension'
   );
 
@@ -67,7 +72,7 @@ test('Flatpak Node SDK extension matches the engines requirement', () => {
   for (const major of declaredExtensions) {
     assert.equal(
       major,
-      enginesMajor,
+      manifestMajor,
       'build/setup-flatpak.js installs a different Node SDK major than the manifest needs'
     );
   }
