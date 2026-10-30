@@ -57,9 +57,9 @@ test('Flatpak Node SDK extension matches the engines requirement', () => {
 
   const buildOptions = flatpakManifest.modules?.[0]?.['build-options'] || {};
   assert.equal(
-    buildOptions['append-path'],
+    buildOptions['prepend-path'],
     `/usr/lib/sdk/node${manifestMajor}/bin`,
-    'append-path must point at the same Node SDK extension'
+    'prepend-path must point at the same Node SDK extension'
   );
 
   // build/setup-flatpak.js installs the extension for local builds; if it

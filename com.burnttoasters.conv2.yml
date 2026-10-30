@@ -30,7 +30,8 @@ modules:
   - name: conv2
     buildsystem: simple
     build-options:
-      append-path: /usr/lib/sdk/node24/bin
+      # Prepend so the extension Node wins over any older SDK /usr/bin/node.
+      prepend-path: /usr/lib/sdk/node24/bin
       build-args:
         - --share=network
       env:
