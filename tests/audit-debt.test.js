@@ -120,6 +120,7 @@ const EXIT_CODE_SCRIPTS = [
   'build-scripts/test-all.js',
   'build-scripts/release-warning.js',
   'build-scripts/release-beta.js',
+  'build-scripts/run-e2e.js',
 ];
 
 test('release-path scripts end with process.exitCode, not process.exit', () => {
