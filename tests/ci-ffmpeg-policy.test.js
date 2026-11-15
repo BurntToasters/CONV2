@@ -54,21 +54,25 @@ test('release-candidate branches require a real FFmpeg payload', () => {
   assert.equal(isTrustedReleaseRef(undefined), false);
 });
 
-test('CI runs on release-candidate branches', () => {
+// CI minutes policy: tests run only for pushes to main and beta.
+// Failure modes: another branch (e.g. next-*) triggers runs; PR pushes run the
+// full suite; a test job loses its push-only guard; the stable promotion check
+// stops running on PRs into main.
+test('CI tests run only on main and beta pushes', () => {
   const fs = require('node:fs');
   const path = require('node:path');
-  const workflow = fs.readFileSync(
-    path.join(__dirname, '..', '.github', 'workflows', 'ci.yml'),
-    'utf8'
+  const yaml = require('js-yaml');
+  const workflow = yaml.load(
+    fs.readFileSync(path.join(__dirname, '..', '.github', 'workflows', 'ci.yml'), 'utf8')
   );
-  // A release candidate that no workflow triggers on is an untested release.
-  const triggerBlock = workflow.slice(0, workflow.indexOf('permissions:'));
-  const branchLines = [...triggerBlock.matchAll(/branches: \[(.*)\]/g)].map((m) => m[1]);
-  assert.ok(branchLines.length >= 2, 'expected push and pull_request branch filters');
-  for (const line of branchLines) {
-    assert.match(line, /next-\*/);
-    assert.match(line, /main/);
-    assert.match(line, /beta/);
+  assert.deepEqual(workflow.on.push.branches, ['main', 'beta']);
+  assert.deepEqual(workflow.on.pull_request.branches, ['main']);
+  for (const [name, job] of Object.entries(workflow.jobs)) {
+    if (name === 'stable-metadata') {
+      assert.match(job.if, /github\.event_name == 'pull_request'/);
+      continue;
+    }
+    assert.equal(job.if, "github.event_name == 'push'", `${name} must run on pushes only`);
   }
 });
 

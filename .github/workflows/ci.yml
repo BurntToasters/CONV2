@@ -1,10 +1,12 @@
 name: CI
 
+# To save CI minutes, tests run only for pushes to main and beta, never on
+# any other branch. PRs into main run only the stable promotion check.
 on:
   push:
-    branches: [main, beta, 'next-*']
+    branches: [main, beta]
   pull_request:
-    branches: [main, beta, 'next-*']
+    branches: [main]
 
 permissions:
   contents: read
@@ -23,6 +25,7 @@ env:
 jobs:
   typecheck:
     name: Lint & Type Check
+    if: github.event_name == 'push'
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -59,6 +62,7 @@ jobs:
 
   test:
     name: Test
+    if: github.event_name == 'push'
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -95,6 +99,7 @@ jobs:
 
   build:
     name: Build + Package Smoke
+    if: github.event_name == 'push'
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -174,6 +179,7 @@ jobs:
 
   e2e:
     name: E2E (UI + conversion matrix)
+    if: github.event_name == 'push'
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false

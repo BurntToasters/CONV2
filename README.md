@@ -93,3 +93,7 @@ CONV2 is an electronjs application using nodejs/npm for its environment.
 
 - Build scripts are available in the `package.json` file.
 - To install all dependencies run `npm i`.
+
+### CI
+
+To save CI minutes, GitHub Actions tests run only for pushes to `main` and `beta`, never on any other branch. Pull requests into `main` run only the stable promotion metadata check. Run `npm run test:all` and `npm run test:e2e` locally before merging work branches.
