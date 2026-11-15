@@ -149,10 +149,11 @@ function verifyInstallation() {
   console.log(`\nHost architecture: ${hostArch}`);
   console.log(`Cross-build architecture: ${crossArch}`);
 
-  console.log('\nInstalled Flatpak runtimes:\n');
-  run('flatpak list --runtime --columns=application,arch,branch');
+  console.log('\nInstalled Flatpak runtimes and apps:\n');
+  run('flatpak list --columns=application,arch,branch');
 
-  const installedOutput = runSilent('flatpak list --runtime --columns=application,arch,branch');
+  // No --runtime: Electron2.BaseApp is installed as an app.
+  const installedOutput = runSilent('flatpak list --columns=application,arch,branch');
   const installed = new Set(
     installedOutput
       .split(/\r?\n/)

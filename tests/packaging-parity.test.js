@@ -90,6 +90,13 @@ test('Flatpak runtime and base versions agree across build paths', () => {
   assert.match(setupFlatpak, /\$\{ext\}\/\/\$\{BASE_VERSION\}/);
 });
 
+test('Flatpak setup verification sees BaseApp, which is an app, not a runtime', () => {
+  // `flatpak list --runtime` omits apps, so BaseApp was always reported missing.
+  const setupFlatpak = read('build/setup-flatpak.js');
+  assert.doesNotMatch(setupFlatpak, /runSilent\('flatpak list --runtime/);
+  assert.match(setupFlatpak, /runSilent\('flatpak list --columns=application,arch,branch'\)/);
+});
+
 test('Flatpak sideload bundles name Flathub as the runtime source', () => {
   // Without it, installing the bundle fails on systems that lack the Flathub remote.
   const flatpakScript = read('build-scripts/flatpak.js');

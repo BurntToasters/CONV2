@@ -412,7 +412,7 @@ const createWindow = (): void => {
   if (
     windowState.x !== undefined &&
     windowState.y !== undefined &&
-    isWindowBoundsOnScreen(windowState.x, windowState.y, windowState.width, windowState.height)
+    isWindowBoundsOnScreen(windowState.x, windowState.y, windowState.width)
   ) {
     positionOpts.x = windowState.x;
     positionOpts.y = windowState.y;
