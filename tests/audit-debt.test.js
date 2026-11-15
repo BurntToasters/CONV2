@@ -76,9 +76,15 @@ test('retired updater channel alias is gone', () => {
   assert.doesNotMatch(source, /shouldAcceptUpdateForChannel/);
 });
 
-test('Electron stays on the 44.9 patch line', () => {
+// 44.9.1+ blocks the compromised eMudhra intermediate CAs.
+test('Electron is at least 44.9.1', () => {
   const pkg = JSON.parse(read('package.json'));
-  assert.match(String(pkg.devDependencies.electron), /\^?44\.9\./);
+  const match = String(pkg.devDependencies.electron).match(/(\d+)\.(\d+)\.(\d+)/);
+  assert.ok(match, 'electron version is not a plain semver range');
+  const [major, minor, patch] = match.slice(1).map(Number);
+  const floor = [44, 9, 1];
+  const cmp = major - floor[0] || minor - floor[1] || patch - floor[2];
+  assert.ok(cmp >= 0, `electron ${match[0]} is below 44.9.1`);
 });
 
 // Windows refuses to spawn npm.cmd without a shell (EINVAL since the CVE-2024-27980 fix).
