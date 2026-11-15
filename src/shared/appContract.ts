@@ -1,7 +1,7 @@
 import type { AdvancedFormatSettings } from '../main/advancedFormats';
 import type { CustomThemeId, ThemePreference, UIPanelSettings } from '../main/settingsSchema';
 
-export type GPUVendor = 'nvidia' | 'amd' | 'intel' | 'apple' | 'cpu';
+export type GPUVendor = 'nvidia' | 'amd' | 'intel' | 'qualcomm' | 'apple' | 'cpu';
 export type GPUMode = 'auto' | 'manual';
 export type GPUCodec = 'h264' | 'h265' | 'av1';
 export type QueueItemStatus = 'pending' | 'running' | 'done' | 'failed' | 'cancelled';

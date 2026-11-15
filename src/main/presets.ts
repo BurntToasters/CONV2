@@ -1,4 +1,4 @@
-import { GPU_ENCODERS } from './gpuEncoders';
+import { GPU_ENCODERS, resolveEncoder, usesVaapi } from './gpuEncoders';
 import {
   AdvancedFormatSettings,
   Av1TierCollection,
@@ -6,12 +6,14 @@ import {
   GifTierCollection,
   H264TierCollection,
   H265TierCollection,
+  WebpTierCollection,
   createDefaultAdvancedFormatSettings,
   normalizeAdvancedFormatSettings,
 } from './advancedFormats';
 
-export type GPUVendor = 'nvidia' | 'amd' | 'intel' | 'apple' | 'cpu';
-export type PresetCategory = 'av1' | 'h264' | 'h265' | 'avi' | 'gif' | 'remux' | 'audio' | 'custom';
+export type GPUVendor = 'nvidia' | 'amd' | 'intel' | 'qualcomm' | 'apple' | 'cpu';
+export type PresetCategory =
+  'av1' | 'h264' | 'h265' | 'avi' | 'gif' | 'webp' | 'remux' | 'audio' | 'custom';
 export type GPUCodec = 'av1' | 'h264' | 'h265';
 
 /** Stream layout of the input, probed before arguments are built. */
@@ -20,12 +22,19 @@ export interface SourceStreamInfo {
   audioCodec?: string;
   /** Codec names of the input's subtitle streams, in subtitle-stream order. */
   subtitleCodecs?: string[];
+  /** Channel count of each audio stream, in audio-stream order. */
+  audioChannels?: number[];
 }
 
 export interface PresetContext {
   advancedFormatSettings?: AdvancedFormatSettings;
   sourceStreams?: SourceStreamInfo;
+  /** Platform used to pick encoders; defaults to process.platform. */
+  platform?: NodeJS.Platform;
 }
+
+const platformOf = (context?: PresetContext): NodeJS.Platform =>
+  context?.platform ?? process.platform;
 
 export interface Preset {
   id: string;
@@ -43,8 +52,11 @@ export interface Preset {
   ) => string[];
 }
 
-const getVideoEncoder = (codec: 'h264' | 'h265' | 'av1', gpu: GPUVendor): string =>
-  GPU_ENCODERS[codec][gpu];
+const getVideoEncoder = (
+  codec: 'h264' | 'h265' | 'av1',
+  gpu: GPUVendor,
+  platform: NodeJS.Platform
+): string => resolveEncoder(codec, gpu, platform);
 
 /**
  * NVENC `-cq`, AMF `-qp_i`/`-qp_p` and QSV `-global_quality` are all 0-51 QP
@@ -54,6 +66,10 @@ const getVideoEncoder = (codec: 'h264' | 'h265' | 'av1', gpu: GPUVendor): string
  */
 const GPU_QP_MAX = 51;
 
+/** Maps a 0..51 QP onto the 1..100 quality scale used by VideoToolbox and Media Foundation. */
+const qpToPercentQuality = (qp: number): number =>
+  Math.max(1, Math.min(100, Math.round((1 - qp / GPU_QP_MAX) * 100)));
+
 /**
  * Resolves the vendor whose argument style actually applies.
  *
@@ -62,8 +78,15 @@ const GPU_QP_MAX = 51;
  * quality and preset arguments must follow the CPU form; emitting VideoToolbox
  * flags for a software encoder would fail.
  */
-export const resolveEncodeVendor = (codec: 'h264' | 'h265' | 'av1', gpu: GPUVendor): GPUVendor => {
-  const encoder = GPU_ENCODERS[codec]?.[gpu];
+export const resolveEncodeVendor = (
+  codec: 'h264' | 'h265' | 'av1',
+  gpu: GPUVendor,
+  platform: NodeJS.Platform = process.platform
+): GPUVendor | 'vaapi' => {
+  if (usesVaapi(gpu, platform)) {
+    return 'vaapi';
+  }
+  const encoder = resolveEncoder(codec, gpu, platform);
   const cpuEncoder = GPU_ENCODERS[codec]?.cpu;
   if (!encoder || encoder === cpuEncoder) {
     return 'cpu';
@@ -72,9 +95,13 @@ export const resolveEncodeVendor = (codec: 'h264' | 'h265' | 'av1', gpu: GPUVend
 };
 
 const defaultAdvancedFormatSettings = createDefaultAdvancedFormatSettings();
-const X265_ADVANCED_PARAMS =
+const X265_ADVANCED_PARAMS = 'aq-mode=3:psy-rd=2.0:psy-rdoq=1.0:rc-lookahead=60:bframes=8';
+// AVI keeps the x265 string it shipped with, so its arguments do not change.
+const AVI_X265_PARAMS =
   'aq-mode=3:rd=6:psy-rd=2.0:psy-rdoq=1.0:rdoq-level=2:rc-lookahead=60:bframes=8:ref=6';
-const SVTAV1_ADVANCED_PARAMS = 'tune=0:film-grain=0:enable-overlays=1:scd=1:scm=0';
+const SVTAV1_ADVANCED_PARAMS = 'tune=0:enable-overlays=1:enable-qm=1:qm-min=0:keyint=10s';
+// libopus rejects layouts such as 5.1(side) and 7.1(wide); this maps them to supported ones.
+const OPUS_SAFE_LAYOUTS = 'aformat=channel_layouts=mono|stereo|3.0|quad|5.0|5.1|6.1|7.1';
 
 const getNormalizedAdvancedSettings = (context?: PresetContext): AdvancedFormatSettings => {
   return normalizeAdvancedFormatSettings(context?.advancedFormatSettings);
@@ -105,12 +132,47 @@ const getAviTierSettings = (tier: keyof AviTierCollection, context?: PresetConte
   return normalized.avi.tiers[tier] ?? defaultAdvancedFormatSettings.avi.tiers[tier];
 };
 
+const getWebpTierSettings = (tier: keyof WebpTierCollection, context?: PresetContext) => {
+  const normalized = getNormalizedAdvancedSettings(context);
+  return normalized.webp.tiers[tier] ?? defaultAdvancedFormatSettings.webp.tiers[tier];
+};
+
 const getGifLoopArg = (context?: PresetContext): string => {
   const normalized = getNormalizedAdvancedSettings(context);
   return normalized.gif.loopMode === 'once' ? '-1' : '0';
 };
 
+// libwebp_anim's -loop is the WebP loop count (0 = forever), not the GIF -1/0 convention.
+const getWebpLoopArg = (context?: PresetContext): string => {
+  const normalized = getNormalizedAdvancedSettings(context);
+  return normalized.webp.loopMode === 'once' ? '1' : '0';
+};
+
 const toBitrateKbps = (value: number): string => `${value}k`;
+
+/**
+ * Frame-rate cap and downscale shared by GIF and animated WebP. The fps cap
+ * never raises the source rate and scale only shrinks, so small sources keep
+ * their size and frame count.
+ */
+const animatedFrameFilter = (fps: number, maxDimension: number): string =>
+  `fps='if(gt(source_fps,0),min(source_fps,${fps}),${fps})',` +
+  `scale='min(${maxDimension},iw)':'min(${maxDimension},ih)':flags=bicubic:force_original_aspect_ratio=decrease`;
+
+/**
+ * Per-stream AAC or Opus bitrates for surround tracks. The generic -b:a only
+ * sizes the first track, so each track above stereo gets a scaled budget.
+ */
+const multichannelBitrateArgs = (baseKbps: number, context?: PresetContext): string[] => {
+  const channels = context?.sourceStreams?.audioChannels ?? [];
+  const args: string[] = [];
+  channels.forEach((count, index) => {
+    if (typeof count !== 'number' || count <= 2) return;
+    const scale = count > 6 ? 3.5 : 2.5;
+    args.push(`-b:a:${index}`, toBitrateKbps(Math.min(640, Math.round(baseKbps * scale))));
+  });
+  return args;
+};
 
 export type EncodeEffort = 'max' | 'high' | 'balanced' | 'fast';
 
@@ -160,13 +222,21 @@ export const getQualityArgs = (
   gpu: GPUVendor,
   quality: number,
   codec: 'h264' | 'h265' | 'av1' = 'h264',
-  effort: EncodeEffort = 'max'
+  effort: EncodeEffort = 'max',
+  platform: NodeJS.Platform = process.platform
 ): string[] => {
   // Hardware QP scales stop at 51; CPU encoders keep the full requested range
   // (libsvtav1 accepts CRF up to 63).
-  const hwQuality = String(Math.max(0, Math.min(GPU_QP_MAX, Math.round(quality))));
+  const qp = Math.max(0, Math.min(GPU_QP_MAX, Math.round(quality)));
+  const hwQuality = String(qp);
 
-  switch (resolveEncodeVendor(codec, gpu)) {
+  switch (resolveEncodeVendor(codec, gpu, platform)) {
+    case 'vaapi': {
+      // VAAPI CQP takes -global_quality 1..51 for H.264/HEVC; AV1 uses a 1..255 scale.
+      const clampedQp = Math.max(1, qp);
+      const globalQuality = codec === 'av1' ? Math.min(255, Math.max(1, clampedQp * 4)) : clampedQp;
+      return ['-rc_mode', 'CQP', '-global_quality', String(globalQuality)];
+    }
     case 'nvidia': {
       // -b:v 0 = constant-quality mode; preset and two-pass cost follow the tier.
       const [preset, multipass] = NVENC_EFFORT[effort];
@@ -189,14 +259,21 @@ export const getQualityArgs = (
       return args;
     }
     case 'apple': {
-      const vtQuality = Math.max(
-        1,
-        Math.min(100, Math.round((1 - Number(hwQuality) / GPU_QP_MAX) * 100))
-      );
+      const vtQuality = qpToPercentQuality(qp);
       const args = ['-q:v', String(vtQuality), '-allow_sw', '1', '-realtime', '0'];
       if (effort === 'fast') args.push('-prio_speed', '1');
       return args;
     }
+    case 'qualcomm':
+      // Media Foundation hardware MFTs take -quality 1..100 with hardware forced on.
+      return [
+        '-hw_encoding',
+        '1',
+        '-rate_control',
+        'quality',
+        '-quality',
+        String(qpToPercentQuality(qp)),
+      ];
     default:
       return ['-crf', String(Math.round(quality))];
   }
@@ -211,7 +288,8 @@ const getGifPaletteArgs = (
   const tierSettings = getGifTierSettings(tier, context);
   const loop = getGifLoopArg(context);
   const bscale = tierSettings.dither === 'bayer' ? ':bayer_scale=5' : '';
-  const filter = `[0:v]fps=${tierSettings.fps},scale=${tierSettings.maxDimension}:${tierSettings.maxDimension}:flags=lanczos:force_original_aspect_ratio=decrease,split[v0][v1];[v0]palettegen=max_colors=${tierSettings.maxColors}:stats_mode=full[palette];[v1][palette]paletteuse=dither=${tierSettings.dither}${bscale}:diff_mode=rectangle[gifout]`;
+  const frames = animatedFrameFilter(tierSettings.fps, tierSettings.maxDimension);
+  const filter = `[0:v]${frames},split[v0][v1];[v0]palettegen=max_colors=${tierSettings.maxColors}:stats_mode=full[palette];[v1][palette]paletteuse=dither=${tierSettings.dither}${bscale}:diff_mode=rectangle[gifout]`;
 
   return [
     '-i',
@@ -229,6 +307,33 @@ const getGifPaletteArgs = (
   ];
 };
 
+const buildWebpArgs = (
+  input: string,
+  output: string,
+  tier: keyof WebpTierCollection,
+  context?: PresetContext
+): string[] => {
+  const tierSettings = getWebpTierSettings(tier, context);
+  return [
+    '-i',
+    input,
+    '-vf',
+    animatedFrameFilter(tierSettings.fps, tierSettings.maxDimension),
+    '-c:v',
+    'libwebp_anim',
+    '-quality',
+    String(tierSettings.quality),
+    '-compression_level',
+    '4',
+    '-loop',
+    getWebpLoopArg(context),
+    '-an',
+    '-sn',
+    '-dn',
+    output,
+  ];
+};
+
 const buildAv1Args = (
   input: string,
   output: string,
@@ -237,7 +342,8 @@ const buildAv1Args = (
   context?: PresetContext
 ): string[] => {
   const tierSettings = getAv1TierSettings(tier, context);
-  const encoder = getVideoEncoder('av1', gpu);
+  const platform = platformOf(context);
+  const encoder = getVideoEncoder('av1', gpu, platform);
   const args = [
     '-i',
     input,
@@ -251,21 +357,31 @@ const buildAv1Args = (
       gpu,
       tierSettings.quality,
       'av1',
-      encodeEffortFromCpuPreset(tierSettings.cpuPreset)
+      encodeEffortFromCpuPreset(tierSettings.cpuPreset),
+      platform
     ),
   ];
 
-  if (resolveEncodeVendor('av1', gpu) === 'cpu') {
+  if (resolveEncodeVendor('av1', gpu, platform) === 'cpu') {
     args.push('-preset', String(tierSettings.cpuPreset));
     // libsvtav1 tuning applies to every tier for consistent perceptual quality.
     args.push('-svtav1-params', SVTAV1_ADVANCED_PARAMS);
     // 10-bit encoding improves AV1 compression efficiency and reduces banding,
-    // even from an 8-bit source. Runtime injection may also add this for 10-bit
-    // sources; a duplicate flag with the same value is harmless.
+    // even from an 8-bit source. The pipeline may also add it for 10-bit sources;
+    // the merge keeps a single copy.
     args.push('-pix_fmt', 'yuv420p10le');
   }
 
-  args.push('-c:a', 'libopus', '-b:a', toBitrateKbps(tierSettings.audioBitrateKbps), output);
+  args.push(
+    '-af',
+    OPUS_SAFE_LAYOUTS,
+    '-c:a',
+    'libopus',
+    '-b:a',
+    toBitrateKbps(tierSettings.audioBitrateKbps),
+    ...multichannelBitrateArgs(tierSettings.audioBitrateKbps, context),
+    output
+  );
   return args;
 };
 
@@ -277,7 +393,8 @@ const buildH264Args = (
   context?: PresetContext
 ): string[] => {
   const tierSettings = getH264TierSettings(tier, context);
-  const encoder = getVideoEncoder('h264', gpu);
+  const platform = platformOf(context);
+  const encoder = getVideoEncoder('h264', gpu, platform);
   const args = [
     '-i',
     input,
@@ -291,17 +408,25 @@ const buildH264Args = (
       gpu,
       tierSettings.quality,
       'h264',
-      encodeEffortFromCpuPreset(tierSettings.preset)
+      encodeEffortFromCpuPreset(tierSettings.preset),
+      platform
     ),
   ];
 
-  if (resolveEncodeVendor('h264', gpu) === 'cpu') {
+  if (resolveEncodeVendor('h264', gpu, platform) === 'cpu') {
     args.push('-preset', tierSettings.preset);
     // Force 4:2:0 8-bit output for maximum player/device compatibility
     args.push('-pix_fmt', 'yuv420p');
   }
 
-  args.push('-c:a', 'aac', '-b:a', toBitrateKbps(tierSettings.audioBitrateKbps), output);
+  args.push(
+    '-c:a',
+    'aac',
+    '-b:a',
+    toBitrateKbps(tierSettings.audioBitrateKbps),
+    ...multichannelBitrateArgs(tierSettings.audioBitrateKbps, context),
+    output
+  );
   return args;
 };
 
@@ -313,7 +438,8 @@ const buildH265Args = (
   context?: PresetContext
 ): string[] => {
   const tierSettings = getH265TierSettings(tier, context);
-  const encoder = getVideoEncoder('h265', gpu);
+  const platform = platformOf(context);
+  const encoder = getVideoEncoder('h265', gpu, platform);
   const args = [
     '-i',
     input,
@@ -327,18 +453,26 @@ const buildH265Args = (
       gpu,
       tierSettings.quality,
       'h265',
-      encodeEffortFromCpuPreset(tierSettings.preset)
+      encodeEffortFromCpuPreset(tierSettings.preset),
+      platform
     ),
   ];
 
-  if (resolveEncodeVendor('h265', gpu) === 'cpu') {
+  if (resolveEncodeVendor('h265', gpu, platform) === 'cpu') {
     args.push('-preset', tierSettings.preset);
     if (tierSettings.useAdvancedParams) {
-      args.push('-x265-params', X265_ADVANCED_PARAMS);
+      args.push('-x265-params', X265_ADVANCED_PARAMS, '-pix_fmt', 'yuv420p10le');
     }
   }
 
-  args.push('-c:a', 'aac', '-b:a', toBitrateKbps(tierSettings.audioBitrateKbps), output);
+  args.push(
+    '-c:a',
+    'aac',
+    '-b:a',
+    toBitrateKbps(tierSettings.audioBitrateKbps),
+    ...multichannelBitrateArgs(tierSettings.audioBitrateKbps, context),
+    output
+  );
   return args;
 };
 
@@ -350,7 +484,8 @@ const buildAviArgs = (
   context?: PresetContext
 ): string[] => {
   const tierSettings = getAviTierSettings(tier, context);
-  const encoder = getVideoEncoder(tierSettings.codec, gpu);
+  const platform = platformOf(context);
+  const encoder = getVideoEncoder(tierSettings.codec, gpu, platform);
   const args = [
     '-i',
     input,
@@ -364,17 +499,18 @@ const buildAviArgs = (
       gpu,
       tierSettings.quality,
       tierSettings.codec,
-      encodeEffortFromCpuPreset(tierSettings.preset)
+      encodeEffortFromCpuPreset(tierSettings.preset),
+      platform
     ),
   ];
 
-  if (resolveEncodeVendor(tierSettings.codec, gpu) === 'cpu') {
+  if (resolveEncodeVendor(tierSettings.codec, gpu, platform) === 'cpu') {
     args.push('-preset', tierSettings.preset);
     if (tierSettings.codec === 'h264') {
       // Force 4:2:0 8-bit for maximum player/device compatibility (matches buildH264Args)
       args.push('-pix_fmt', 'yuv420p');
     } else if (tierSettings.useAdvancedParams) {
-      args.push('-x265-params', X265_ADVANCED_PARAMS);
+      args.push('-x265-params', AVI_X265_PARAMS);
     }
   }
 
@@ -462,6 +598,7 @@ export const PRESET_CATEGORY_ORDER: PresetCategory[] = [
   'h265',
   'avi',
   'gif',
+  'webp',
   'remux',
   'audio',
 ];
@@ -474,6 +611,7 @@ export const PRESET_CATEGORY_LABELS: Record<PresetCategory, string> = {
   h265: 'H.265/HEVC',
   avi: 'AVI',
   gif: 'GIF',
+  webp: 'WebP (Animated)',
   remux: 'Remux',
   audio: 'Audio',
   custom: 'Custom',
@@ -527,7 +665,7 @@ export const presets: Preset[] = [
   {
     id: 'av1-best-quality',
     name: 'AV1 - Best Quality',
-    description: 'Maximum quality, 10-bit, with strong compression (CRF 18, preset 2)',
+    description: 'Maximum quality, 10-bit, with strong compression',
     category: 'av1',
     gpuCodec: 'av1',
     extension: 'mp4',
@@ -537,7 +675,7 @@ export const presets: Preset[] = [
   {
     id: 'av1-best-compression',
     name: 'AV1 - Best Compression',
-    description: 'Smallest file size with comparable quality (CRF 38, preset 2)',
+    description: 'Smallest file size with comparable quality',
     category: 'av1',
     gpuCodec: 'av1',
     extension: 'mp4',
@@ -594,7 +732,7 @@ export const presets: Preset[] = [
   {
     id: 'h265-best-quality',
     name: 'H.265/HEVC - Best Quality',
-    description: 'Maximum quality with best compression (CRF 16, veryslow)',
+    description: 'Maximum quality with best compression',
     category: 'h265',
     gpuCodec: 'h265',
     extension: 'mp4',
@@ -604,7 +742,7 @@ export const presets: Preset[] = [
   {
     id: 'h265-best-compression',
     name: 'H.265/HEVC - Best Compression',
-    description: 'Smallest file size, some quality sacrificed (CRF 32, veryslow)',
+    description: 'Smallest file size, some quality sacrificed',
     category: 'h265',
     gpuCodec: 'h265',
     extension: 'mp4',
@@ -614,7 +752,7 @@ export const presets: Preset[] = [
   {
     id: 'avi-best-quality',
     name: 'AVI - Best Quality',
-    description: 'AVI container with H.264 best quality encoding (CRF 16, veryslow)',
+    description: 'AVI container with H.264 best quality encoding',
     category: 'avi',
     aviTier: 'bestQuality',
     gpuCodec: 'h264',
@@ -625,7 +763,7 @@ export const presets: Preset[] = [
   {
     id: 'avi-best-compression',
     name: 'AVI - Best Compression',
-    description: 'AVI container with H.264 best compression (CRF 26, veryslow)',
+    description: 'AVI container with H.264 best compression',
     category: 'avi',
     aviTier: 'bestCompression',
     gpuCodec: 'h264',
@@ -677,6 +815,39 @@ export const presets: Preset[] = [
     extension: 'gif',
     getArgs: (input, output, _gpu, context) =>
       getGifPaletteArgs(input, output, 'bestCompression', context),
+  },
+  {
+    id: 'webp-best-quality',
+    name: 'WebP - Best Quality',
+    description: 'Maximum animated WebP quality with highest detail',
+    category: 'webp',
+    extension: 'webp',
+    getArgs: (input, output, _gpu, context) => buildWebpArgs(input, output, 'bestQuality', context),
+  },
+  {
+    id: 'webp-quality',
+    name: 'WebP - Quality',
+    description: 'High quality animated WebP with smaller file size',
+    category: 'webp',
+    extension: 'webp',
+    getArgs: (input, output, _gpu, context) => buildWebpArgs(input, output, 'quality', context),
+  },
+  {
+    id: 'webp-balanced',
+    name: 'WebP - Balanced',
+    description: 'Balanced animated WebP for quality and compression',
+    category: 'webp',
+    extension: 'webp',
+    getArgs: (input, output, _gpu, context) => buildWebpArgs(input, output, 'balanced', context),
+  },
+  {
+    id: 'webp-best-compression',
+    name: 'WebP - Best Compression',
+    description: 'Smallest animated WebP size with comparable quality',
+    category: 'webp',
+    extension: 'webp',
+    getArgs: (input, output, _gpu, context) =>
+      buildWebpArgs(input, output, 'bestCompression', context),
   },
   {
     id: 'remux-mp4',
@@ -746,7 +917,18 @@ export const presets: Preset[] = [
     description: 'Extract audio track as lossless FLAC',
     category: 'audio',
     extension: 'flac',
-    getArgs: (input, output) => ['-i', input, '-vn', '-map_metadata', '0', '-c:a', 'flac', output],
+    getArgs: (input, output) => [
+      '-i',
+      input,
+      '-vn',
+      '-map_metadata',
+      '0',
+      '-c:a',
+      'flac',
+      '-compression_level',
+      '8',
+      output,
+    ],
   },
 ];
 

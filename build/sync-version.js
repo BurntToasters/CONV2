@@ -35,6 +35,17 @@ function syncNpmLockfileVersion(lockText, version) {
   return `${JSON.stringify(parsed, null, 2)}\n`;
 }
 
+// The "This is a Beta" callout, live or wrapped in an HTML comment.
+const BETA_NOTE = /(?:<!--\n)?(> \[!NOTE\][^\n]*\n> [^\n]*This is a Beta[^\n]*\n)(?:-->\n)?/;
+
+/** Live beta note for prereleases, commented out for stable versions. */
+function setBetaNote(downloadsSection, version) {
+  const isBeta = version.includes('-');
+  return downloadsSection.replace(BETA_NOTE, (_match, note) =>
+    isBeta ? note : `<!--\n${note}-->\n`
+  );
+}
+
 function syncChangelogForVersion(changelog, version) {
   const tag = `v${version}`;
   const sectionHeading = `## Changes in \`${tag}:\``;
@@ -53,9 +64,9 @@ function syncChangelogForVersion(changelog, version) {
   const beforeDownloads = changelog.slice(0, downloadsHeading.index);
   const downloadsSection = changelog.slice(downloadsHeading.index, firstChangesHeading);
   const afterDownloads = changelog.slice(firstChangesHeading);
-  const syncedDownloads = downloadsSection.replace(
-    /\/releases\/download\/v[^/]+\//g,
-    `/releases/download/${tag}/`
+  const syncedDownloads = setBetaNote(
+    downloadsSection.replace(/\/releases\/download\/v[^/]+\//g, `/releases/download/${tag}/`),
+    version
   );
 
   let updated = beforeDownloads + syncedDownloads + afterDownloads;

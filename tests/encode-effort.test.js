@@ -64,20 +64,19 @@ test('AV1 NVENC never gets tune hq or AQ at any effort', () => {
 });
 
 test('QSV lookahead shrinks with effort and is never used for AV1 or fast', () => {
-  assert.equal(argAfter(getQualityArgs('intel', 23, 'h264', 'max'), '-look_ahead_depth'), '60');
-  assert.equal(
-    argAfter(getQualityArgs('intel', 23, 'h264', 'balanced'), '-look_ahead_depth'),
-    '25'
-  );
-  assert.ok(!getQualityArgs('intel', 23, 'h264', 'fast').includes('-look_ahead'));
-  assert.ok(!getQualityArgs('intel', 23, 'av1', 'max').includes('-look_ahead'));
-  assert.equal(argAfter(getQualityArgs('intel', 23, 'h265', 'fast'), '-preset'), 'faster');
+  const qsv = (codec, effort) => getQualityArgs('intel', 23, codec, effort, 'win32');
+  assert.equal(argAfter(qsv('h264', 'max'), '-look_ahead_depth'), '60');
+  assert.equal(argAfter(qsv('h264', 'balanced'), '-look_ahead_depth'), '25');
+  assert.ok(!qsv('h264', 'fast').includes('-look_ahead'));
+  assert.ok(!qsv('av1', 'max').includes('-look_ahead'));
+  assert.equal(argAfter(qsv('h265', 'fast'), '-preset'), 'faster');
 });
 
 test('AMF quality mode follows effort', () => {
-  assert.equal(argAfter(getQualityArgs('amd', 23, 'h264', 'max'), '-quality'), 'quality');
-  assert.equal(argAfter(getQualityArgs('amd', 23, 'h264', 'balanced'), '-quality'), 'balanced');
-  assert.equal(argAfter(getQualityArgs('amd', 23, 'h264', 'fast'), '-quality'), 'speed');
+  const amf = (effort) => getQualityArgs('amd', 23, 'h264', effort, 'win32');
+  assert.equal(argAfter(amf('max'), '-quality'), 'quality');
+  assert.equal(argAfter(amf('balanced'), '-quality'), 'balanced');
+  assert.equal(argAfter(amf('fast'), '-quality'), 'speed');
 });
 
 test('VideoToolbox prioritises speed only on fast tiers', () => {
@@ -93,11 +92,12 @@ test('no effort argument keeps the previous max-quality behaviour', () => {
 });
 
 test('built-in presets pass their tier effort to the hardware encoder', () => {
+  // h265 Best Quality now uses the "slow" CPU preset, which maps to the "high" effort (p6, qres).
   const fast = getPresetById('h264-fast').getArgs('in.mp4', 'out.mp4', 'nvidia');
   assert.equal(argAfter(fast, '-multipass'), 'disabled');
   const best = getPresetById('h265-best-quality').getArgs('in.mp4', 'out.mp4', 'nvidia');
-  assert.equal(argAfter(best, '-preset'), 'p7');
-  assert.equal(argAfter(best, '-multipass'), 'fullres');
+  assert.equal(argAfter(best, '-preset'), 'p6');
+  assert.equal(argAfter(best, '-multipass'), 'qres');
   const av1 = getPresetById('av1-balanced').getArgs('in.mp4', 'out.mp4', 'nvidia');
   assert.equal(argAfter(av1, '-preset'), 'p5');
 });

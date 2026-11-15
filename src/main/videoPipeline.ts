@@ -26,7 +26,7 @@ export interface VideoPipelinePlan {
   warning?: string;
 }
 
-const EIGHT_BIT_CATEGORIES = new Set(['h264', 'avi', 'gif']);
+const EIGHT_BIT_CATEGORIES = new Set(['h264', 'avi', 'gif', 'webp']);
 const HDR_TRANSFERS = new Set(['smpte2084', 'arib-std-b67']);
 const SAFE_COLOR_VALUE = /^[a-z0-9-]+$/i;
 const UNKNOWN_COLOR = new Set(['unknown', 'unspecified', 'reserved']);
@@ -58,12 +58,19 @@ const colorTagArgs = (source: SourceColor): string[] => {
   return args;
 };
 
+/**
+ * Media Foundation hardware encoders take only 8-bit NV12, so Qualcomm is an 8-bit
+ * target for every codec and its output always carries -pix_fmt nv12.
+ */
+const isMediaFoundation = (encodeVendor: string): boolean => encodeVendor === 'qualcomm';
+
 export const planVideoPipeline = (input: VideoPipelineInput): VideoPipelinePlan => {
   const { category, encodeVendor, source, decodeArgs, canTonemap } = input;
-  if (!source) return { decodeArgs, outputArgs: [], tonemapped: false };
+  const mfNv12Args = isMediaFoundation(encodeVendor) ? ['-pix_fmt', 'nv12'] : [];
+  if (!source) return { decodeArgs, outputArgs: mfNv12Args, tonemapped: false };
 
   const isHdr = usableColor(source.colorTransfer) && HDR_TRANSFERS.has(source.colorTransfer);
-  const eightBitTarget = EIGHT_BIT_CATEGORIES.has(category);
+  const eightBitTarget = EIGHT_BIT_CATEGORIES.has(category) || isMediaFoundation(encodeVendor);
   const highBitDepth = isHighBitDepth(source.pixFmt);
 
   if (isHdr && eightBitTarget && canTonemap) {
@@ -78,6 +85,7 @@ export const planVideoPipeline = (input: VideoPipelineInput): VideoPipelinePlan 
         'bt709',
         '-color_range',
         'tv',
+        ...mfNv12Args,
       ],
       filter: TONEMAP_FILTER,
       tonemapped: true,
@@ -95,11 +103,42 @@ export const planVideoPipeline = (input: VideoPipelineInput): VideoPipelinePlan 
     outputArgs.push('-pix_fmt', 'yuv420p10le');
   }
   // NVENC/QSV/AMF H.264 reject 10-bit GPU frames; VideoToolbox converts on its own.
-  if (highBitDepth && category === 'h264' && !['cpu', 'apple'].includes(encodeVendor)) {
+  // VAAPI converts in its upload filter instead, so it never gets -pix_fmt.
+  // Media Foundation takes NV12 below instead.
+  if (
+    highBitDepth &&
+    category === 'h264' &&
+    !['cpu', 'apple', 'vaapi', 'qualcomm'].includes(encodeVendor)
+  ) {
     plan.decodeArgs = withSoftwareFrames(decodeArgs);
     outputArgs.push('-pix_fmt', 'yuv420p');
   }
+  if (isMediaFoundation(encodeVendor)) {
+    plan.decodeArgs = withSoftwareFrames(decodeArgs);
+    outputArgs.push(...mfNv12Args);
+  }
   return plan;
+};
+
+/**
+ * Upload chain for VAAPI. p010 needs a 10-bit source, an H.265 or AV1 codec, and a
+ * category outside the 8-bit set (an AVI preset that encodes H.265 is 8-bit).
+ * Everything else is nv12. Appended after any tone-map, so the upload runs last.
+ */
+export const vaapiUploadFilter = ({
+  category,
+  codec,
+  sourcePixFmt,
+}: {
+  category: string;
+  codec: string;
+  sourcePixFmt: string | undefined;
+}): string => {
+  const tenBit =
+    (codec === 'h265' || codec === 'av1') &&
+    isHighBitDepth(sourcePixFmt) &&
+    !EIGHT_BIT_CATEGORIES.has(category);
+  return tenBit ? 'format=p010,hwupload' : 'format=nv12,hwupload';
 };
 
 /** Adds a video filter before the output path, merging with an existing -vf or GIF graph. */

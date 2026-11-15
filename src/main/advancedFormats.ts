@@ -32,6 +32,24 @@ export interface GifAdvancedSettings {
   tiers: GifTierCollection;
 }
 
+export interface WebpTierSettings {
+  fps: number;
+  maxDimension: number;
+  quality: number;
+}
+
+export interface WebpTierCollection {
+  bestQuality: WebpTierSettings;
+  quality: WebpTierSettings;
+  balanced: WebpTierSettings;
+  bestCompression: WebpTierSettings;
+}
+
+export interface WebpAdvancedSettings {
+  loopMode: GifLoopMode;
+  tiers: WebpTierCollection;
+}
+
 export interface Av1TierSettings {
   quality: number;
   cpuPreset: number;
@@ -103,6 +121,7 @@ export interface AviAdvancedSettings {
 
 export interface AdvancedFormatSettings {
   gif: GifAdvancedSettings;
+  webp: WebpAdvancedSettings;
   av1: Av1AdvancedSettings;
   h264: H264AdvancedSettings;
   h265: H265AdvancedSettings;
@@ -190,6 +209,15 @@ const cloneGifTierCollection = (tiers: GifTierCollection): GifTierCollection => 
   bestCompression: cloneGifTierSettings(tiers.bestCompression),
 });
 
+const cloneWebpTierSettings = (tier: WebpTierSettings): WebpTierSettings => ({ ...tier });
+
+const cloneWebpTierCollection = (tiers: WebpTierCollection): WebpTierCollection => ({
+  bestQuality: cloneWebpTierSettings(tiers.bestQuality),
+  quality: cloneWebpTierSettings(tiers.quality),
+  balanced: cloneWebpTierSettings(tiers.balanced),
+  bestCompression: cloneWebpTierSettings(tiers.bestCompression),
+});
+
 const cloneAv1TierSettings = (tier: Av1TierSettings): Av1TierSettings => ({ ...tier });
 
 const cloneAv1TierCollection = (tiers: Av1TierCollection): Av1TierCollection => ({
@@ -259,13 +287,23 @@ export const createDefaultGifAdvancedSettings = (): GifAdvancedSettings => ({
   },
 });
 
+export const createDefaultWebpAdvancedSettings = (): WebpAdvancedSettings => ({
+  loopMode: 'forever',
+  tiers: {
+    bestQuality: { fps: 30, maxDimension: 720, quality: 90 },
+    quality: { fps: 24, maxDimension: 600, quality: 80 },
+    balanced: { fps: 20, maxDimension: 480, quality: 70 },
+    bestCompression: { fps: 15, maxDimension: 360, quality: 50 },
+  },
+});
+
 export const createDefaultAv1AdvancedSettings = (): Av1AdvancedSettings => ({
   tiers: {
-    bestQuality: { quality: 18, cpuPreset: 2, audioBitrateKbps: 256 },
-    quality: { quality: 24, cpuPreset: 4, audioBitrateKbps: 192 },
+    bestQuality: { quality: 18, cpuPreset: 4, audioBitrateKbps: 192 },
+    quality: { quality: 24, cpuPreset: 5, audioBitrateKbps: 160 },
     balanced: { quality: 30, cpuPreset: 6, audioBitrateKbps: 128 },
-    bestCompression: { quality: 38, cpuPreset: 2, audioBitrateKbps: 96 },
-    compression: { quality: 44, cpuPreset: 6, audioBitrateKbps: 96 },
+    bestCompression: { quality: 38, cpuPreset: 4, audioBitrateKbps: 96 },
+    compression: { quality: 44, cpuPreset: 8, audioBitrateKbps: 96 },
   },
 });
 
@@ -280,7 +318,7 @@ export const createDefaultH265AdvancedSettings = (): H265AdvancedSettings => ({
   tiers: {
     bestQuality: {
       quality: 16,
-      preset: 'veryslow',
+      preset: 'slow',
       audioBitrateKbps: 256,
       useAdvancedParams: true,
     },
@@ -288,7 +326,7 @@ export const createDefaultH265AdvancedSettings = (): H265AdvancedSettings => ({
     balanced: { quality: 28, preset: 'medium', audioBitrateKbps: 128, useAdvancedParams: false },
     bestCompression: {
       quality: 32,
-      preset: 'veryslow',
+      preset: 'slow',
       audioBitrateKbps: 96,
       useAdvancedParams: true,
     },
@@ -300,21 +338,21 @@ export const createDefaultAviAdvancedSettings = (): AviAdvancedSettings => ({
     bestQuality: {
       codec: 'h264',
       quality: 16,
-      preset: 'veryslow',
+      preset: 'slow',
       audioBitrateKbps: 256,
       useAdvancedParams: false,
     },
     bestCompression: {
       codec: 'h264',
       quality: 26,
-      preset: 'veryslow',
+      preset: 'slow',
       audioBitrateKbps: 128,
       useAdvancedParams: false,
     },
     balanced: {
       codec: 'h264',
       quality: 20,
-      preset: 'slow',
+      preset: 'medium',
       audioBitrateKbps: 192,
       useAdvancedParams: false,
     },
@@ -323,6 +361,7 @@ export const createDefaultAviAdvancedSettings = (): AviAdvancedSettings => ({
 
 export const createDefaultAdvancedFormatSettings = (): AdvancedFormatSettings => ({
   gif: createDefaultGifAdvancedSettings(),
+  webp: createDefaultWebpAdvancedSettings(),
   av1: createDefaultAv1AdvancedSettings(),
   h264: createDefaultH264AdvancedSettings(),
   h265: createDefaultH265AdvancedSettings(),
@@ -335,7 +374,8 @@ export const normalizeGifTierSettings = (
 ): GifTierSettings => {
   const incoming = toRecord(value);
   return {
-    fps: clampInteger(incoming.fps, 1, 60, fallback.fps),
+    // GIF delays are whole centiseconds; above 50 fps browsers misplay frames.
+    fps: clampInteger(incoming.fps, 1, 50, fallback.fps),
     maxDimension: clampInteger(incoming.maxDimension, 160, 2160, fallback.maxDimension),
     // Floor is 3, not 2: palettegen reserves a transparent palette slot, and
     // FFmpeg rejects max_colors=2 with "only allowed without reserving a
@@ -343,6 +383,18 @@ export const normalizeGifTierSettings = (
     // compress, so the slot is kept and the floor raised instead.
     maxColors: clampInteger(incoming.maxColors, 3, 256, fallback.maxColors),
     dither: normalizeGifDither(incoming.dither, fallback.dither),
+  };
+};
+
+export const normalizeWebpTierSettings = (
+  value: unknown,
+  fallback: WebpTierSettings
+): WebpTierSettings => {
+  const incoming = toRecord(value);
+  return {
+    fps: clampInteger(incoming.fps, 1, 60, fallback.fps),
+    maxDimension: clampInteger(incoming.maxDimension, 160, 2160, fallback.maxDimension),
+    quality: clampInteger(incoming.quality, 1, 100, fallback.quality),
   };
 };
 
@@ -422,6 +474,25 @@ export const normalizeGifAdvancedSettings = (value: unknown): GifAdvancedSetting
   };
 };
 
+export const normalizeWebpAdvancedSettings = (value: unknown): WebpAdvancedSettings => {
+  const defaults = createDefaultWebpAdvancedSettings();
+  const incoming = toRecord(value);
+  const tiersIncoming = toRecord(incoming.tiers);
+
+  return {
+    loopMode: normalizeGifLoopMode(incoming.loopMode, defaults.loopMode),
+    tiers: {
+      bestQuality: normalizeWebpTierSettings(tiersIncoming.bestQuality, defaults.tiers.bestQuality),
+      quality: normalizeWebpTierSettings(tiersIncoming.quality, defaults.tiers.quality),
+      balanced: normalizeWebpTierSettings(tiersIncoming.balanced, defaults.tiers.balanced),
+      bestCompression: normalizeWebpTierSettings(
+        tiersIncoming.bestCompression,
+        defaults.tiers.bestCompression
+      ),
+    },
+  };
+};
+
 export const normalizeAv1AdvancedSettings = (value: unknown): Av1AdvancedSettings => {
   const defaults = createDefaultAv1AdvancedSettings();
   const incoming = toRecord(value);
@@ -493,6 +564,7 @@ export const normalizeAdvancedFormatSettings = (value: unknown): AdvancedFormatS
   const incoming = toRecord(value);
   return {
     gif: normalizeGifAdvancedSettings(incoming.gif),
+    webp: normalizeWebpAdvancedSettings(incoming.webp),
     av1: normalizeAv1AdvancedSettings(incoming.av1),
     h264: normalizeH264AdvancedSettings(incoming.h264),
     h265: normalizeH265AdvancedSettings(incoming.h265),
@@ -503,6 +575,11 @@ export const normalizeAdvancedFormatSettings = (value: unknown): AdvancedFormatS
 const mergeGifTierSettings = (current: GifTierSettings, incoming: unknown): GifTierSettings => {
   const incomingRecord = toRecord(incoming);
   return normalizeGifTierSettings({ ...current, ...incomingRecord }, current);
+};
+
+const mergeWebpTierSettings = (current: WebpTierSettings, incoming: unknown): WebpTierSettings => {
+  const incomingRecord = toRecord(incoming);
+  return normalizeWebpTierSettings({ ...current, ...incomingRecord }, current);
 };
 
 const mergeAv1TierSettings = (current: Av1TierSettings, incoming: unknown): Av1TierSettings => {
@@ -550,6 +627,38 @@ export const mergeGifAdvancedSettings = (
       quality: mergeGifTierSettings(normalizedCurrent.tiers.quality, incomingTiers.quality),
       balanced: mergeGifTierSettings(normalizedCurrent.tiers.balanced, incomingTiers.balanced),
       bestCompression: mergeGifTierSettings(
+        normalizedCurrent.tiers.bestCompression,
+        incomingTiers.bestCompression
+      ),
+    },
+  });
+};
+
+export const mergeWebpAdvancedSettings = (
+  current: WebpAdvancedSettings,
+  incoming: unknown
+): WebpAdvancedSettings => {
+  const normalizedCurrent = normalizeWebpAdvancedSettings(current);
+  const incomingRecord = toRecord(incoming);
+  if (Object.keys(incomingRecord).length === 0) {
+    return {
+      loopMode: normalizedCurrent.loopMode,
+      tiers: cloneWebpTierCollection(normalizedCurrent.tiers),
+    };
+  }
+
+  const incomingTiers = toRecord(incomingRecord.tiers);
+
+  return normalizeWebpAdvancedSettings({
+    loopMode: incomingRecord.loopMode ?? normalizedCurrent.loopMode,
+    tiers: {
+      bestQuality: mergeWebpTierSettings(
+        normalizedCurrent.tiers.bestQuality,
+        incomingTiers.bestQuality
+      ),
+      quality: mergeWebpTierSettings(normalizedCurrent.tiers.quality, incomingTiers.quality),
+      balanced: mergeWebpTierSettings(normalizedCurrent.tiers.balanced, incomingTiers.balanced),
+      bestCompression: mergeWebpTierSettings(
         normalizedCurrent.tiers.bestCompression,
         incomingTiers.bestCompression
       ),
@@ -685,6 +794,10 @@ export const mergeAdvancedFormatSettings = (
         loopMode: normalizedCurrent.gif.loopMode,
         tiers: cloneGifTierCollection(normalizedCurrent.gif.tiers),
       },
+      webp: {
+        loopMode: normalizedCurrent.webp.loopMode,
+        tiers: cloneWebpTierCollection(normalizedCurrent.webp.tiers),
+      },
       av1: {
         tiers: cloneAv1TierCollection(normalizedCurrent.av1.tiers),
       },
@@ -708,6 +821,13 @@ export const mergeAdvancedFormatSettings = (
             tiers: cloneGifTierCollection(normalizedCurrent.gif.tiers),
           }
         : mergeGifAdvancedSettings(normalizedCurrent.gif, incomingRecord.gif),
+    webp:
+      incomingRecord.webp === undefined
+        ? {
+            loopMode: normalizedCurrent.webp.loopMode,
+            tiers: cloneWebpTierCollection(normalizedCurrent.webp.tiers),
+          }
+        : mergeWebpAdvancedSettings(normalizedCurrent.webp, incomingRecord.webp),
     av1:
       incomingRecord.av1 === undefined
         ? {

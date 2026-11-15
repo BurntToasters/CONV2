@@ -1,15 +1,36 @@
 # ⬇️ Downloads
 
+> [!NOTE] 
+> 🅱️ This is a Beta
+
 | <img height="20" src="https://github.com/user-attachments/assets/340d360e-79b1-4c70-bfab-d944085f75df" /> Windows                                                                                              | <img height="20" src="https://github.com/user-attachments/assets/42d7e887-4616-4e8c-b1d3-e44e01340f8c" /> macOS | <img height="20" src="https://github.com/user-attachments/assets/e0cc4f33-4516-408b-9c5c-be71a3ac316b" /> Linux                                                                                                                |
 | :------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | :-------------------------------------------------------------------------------------------------------------- | :----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Setup:** [x64](https://github.com/BurntToasters/CONV2/releases/download/v1.6.1/CONV2-Win-x64-Setup.exe) / [arm64](https://github.com/BurntToasters/CONV2/releases/download/v1.6.1/CONV2-Win-arm64-Setup.exe) | **[Universal DMG](https://github.com/BurntToasters/CONV2/releases/download/v1.6.1/CONV2-macOS-universal.dmg)**  | **AppImage:** [x64](https://github.com/BurntToasters/CONV2/releases/download/v1.6.1/CONV2-Linux-x86_64.AppImage) / [arm64](https://github.com/BurntToasters/CONV2/releases/download/v1.6.1/CONV2-Linux-arm64.AppImage)         |
-| <div align="center"><!--<a href="#"><img src="https://get.microsoft.com/images/en-us%20light.svg" width="150"/></a>--></div>                                                                                   | **[Universal ZIP](https://github.com/BurntToasters/CONV2/releases/download/v1.6.1/CONV2-macOS-universal.zip)**  | **DEB:** [x64](https://github.com/BurntToasters/CONV2/releases/download/v1.6.1/CONV2-Linux-amd64.deb) / [arm64](https://github.com/BurntToasters/CONV2/releases/download/v1.6.1/CONV2-Linux-arm64.deb)                         |
-| _See MSI note in releases_                                                                                                                                                                                     |                                                                                                                 | **RPM:** [x64](https://github.com/BurntToasters/CONV2/releases/download/v1.6.1/CONV2-Linux-x86_64.rpm) / [arm64](https://github.com/BurntToasters/CONV2/releases/download/v1.6.1/CONV2-Linux-aarch64.rpm)                      |
-|                                                                                                                                                                                                                |                                                                                                                 | **Flatpak sideload:** [x64](https://github.com/BurntToasters/CONV2/releases/download/v1.6.1/CONV2-Linux-x86_64.flatpak) / [arm64](https://github.com/BurntToasters/CONV2/releases/download/v1.6.1/CONV2-Linux-aarch64.flatpak) |
+| **Setup:** [x64](https://github.com/BurntToasters/CONV2/releases/download/v1.7.0-beta.1/CONV2-Win-x64-Setup.exe) / [arm64](https://github.com/BurntToasters/CONV2/releases/download/v1.7.0-beta.1/CONV2-Win-arm64-Setup.exe) | **[Universal DMG](https://github.com/BurntToasters/CONV2/releases/download/v1.7.0-beta.1/CONV2-macOS-universal.dmg)**  | **AppImage:** [x64](https://github.com/BurntToasters/CONV2/releases/download/v1.7.0-beta.1/CONV2-Linux-x86_64.AppImage) / [arm64](https://github.com/BurntToasters/CONV2/releases/download/v1.7.0-beta.1/CONV2-Linux-arm64.AppImage)         |
+| <div align="center"><!--<a href="#"><img src="https://get.microsoft.com/images/en-us%20light.svg" width="150"/></a>--></div>                                                                                   | **[Universal ZIP](https://github.com/BurntToasters/CONV2/releases/download/v1.7.0-beta.1/CONV2-macOS-universal.zip)**  | **DEB:** [x64](https://github.com/BurntToasters/CONV2/releases/download/v1.7.0-beta.1/CONV2-Linux-amd64.deb) / [arm64](https://github.com/BurntToasters/CONV2/releases/download/v1.7.0-beta.1/CONV2-Linux-arm64.deb)                         |
+| _See MSI note in releases_                                                                                                                                                                                     |                                                                                                                 | **RPM:** [x64](https://github.com/BurntToasters/CONV2/releases/download/v1.7.0-beta.1/CONV2-Linux-x86_64.rpm) / [arm64](https://github.com/BurntToasters/CONV2/releases/download/v1.7.0-beta.1/CONV2-Linux-aarch64.rpm)                      |
+|                                                                                                                                                                                                                |                                                                                                                 | **Flatpak sideload:** [x64](https://github.com/BurntToasters/CONV2/releases/download/v1.7.0-beta.1/CONV2-Linux-x86_64.flatpak) / [arm64](https://github.com/BurntToasters/CONV2/releases/download/v1.7.0-beta.1/CONV2-Linux-aarch64.flatpak) |
 
 ### ℹ️ Enjoying CONV2? Consider [❤️ Supporting Me! ❤️](https://rosie.run/support)
 
 ---
+
+## Changes in `v1.7.0-beta.1:`
+
+- **NEW - Animated WebP:** Added four animated WebP presets (`Best Quality`, `Quality`, `Balanced`, `Best Compression`), with their own tuning tab in advanced format settings for frame rate, max size, quality, and loop mode.
+- **NEW - Linux GPU Encoding:** Intel and AMD GPUs on Linux now encode through VAAPI instead of falling back to CPU. This needs the VA driver for your GPU (`intel-media-va-driver` or `mesa-va-drivers`) and `libva2`.
+- **NEW - Qualcomm GPU Encoding:** Added Qualcomm Media Foundation hardware encoding on Windows on Arm (Snapdragon). Output is 8-bit, so HDR sources are tone-mapped to SDR.
+- **UI:** GPU encoders are now checked per codec on your system, and CONV2 falls back to CPU and tells you when one is missing or fails to start.
+- **UI:** GIF and WebP presets no longer upscale small sources or duplicate frames. The frame rate is capped at the source's rate and the size only shrinks.
+- **UI:** The GIF frame rate is now capped at `50` fps, since browsers misplay GIF frames above that.
+- **Codebase:** The default AV1, H.265, and AVI quality tiers now use faster encoder presets. Tiers you never changed are moved to the new defaults automatically; tiers you customized are kept.
+- **Codebase:** Updated the default x265 and SVT-AV1 tuning parameters. AVI keeps its previous x265 parameters.
+- **Fix - Audio:** Fixed an issue where surround sources with layouts like `5.1(side)` or `7.1(wide)` failed to encode to Opus.
+- **Fix - Audio:** Fixed an issue where only the first audio track got a proper bitrate. Each surround track now gets a bitrate scaled to its channel count.
+- **FFMPEG:** Updated the bundled FFMPEG binaries on _ALL_ platforms.
+- **Linux:** Updated the Flatpak runtime to `26.08`.
+- **Codebase:** Migrated the toolchain to Node.js `26.13.0` LTS and updated the CI actions.
+- **Codebase:** Added `npm run get:ffmpeg:update` to pull new FFMPEG builds for all platforms and regenerate the checksum manifest, restoring the previous files if anything fails.
+- **Testing:** Added coverage for WebP, VAAPI, Qualcomm, surround audio, and settings-migration paths, including real FFMPEG end-to-end conversions.
 
 ## Changes in `v1.6.1:`
 

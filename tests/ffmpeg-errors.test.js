@@ -146,3 +146,104 @@ test('ffprobe output limit accepts the boundary and rejects overflow', () => {
   assert.equal(wouldExceedFFprobeOutputLimit(MAX_FFPROBE_OUTPUT_BYTES - 1, 1), false);
   assert.equal(wouldExceedFFprobeOutputLimit(MAX_FFPROBE_OUTPUT_BYTES, 1), true);
 });
+
+// Failure modes for VAAPI error reporting. Written before the change.
+//  - a libva initialisation failure falls through to a generic message with no driver hint
+//  - the Intel message names no driver package, or the AMD one names the wrong package
+//  - the banner's "--enable-vaapi" configuration string is read as a failure
+//  - a VAAPI message on an NVIDIA conversion is claimed as a VAAPI error
+//  - libva's informational lines are read as a missing library
+
+const VAAPI_INIT_FAILURES = [
+  'Failed to initialise VAAPI connection: -1 (unknown libva error).',
+  'vaInitialize failed: unknown libva error',
+  'No VA display found for device /dev/dri/renderD128.',
+  "Failed to create a VAAPI device for '/dev/dri/renderD128'.",
+  'libva.so.2: cannot open shared object file: No such file or directory',
+];
+
+test('VAAPI initialisation failures on Intel name the Intel driver packages', () => {
+  for (const line of VAAPI_INIT_FAILURES) {
+    const error = parseGPUError(line, 'intel', 'h264');
+    assert.ok(error, line);
+    assert.equal(error.type, 'gpu_capability', line);
+    assert.equal(error.canRetryWithCPU, true, line);
+    assert.match(error.details, /intel-media-va-driver/, line);
+    assert.match(error.details, /intel-media-driver/, line);
+    assert.match(error.details, /libva2/, line);
+  }
+});
+
+test('VAAPI initialisation failures on AMD name the Mesa VA driver package', () => {
+  for (const line of VAAPI_INIT_FAILURES) {
+    const error = parseGPUError(line, 'amd', 'av1');
+    assert.ok(error, line);
+    assert.match(error.details, /mesa-va-drivers/, line);
+    assert.match(error.details, /libva2/, line);
+    assert.doesNotMatch(error.details, /intel-media/, line);
+  }
+});
+
+test('the FFmpeg banner mentioning --enable-vaapi is not a failure', () => {
+  const banner = 'configuration: --enable-vaapi --enable-amf --enable-libvpl --enable-ffnvcodec\n';
+  assert.equal(parseGPUError(banner, 'intel', 'h264'), null);
+  assert.equal(parseGPUError(banner, 'amd', 'h264'), null);
+});
+
+test('libva informational lines are not treated as failures', () => {
+  const info =
+    'libva info: VA-API version 1.20.0\nlibva info: Trying to open /usr/lib/x86_64-linux-gnu/dri/iHD_drv_video.so\n';
+  assert.equal(parseGPUError(info, 'intel', 'h264'), null);
+});
+
+test('VAAPI messages on an NVIDIA conversion are not claimed as VAAPI errors', () => {
+  assert.equal(parseGPUError('vaInitialize failed: unknown libva error', 'nvidia', 'h264'), null);
+});
+
+// Failure modes for Media Foundation errors. Written before the change.
+//  - a Qualcomm Media Foundation failure is unrecognised, so no CPU retry is offered
+//  - the Media Foundation pattern fires for NVIDIA, AMD or Intel and gives Qualcomm driver advice
+//  - the generic DLL branch wins over the Media Foundation branch for mfplat.dll failures
+//  - a success-path INFO line such as "MFT name:" is treated as a failure
+
+const MF_FAILURE_LINES = [
+  'could not find any MFT for the given media type',
+  'could not set input type (-2147024809)',
+  'could not set output type (-2147024809)',
+  'format negotiation failed (1/2)',
+  'hardware MFT is not async',
+  'could not start streaming (-2147467259)',
+  'Failed to set D3D manager: 0x80004005',
+];
+
+test('Qualcomm Media Foundation failures offer a driver update and CPU retry', () => {
+  for (const line of MF_FAILURE_LINES) {
+    const error = parseGPUError(line, 'qualcomm', 'h265');
+    assert.ok(error, line);
+    assert.equal(error.type, 'gpu_capability', line);
+    assert.equal(error.canRetryWithCPU, true, line);
+    assert.match(error.message, /Qualcomm Media Foundation/, line);
+    assert.match(error.suggestion, /driver/i, line);
+  }
+});
+
+test('mfplat.dll load failures are Media Foundation errors for Qualcomm', () => {
+  const error = parseGPUError('DLL mfplat.dll failed to open', 'qualcomm', 'av1');
+  assert.ok(error);
+  assert.match(error.message, /Qualcomm Media Foundation/);
+  assert.notEqual(error.type, 'driver_error');
+});
+
+test('Media Foundation strings do not change errors for other vendors', () => {
+  for (const vendor of ['nvidia', 'amd', 'intel', 'apple']) {
+    assert.equal(
+      parseGPUError('could not find any MFT for the given media type', vendor, 'h264'),
+      null,
+      vendor
+    );
+  }
+});
+
+test('the success-path MFT name line is not an error for Qualcomm', () => {
+  assert.equal(parseGPUError("MFT name: 'Qualcomm H.264 Encoder'", 'qualcomm', 'h264'), null);
+});

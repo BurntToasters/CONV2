@@ -4,7 +4,7 @@ export const getAutoVendorPriority = (platform: string): GPUVendor[] => {
   if (platform === 'darwin') {
     return ['apple', 'intel', 'amd', 'nvidia', 'cpu'];
   }
-  return ['nvidia', 'intel', 'amd', 'apple', 'cpu'];
+  return ['nvidia', 'intel', 'amd', 'qualcomm', 'apple', 'cpu'];
 };
 
 export const recommendGpuVendorFromAvailability = (

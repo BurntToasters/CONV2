@@ -1,4 +1,5 @@
-import { checkGPUEncoderSupport, GPU_ENCODERS } from './ffmpeg';
+import { checkGPUEncoderSupport } from './ffmpeg';
+import { resolveEncoder, supportsQualcomm } from './gpuEncoders';
 import { recommendGpuVendorFromAvailability } from './gpuRecommendation';
 import type { GPUCodec, GPUVendor } from './presets';
 
@@ -21,7 +22,7 @@ export interface GPUCapabilitiesPayload {
   recommendationReason: string;
 }
 
-const GPU_VENDORS: GPUVendor[] = ['nvidia', 'amd', 'intel', 'apple', 'cpu'];
+const GPU_VENDORS: GPUVendor[] = ['nvidia', 'amd', 'intel', 'qualcomm', 'apple', 'cpu'];
 const GPU_CODECS: GPUCodec[] = ['h264', 'h265', 'av1'];
 
 const getRecommendedVendor = (
@@ -70,7 +71,7 @@ export const buildGpuCapabilitiesPayload = async (
             {
               available: true,
               reason: 'Software encoding fallback.',
-              encoder: GPU_ENCODERS[codec].cpu,
+              encoder: resolveEncoder(codec, 'cpu'),
             },
           ];
         }
@@ -81,7 +82,18 @@ export const buildGpuCapabilitiesPayload = async (
             {
               available: false,
               reason: 'Apple VideoToolbox available only on macOS.',
-              encoder: GPU_ENCODERS[codec].apple,
+              encoder: resolveEncoder(codec, 'apple'),
+            },
+          ];
+        }
+
+        if (vendor === 'qualcomm' && !supportsQualcomm()) {
+          return [
+            vendor,
+            {
+              available: false,
+              reason: 'Qualcomm Media Foundation available only on Windows on Arm.',
+              encoder: resolveEncoder(codec, 'qualcomm'),
             },
           ];
         }
@@ -92,7 +104,7 @@ export const buildGpuCapabilitiesPayload = async (
             {
               available: false,
               reason: 'Apple AV1 hardware encode unavailable. Use CPU for AV1.',
-              encoder: GPU_ENCODERS[codec].apple,
+              encoder: resolveEncoder(codec, 'apple'),
             },
           ];
         }
@@ -103,7 +115,7 @@ export const buildGpuCapabilitiesPayload = async (
           {
             available: check.available,
             reason: check.available ? 'Available' : check.error?.message || 'Unavailable',
-            encoder: check.encoder || GPU_ENCODERS[codec][vendor],
+            encoder: check.encoder || resolveEncoder(codec, vendor),
           },
         ];
       }
