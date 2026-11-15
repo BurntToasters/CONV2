@@ -1,6 +1,6 @@
 // Shared fixtures for the release E2E suites (verify, publish). Not a test file.
 // Mirrors the real CONV2 Electron release matrix observed on GitHub:
-// beta = 11 installers, stable adds 2 MSI (windows-build refuses MSI for beta).
+// beta = 10 installers (12 with arm64), stable adds 2 MSI (windows-build refuses MSI for beta).
 // Updater feeds are the four latest*.yml files; each carries version + sha512.
 const crypto = require('node:crypto');
 
@@ -13,16 +13,8 @@ const WIN_INSTALLERS = [
   'CONV2-Win-arm64-Portable.exe',
 ];
 const MAC_INSTALLERS = ['CONV2-macOS-universal.dmg', 'CONV2-macOS-universal.zip'];
-const LINUX_X64_INSTALLERS = [
-  'CONV2-Linux-x86_64.AppImage',
-  'CONV2-Linux-amd64.deb',
-  'CONV2-Linux-x86_64.rpm',
-];
-const LINUX_ARM64_INSTALLERS = [
-  'CONV2-Linux-arm64.AppImage',
-  'CONV2-Linux-arm64.deb',
-  'CONV2-Linux-aarch64.rpm',
-];
+const LINUX_X64_INSTALLERS = ['CONV2-Linux-x86_64.AppImage', 'CONV2-Linux-x86_64.flatpak'];
+const LINUX_ARM64_INSTALLERS = ['CONV2-Linux-arm64.AppImage', 'CONV2-Linux-aarch64.flatpak'];
 const MSI_INSTALLERS = ['CONV2-Win-x64.msi', 'CONV2-Win-arm64.msi'];
 const BLOCKMAP_NAMES = [
   'CONV2-Win-Setup.exe.blockmap',
@@ -43,14 +35,8 @@ const FEED_MAP = {
     'CONV2-macOS-universal.dmg',
     ['CONV2-macOS-universal.dmg', 'CONV2-macOS-universal.zip'],
   ],
-  'latest-linux.yml': [
-    'CONV2-Linux-x86_64.AppImage',
-    ['CONV2-Linux-x86_64.AppImage', 'CONV2-Linux-amd64.deb', 'CONV2-Linux-x86_64.rpm'],
-  ],
-  'latest-linux-arm64.yml': [
-    'CONV2-Linux-arm64.AppImage',
-    ['CONV2-Linux-arm64.AppImage', 'CONV2-Linux-arm64.deb', 'CONV2-Linux-aarch64.rpm'],
-  ],
+  'latest-linux.yml': ['CONV2-Linux-x86_64.AppImage', ['CONV2-Linux-x86_64.AppImage']],
+  'latest-linux-arm64.yml': ['CONV2-Linux-arm64.AppImage', ['CONV2-Linux-arm64.AppImage']],
 };
 
 function installers({ stable = false, arm64 = false } = {}) {

@@ -9,6 +9,8 @@ const APP_ID = 'com.burnttoasters.conv2';
 const BUILD_DIR_PREFIX = 'build-dir';
 const REPO_DIR = 'repo';
 const RELEASE_DIR = 'release';
+// Lets `flatpak install` fetch the GNOME runtime for sideloaded bundles.
+const FLATHUB_REPO = 'https://flathub.org/repo/flathub.flatpakrepo';
 
 if (process.platform !== 'linux') {
   console.error('Flatpak scripts can only run on Linux.');
@@ -149,7 +151,9 @@ function bundleArch(arch) {
 
   fs.mkdirSync(path.join(ROOT, RELEASE_DIR), { recursive: true });
 
-  run(`flatpak build-bundle --arch=${arch} ${REPO_DIR} ${outputPath} ${APP_ID}`);
+  run(
+    `flatpak build-bundle --arch=${arch} --runtime-repo=${FLATHUB_REPO} ${REPO_DIR} ${outputPath} ${APP_ID}`
+  );
 
   console.log(`Bundle created: ${outputPath}`);
 }

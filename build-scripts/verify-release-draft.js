@@ -44,16 +44,8 @@ const WIN_INSTALLERS = [
   'CONV2-Win-arm64-Portable.exe',
 ];
 const MAC_INSTALLERS = ['CONV2-macOS-universal.dmg', 'CONV2-macOS-universal.zip'];
-const LINUX_X64_INSTALLERS = [
-  'CONV2-Linux-x86_64.AppImage',
-  'CONV2-Linux-amd64.deb',
-  'CONV2-Linux-x86_64.rpm',
-];
-const LINUX_ARM64_INSTALLERS = [
-  'CONV2-Linux-arm64.AppImage',
-  'CONV2-Linux-arm64.deb',
-  'CONV2-Linux-aarch64.rpm',
-];
+const LINUX_X64_INSTALLERS = ['CONV2-Linux-x86_64.AppImage', 'CONV2-Linux-x86_64.flatpak'];
+const LINUX_ARM64_INSTALLERS = ['CONV2-Linux-arm64.AppImage', 'CONV2-Linux-aarch64.flatpak'];
 // windows-build.js refuses MSI for beta (non-numeric versioning); stable only.
 const MSI_INSTALLERS = ['CONV2-Win-x64.msi', 'CONV2-Win-arm64.msi'];
 // electron-builder emits differential-update blockmaps only for these targets.

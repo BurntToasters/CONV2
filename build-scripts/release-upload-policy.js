@@ -4,7 +4,7 @@ const path = require('node:path');
 
 function isReleaseUploadName(name) {
   return (
-    /\.(?:dmg|zip|exe|msi|appimage|deb|rpm|appx|msix|flatpak|blockmap|asc)$/i.test(name) ||
+    /\.(?:dmg|zip|exe|msi|appimage|appx|msix|flatpak|blockmap|asc)$/i.test(name) ||
     /^SHA256SUMS-[A-Za-z0-9_-]+\.txt$/.test(name) ||
     /^(?:latest|beta|alpha)(?:-[A-Za-z0-9_-]+)?\.ya?ml$/i.test(name)
   );

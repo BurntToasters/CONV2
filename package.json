@@ -94,8 +94,8 @@
     "release:msstore": "npm run prerelease:prepare && node build-scripts/ensure-release-ffmpeg.js --target win:x64 --target win:arm64 && npm run release:prepare && npm run compile && npm run release:draft && dotenv -- electron-builder --config electron-builder.msstore.yml --win appx --publish never && node build-scripts/verify-packaged-ffmpeg.js release --require && npm run sign:gpg && npm run release:finalize",
     "release:mac": "npm run prerelease:prepare && node build-scripts/ensure-release-ffmpeg.js --target mac:x64 --target mac:arm64 && npm run release:prepare && npm run compile && npm run release:wait-draft && cross-env REQUIRE_NOTARIZATION=1 dotenv -- electron-builder --mac --universal --publish never && node build-scripts/verify-packaged-ffmpeg.js release --require && npm run sign:gpg && npm run release:finalize",
     "release:mac:ssh": "npm run mac:ssh:keychain && npm run release:mac",
-    "release:linux": "npm run prerelease:prepare && node build-scripts/ensure-release-ffmpeg.js --target linux:x64 --target linux:arm64 && npm run release:prepare && npm run compile && npm run release:wait-draft && dotenv -- electron-builder --linux --publish never && node build-scripts/verify-packaged-ffmpeg.js release --require && npm run sign:gpg && npm run release:finalize",
-    "release:linux:all": "npm run prerelease:prepare && node build-scripts/ensure-release-ffmpeg.js --target linux:x64 --target linux:arm64 && npm run release:prepare && npm run compile && npm run release:wait-draft && dotenv -- electron-builder --linux --publish never && node build-scripts/verify-packaged-ffmpeg.js release --require && npm run flatpak:clean && npm run flatpak:bundle && npm run sign:gpg && npm run release:finalize",
+    "release:linux": "npm run prerelease:prepare && node build-scripts/ensure-release-ffmpeg.js --target linux:x64 --target linux:arm64 && npm run release:prepare && npm run compile && npm run release:wait-draft && dotenv -- electron-builder --linux --publish never && node build-scripts/verify-packaged-ffmpeg.js release --require && npm run flatpak:clean && npm run flatpak:bundle && npm run sign:gpg && npm run release:finalize",
+    "release:linux:all": "npm run release:linux",
     "release:linux:native": "cross-env USE_SYSTEM_FPM=true npm run release:linux:all",
     "release:all": "npm run prerelease:prepare && node build-scripts/ensure-release-ffmpeg.js --all && npm run release:prepare && npm run compile && npm run release:draft && dotenv -- node build-scripts/windows-build.js --arch all --publish never && cross-env REQUIRE_NOTARIZATION=1 dotenv -- electron-builder --mac --universal --publish never && dotenv -- electron-builder --linux --publish never && node build-scripts/verify-packaged-ffmpeg.js release --require && npm run sign:gpg && npm run release:finalize",
     "release:beta:win": "node build-scripts/release-beta.js release:win",
@@ -338,20 +338,6 @@
             "x64",
             "arm64"
           ]
-        },
-        {
-          "target": "deb",
-          "arch": [
-            "x64",
-            "arm64"
-          ]
-        },
-        {
-          "target": "rpm",
-          "arch": [
-            "x64",
-            "arm64"
-          ]
         }
       ],
       "icon": "assets/icon.png",
@@ -368,9 +354,9 @@
     "flatpak": {
       "base": "org.electronjs.Electron2.BaseApp",
       "baseVersion": "26.08",
-      "runtime": "org.freedesktop.Platform",
-      "runtimeVersion": "26.08",
-      "sdk": "org.freedesktop.Sdk",
+      "runtime": "org.gnome.Platform",
+      "runtimeVersion": "51",
+      "sdk": "org.gnome.Sdk",
       "finishArgs": [
         "--share=ipc",
         "--socket=x11",

@@ -2,13 +2,15 @@ const { execSync } = require('child_process');
 const os = require('os');
 const fs = require('fs');
 
-const RUNTIME_VERSION = '26.08';
+// GNOME 51 is built on freedesktop SDK 26.08; BaseApp and SDK extensions use that branch.
+const RUNTIME_VERSION = '51';
+const BASE_VERSION = '26.08';
 const ARCHS = ['x86_64', 'aarch64'];
 
 const FLATPAK_RUNTIMES = [
-  'org.freedesktop.Platform',
-  'org.freedesktop.Sdk',
-  'org.electronjs.Electron2.BaseApp',
+  ['org.gnome.Platform', RUNTIME_VERSION],
+  ['org.gnome.Sdk', RUNTIME_VERSION],
+  ['org.electronjs.Electron2.BaseApp', BASE_VERSION],
 ];
 
 // Must match the sdk-extensions entry in com.burnttoasters.conv2.yml and the
@@ -110,14 +112,14 @@ function installFlatpakRuntimes() {
   for (const arch of ARCHS) {
     console.log(`\n--- Architecture: ${arch} ---\n`);
 
-    for (const runtime of FLATPAK_RUNTIMES) {
-      console.log(`Installing ${runtime}//${RUNTIME_VERSION} (${arch})...`);
-      run(`flatpak install -y --arch=${arch} flathub ${runtime}//${RUNTIME_VERSION}`);
+    for (const [runtime, version] of FLATPAK_RUNTIMES) {
+      console.log(`Installing ${runtime}//${version} (${arch})...`);
+      run(`flatpak install -y --arch=${arch} flathub ${runtime}//${version}`);
     }
 
     for (const ext of SDK_EXTENSIONS) {
-      console.log(`Installing ${ext}//${RUNTIME_VERSION} (${arch})...`);
-      run(`flatpak install -y --arch=${arch} flathub ${ext}//${RUNTIME_VERSION}`);
+      console.log(`Installing ${ext}//${BASE_VERSION} (${arch})...`);
+      run(`flatpak install -y --arch=${arch} flathub ${ext}//${BASE_VERSION}`);
     }
   }
 }
@@ -160,13 +162,12 @@ function verifyInstallation() {
       .filter((parts) => parts.length >= 3)
       .map((parts) => `${parts[0]}|${parts[1]}|${parts[2]}`)
   );
-  const requiredIds = [...FLATPAK_RUNTIMES, ...SDK_EXTENSIONS];
+  const required = [...FLATPAK_RUNTIMES, ...SDK_EXTENSIONS.map((ext) => [ext, BASE_VERSION])];
   const missing = [];
   for (const arch of ARCHS) {
-    for (const id of requiredIds) {
-      const key = `${id}|${arch}|${RUNTIME_VERSION}`;
-      if (!installed.has(key)) {
-        missing.push(`${id}//${RUNTIME_VERSION} (${arch})`);
+    for (const [id, version] of required) {
+      if (!installed.has(`${id}|${arch}|${version}`)) {
+        missing.push(`${id}//${version} (${arch})`);
       }
     }
   }
