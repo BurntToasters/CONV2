@@ -1,7 +1,7 @@
 {
   "name": "conv2",
   "desktopName": "com.burnttoasters.conv2",
-  "version": "1.6.1",
+  "version": "1.7.0-beta.1",
   "description": "A cross platform FFMPEG GUI front-end making it easy for quick video conversion!",
   "homepage": "https://github.com/BurntToasters/CONV2#readme",
   "bugs": {
@@ -79,6 +79,7 @@
     "prerelease:prepare": "node build-scripts/release-warning.js && npm run release:preflight && npm run licenses",
     "get:ffmpeg": "node build-scripts/get-ffmpeg.js",
     "get:ffmpeg:all": "node build-scripts/get-ffmpeg.js --all",
+    "get:ffmpeg:update": "node build-scripts/update-ffmpeg.js",
     "ffmpeg:checksums:generate": "cross-env FFMPEG_ALLOW_CHECKSUM_GENERATION=1 node build-scripts/check-ffmpeg.js --all --generate-checksums",
     "ffmpeg:check": "node build-scripts/check-ffmpeg.js --all --require-checksums",
     "ffmpeg:check:win": "node build-scripts/check-ffmpeg.js --require-checksums --target win:x64 --target win:arm64",
