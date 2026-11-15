@@ -6,10 +6,9 @@ const projectRoot = path.resolve(__dirname, '..');
 const TARGET = /^(?:win|mac|linux):(?:x64|arm64)$/;
 
 function usage() {
-  console.error(
+  throw new Error(
     'Usage: node build-scripts/ensure-release-ffmpeg.js --all | --target <platform:arch>...'
   );
-  process.exit(1);
 }
 
 function releaseArgs(args) {
@@ -43,7 +42,7 @@ function runNode(scriptName, args) {
 function main() {
   const args = releaseArgs(process.argv.slice(2));
   if (runNode('check-ffmpeg.js', ['--require-checksums', ...args]) === 0) {
-    return;
+    return 0;
   }
 
   console.error(
@@ -51,13 +50,18 @@ function main() {
   );
   const downloadStatus = runNode('get-ffmpeg.js', args);
   if (downloadStatus !== 0) {
-    process.exit(downloadStatus);
+    return downloadStatus;
   }
-  process.exit(runNode('check-ffmpeg.js', ['--require-checksums', ...args]));
+  return runNode('check-ffmpeg.js', ['--require-checksums', ...args]);
 }
 
 if (require.main === module) {
-  main();
+  try {
+    process.exitCode = main();
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : String(error));
+    process.exitCode = 1;
+  }
 }
 
 module.exports = { releaseArgs };

@@ -5,6 +5,5 @@ const msg =
   '[!!WARNING!!] The release scripts are DESTRUCTIVE! Any local changes to this branch will be lost after the script is done.';
 console.error(`\n${red}${msg}${reset}\n`);
 
-setTimeout(() => {
-  process.exit(0);
-}, 3000);
+// Pause so the warning is read; the process exits when the timer ends.
+setTimeout(() => {}, 3000);

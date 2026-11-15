@@ -180,7 +180,10 @@ async function main() {
 }
 
 if (require.main === module) {
-  main().then((code) => process.exit(code));
+  // Not process.exit: on Node 26 it can deadlock against a V8 background compile thread.
+  main().then((code) => {
+    process.exitCode = code;
+  });
 }
 
 module.exports = { findUnpackedApps, describeApp };

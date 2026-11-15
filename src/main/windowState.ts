@@ -15,12 +15,8 @@ export interface WindowState {
 const DEFAULT_WINDOW_WIDTH = 1080;
 const DEFAULT_WINDOW_HEIGHT = 880;
 
-export const isWindowBoundsOnScreen = (
-  x: number,
-  y: number,
-  width: number,
-  height: number
-): boolean => {
+// Only the title bar strip needs to be visible, so height is not checked.
+export const isWindowBoundsOnScreen = (x: number, y: number, width: number): boolean => {
   const TITLE_BAR_CLEARANCE = 64;
   return screen.getAllDisplays().some(({ bounds }) => {
     return (

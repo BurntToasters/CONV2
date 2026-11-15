@@ -1,13 +1,20 @@
 name: CI
 
+# To save CI minutes, tests run only for pushes to main and beta, never on
+# any other branch. PRs into main run only the stable promotion check.
 on:
   push:
-    branches: [main, beta, 'next-*']
+    branches: [main, beta]
   pull_request:
-    branches: [main, beta, 'next-*']
+    branches: [main]
 
 permissions:
   contents: read
+
+# A newer push supersedes the running check, except on main.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 env:
   NODE_VERSION: '26.13.0'
@@ -18,7 +25,8 @@ env:
 jobs:
   typecheck:
     name: Lint & Type Check
-    runs-on: ubuntu-latest
+    if: github.event_name == 'push'
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -54,7 +62,8 @@ jobs:
 
   test:
     name: Test
-    runs-on: ubuntu-latest
+    if: github.event_name == 'push'
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -90,11 +99,12 @@ jobs:
 
   build:
     name: Build + Package Smoke
+    if: github.event_name == 'push'
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
+        os: [ubuntu-24.04, windows-latest, macos-latest]
     env:
       CSC_IDENTITY_AUTO_DISCOVERY: 'false'
     steps:
@@ -169,11 +179,12 @@ jobs:
 
   e2e:
     name: E2E (UI + conversion matrix)
+    if: github.event_name == 'push'
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        os: [ubuntu-24.04, macos-latest, windows-latest]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -224,7 +235,7 @@ jobs:
         github.base_ref == 'main' &&
         startsWith(github.head_ref, 'release/')
       }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

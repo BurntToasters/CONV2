@@ -167,24 +167,14 @@ const mode = process.argv[2];
 
 if (mode === 'clean') {
   cleanBuildArtifacts();
-  process.exit(0);
-}
-
-if (mode === 'clean-release-artifacts') {
+} else if (mode === 'clean-release-artifacts') {
   cleanReleaseArtifacts();
-  process.exit(0);
-}
-
-if (mode === 'copy') {
+} else if (mode === 'copy') {
   copyRendererAssets();
   copyFfmpegChecksums();
-  process.exit(0);
-}
-
-if (mode === 'compile') {
+} else if (mode === 'compile') {
   compile();
-  process.exit(0);
+} else {
+  console.error('Usage: node build/dist-tools.js <clean|clean-release-artifacts|copy|compile>');
+  process.exitCode = 1;
 }
-
-console.error('Usage: node build/dist-tools.js <clean|clean-release-artifacts|copy|compile>');
-process.exit(1);
