@@ -1,7 +1,8 @@
 app-id: com.burnttoasters.conv2
-runtime: org.freedesktop.Platform
-runtime-version: '26.08'
-sdk: org.freedesktop.Sdk
+runtime: org.gnome.Platform
+runtime-version: '51'
+sdk: org.gnome.Sdk
+# GNOME 51 is built on freedesktop SDK 26.08; base and SDK extensions follow that branch.
 base: org.electronjs.Electron2.BaseApp
 base-version: '26.08'
 sdk-extensions:

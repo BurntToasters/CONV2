@@ -58,6 +58,8 @@ test('all release artifacts and updater metadata are explicitly uploaded', () =>
       'CONV2-Win-x64-Setup.exe.blockmap',
       'CONV2-Win-x64-Setup.exe.asc',
       'CONV2-Linux-x86_64.flatpak',
+      'CONV2-Linux-amd64.deb',
+      'CONV2-Linux-x86_64.rpm',
       'SHA256SUMS-Windows.txt',
       'beta.yml',
       'builder-debug.yml',
@@ -73,6 +75,21 @@ test('all release artifacts and updater metadata are explicitly uploaded', () =>
     path.join(releaseDir, 'SHA256SUMS-Windows.txt'),
     path.join(releaseDir, 'beta.yml'),
   ]);
+});
+
+test('Linux release builds only ship AppImage in the config target list', () => {
+  const packageJson = JSON.parse(read('package.json'));
+  const targets = packageJson.build.linux.target.map((entry) => entry.target);
+  assert.ok(targets.length > 0);
+  assert.deepEqual([...new Set(targets)], ['AppImage']);
+});
+
+test('Linux release builds and signs the Flatpak bundles', () => {
+  const { scripts } = JSON.parse(read('package.json'));
+  assert.match(
+    scripts['release:linux'],
+    /npm run flatpak:clean && npm run flatpak:bundle && npm run sign:gpg/
+  );
 });
 
 test('release commands disable electron-builder publishing', () => {

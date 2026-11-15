@@ -237,7 +237,7 @@ test('complete beta draft verifies, including artifact hashes', SKIP_ON_WINDOWS,
   assert.match(shape.stdout, /verify-draft: ok \(v9\.9\.9-beta\.1, draft, HEAD/);
   const { result: full, seenAuth } = await runWithArtifacts(repo);
   assert.equal(full.status, 0, full.stderr);
-  assert.match(full.stdout, /36 assets/);
+  assert.match(full.stdout, /34 assets/);
   assert.ok(
     seenAuth.some((value) => value === 'Bearer fake-token'),
     'bytes download must send the gh token'
@@ -284,6 +284,25 @@ test('missing installer fails the gate', SKIP_ON_WINDOWS, (t) => {
   const result = run(repo);
   assert.notEqual(result.status, 0);
   assert.match(result.stderr, /missing required assets:.*CONV2-macOS-universal\.dmg/);
+});
+
+test('missing Flatpak bundle fails the gate', SKIP_ON_WINDOWS, (t) => {
+  const repo = setup();
+  t.after(() => cleanup(repo));
+  dropAsset(repo, 'CONV2-Linux-x86_64.flatpak');
+  const result = run(repo);
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /missing required assets:.*CONV2-Linux-x86_64\.flatpak/);
+});
+
+test('missing arm64 Flatpak fails when arm64 is required', SKIP_ON_WINDOWS, (t) => {
+  const repo = setup({ arm64: true });
+  t.after(() => cleanup(repo));
+  dropAsset(repo, 'CONV2-Linux-aarch64.flatpak');
+  assert.equal(run(repo).status, 0, 'base matrix must tolerate absent arm64');
+  const enforced = run(repo, [], { REQUIRE_LINUX_ARM64: '1' });
+  assert.notEqual(enforced.status, 0);
+  assert.match(enforced.stderr, /CONV2-Linux-aarch64\.flatpak/);
 });
 
 test('feed with the wrong version fails', SKIP_ON_WINDOWS, (t) => {

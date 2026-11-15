@@ -78,13 +78,36 @@ test('Flatpak Node SDK extension matches the engines requirement', () => {
   }
 });
 
-test('Flatpak runtime versions agree across build paths', () => {
+test('Flatpak runtime and base versions agree across build paths', () => {
   const setupFlatpak = read('build/setup-flatpak.js');
   const setupRuntime = setupFlatpak.match(/RUNTIME_VERSION = '([^']+)'/)?.[1];
+  const setupBase = setupFlatpak.match(/BASE_VERSION = '([^']+)'/)?.[1];
   assert.equal(setupRuntime, flatpakManifest['runtime-version']);
-  assert.equal(setupRuntime, flatpakManifest['base-version']);
   assert.equal(setupRuntime, packageJson.build.flatpak.runtimeVersion);
-  assert.equal(setupRuntime, packageJson.build.flatpak.baseVersion);
+  assert.equal(setupBase, flatpakManifest['base-version']);
+  assert.equal(setupBase, packageJson.build.flatpak.baseVersion);
+  // SDK extensions follow the freedesktop branch, not the GNOME version.
+  assert.match(setupFlatpak, /\$\{ext\}\/\/\$\{BASE_VERSION\}/);
+});
+
+test('Flatpak sideload bundles name Flathub as the runtime source', () => {
+  // Without it, installing the bundle fails on systems that lack the Flathub remote.
+  const flatpakScript = read('build-scripts/flatpak.js');
+  assert.match(flatpakScript, /build-bundle[^`]*--runtime-repo=\$\{FLATHUB_REPO\}/);
+  assert.match(
+    flatpakScript,
+    /FLATHUB_REPO = 'https:\/\/flathub\.org\/repo\/flathub\.flatpakrepo'/
+  );
+});
+
+test('Flatpak uses the GNOME runtime on every build path', () => {
+  const setupFlatpak = read('build/setup-flatpak.js');
+  assert.equal(flatpakManifest.runtime, 'org.gnome.Platform');
+  assert.equal(flatpakManifest.sdk, 'org.gnome.Sdk');
+  assert.equal(packageJson.build.flatpak.runtime, flatpakManifest.runtime);
+  assert.equal(packageJson.build.flatpak.sdk, flatpakManifest.sdk);
+  assert.match(setupFlatpak, /'org\.gnome\.Platform'/);
+  assert.match(setupFlatpak, /'org\.gnome\.Sdk'/);
 });
 
 test('macOS hardened runtime does not disable library validation', () => {
