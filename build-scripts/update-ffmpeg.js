@@ -68,24 +68,30 @@ function main() {
   const backupRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'conv2-ffmpeg-backup-'));
   const backupDir = path.join(backupRoot, 'ffmpeg');
   console.log(`Backing up resources/ffmpeg/ → ${backupDir}`);
-  fs.cpSync(ffmpegDir, backupDir, { recursive: true, preserveTimestamps: true, verbatimSymlinks: true });
+  fs.cpSync(ffmpegDir, backupDir, {
+    recursive: true,
+    preserveTimestamps: true,
+    verbatimSymlinks: true,
+  });
 
   const oldManifest = readManifest(checksumsPath);
 
   try {
     fs.rmSync(checksumsPath, { force: true });
     run('Download all targets', ['build-scripts/get-ffmpeg.js', '--all', '--allow-unverified']);
-    run(
-      'Generate checksums',
-      ['build-scripts/check-ffmpeg.js', '--all', '--generate-checksums'],
-      { FFMPEG_ALLOW_CHECKSUM_GENERATION: '1' }
-    );
+    run('Generate checksums', ['build-scripts/check-ffmpeg.js', '--all', '--generate-checksums'], {
+      FFMPEG_ALLOW_CHECKSUM_GENERATION: '1',
+    });
     run('Verify', ['build-scripts/check-ffmpeg.js', '--all', '--require-checksums']);
   } catch (err) {
     console.error(`\n✗ ${err instanceof Error ? err.message : String(err)}`);
     console.error('Restoring previous resources/ffmpeg/ ...');
     fs.rmSync(ffmpegDir, { recursive: true, force: true });
-    fs.cpSync(backupDir, ffmpegDir, { recursive: true, preserveTimestamps: true, verbatimSymlinks: true });
+    fs.cpSync(backupDir, ffmpegDir, {
+      recursive: true,
+      preserveTimestamps: true,
+      verbatimSymlinks: true,
+    });
     fs.rmSync(backupRoot, { recursive: true, force: true });
     console.error('Restored. No changes were made.');
     process.exit(1);
