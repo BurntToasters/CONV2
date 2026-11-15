@@ -104,6 +104,10 @@ test('settings dialog has no WCAG 2.2 AA violations', { timeout: 60_000 }, async
       await ctx.window.click(tab);
       byTab[tab] = await runAxe(ctx.window, `settings:${tab}`);
     }
+    // Hidden format panels are skipped by axe, so audit the WebP panel explicitly.
+    await ctx.window.click('#settingsAdvancedFormatsTab');
+    await ctx.window.click('#formatTabWebp');
+    byTab['#formatTabWebp'] = await runAxe(ctx.window, 'settings:#formatTabWebp');
     for (const [tab, violations] of Object.entries(byTab)) {
       assert.deepEqual(violations, [], `${tab}\n${describe(violations)}`);
     }

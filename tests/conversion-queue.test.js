@@ -179,3 +179,20 @@ test('shouldRetryWithCpu still retries real hardware failures found only in erro
   };
   assert.equal(shouldRetryWithCpu(nvenc, 'nvidia', true), true);
 });
+
+// Failure modes for the requested-GPU mapping. Written before the change.
+//  - Linux AMD is still forced to CPU, so the AMD encoder never gets checked
+//  - Apple AV1 stops mapping to CPU and receives VideoToolbox flags
+//  - a CPU or unknown-codec request is turned into a GPU request
+
+const { effectiveConversionGpu } = require('../dist/main/gpuEncoders.js');
+
+test('effectiveConversionGpu keeps AMD on AMD and maps only Apple AV1 to CPU', () => {
+  assert.equal(effectiveConversionGpu('amd', 'h264'), 'amd');
+  assert.equal(effectiveConversionGpu('amd', 'h265'), 'amd');
+  assert.equal(effectiveConversionGpu('intel', 'av1'), 'intel');
+  assert.equal(effectiveConversionGpu('apple', 'av1'), 'cpu');
+  assert.equal(effectiveConversionGpu('apple', 'h264'), 'apple');
+  assert.equal(effectiveConversionGpu('cpu', null), 'cpu');
+  assert.equal(effectiveConversionGpu('nvidia', null), 'nvidia');
+});

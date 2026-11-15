@@ -133,6 +133,8 @@ export interface ElectronApi {
   checkFFmpeg: () => Promise<FFmpegStatus>;
   getVersion: () => Promise<string>;
   getPlatform: () => Promise<string>;
+  /** process.arch of the app process, e.g. 'x64' or 'arm64'. */
+  getArch: () => Promise<string>;
   /** shell.showItemInFolder: reveals, never opens or executes. */
   revealPath: (path: string) => Promise<void>;
   openExternal: (url: string) => Promise<void>;

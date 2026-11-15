@@ -9,7 +9,7 @@ const {
 } = require('../dist/main/settingsSchema.js');
 
 test('settings schema version includes setup wizard flag', () => {
-  assert.equal(SETTINGS_SCHEMA_VERSION, 6);
+  assert.equal(SETTINGS_SCHEMA_VERSION, 7);
 });
 
 test('normalizeSetupWizardCompleted defaults for explicit values', () => {

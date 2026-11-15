@@ -22,6 +22,8 @@ import type {
   H265AdvancedSettings,
   H265TierCollection,
   VideoPreset,
+  WebpAdvancedSettings,
+  WebpTierCollection,
 } from '../main/advancedFormats';
 import type { UIPanelSettings } from '../main/settingsSchema';
 import type {
@@ -61,6 +63,7 @@ import { hideStatus, showStatus } from './status.js';
 
 type Preset = RendererPreset;
 type GifTierKey = keyof GifTierCollection;
+type WebpTierKey = keyof WebpTierCollection;
 type Av1TierKey = keyof Av1TierCollection;
 type H264TierKey = keyof H264TierCollection;
 type H265TierKey = keyof H265TierCollection;
@@ -103,15 +106,16 @@ let pendingProgressUpdate: ConversionProgressPayload | null = null;
 let progressUpdateScheduled = false;
 const MAX_LOG_CHARS = 512 * 1024;
 const MAX_RECENT_PRESET_IDS = 8;
-const GPU_VENDORS: GPUVendor[] = ['nvidia', 'amd', 'intel', 'apple', 'cpu'];
+const GPU_VENDORS: GPUVendor[] = ['nvidia', 'amd', 'intel', 'qualcomm', 'apple', 'cpu'];
 const GPU_CODECS: GPUCodec[] = ['h264', 'h265', 'av1'];
 type UIPanelKey = keyof UIPanelSettings;
-const PRESET_CATEGORY_ORDER = ['av1', 'h265', 'h264', 'remux', 'audio', 'avi', 'gif'];
+const PRESET_CATEGORY_ORDER = ['av1', 'h265', 'h264', 'remux', 'audio', 'avi', 'gif', 'webp'];
 type PresetParentKey = 'recent' | (typeof PRESET_CATEGORY_ORDER)[number];
 let selectedPresetId = '';
 let activePresetParentKey: PresetParentKey | '' = '';
 let presetSearchAllFormats = false;
 let currentPlatform = '';
+let currentArch = '';
 let lastGpuPayload: GPUCapabilitiesPayload | null = null;
 const gpuCapabilitiesCache = new Map<string, GPUCapabilitiesPayload>();
 let gpuPanelRenderToken = 0;
@@ -170,6 +174,7 @@ const getGpuVendorLabel = (vendor: GPUVendor): string => {
   if (vendor === 'nvidia') return 'NVIDIA';
   if (vendor === 'amd') return 'AMD';
   if (vendor === 'intel') return 'Intel';
+  if (vendor === 'qualcomm') return 'Qualcomm';
   if (vendor === 'apple') return 'Apple';
   return 'CPU';
 };
@@ -705,6 +710,18 @@ const GPU_VENDOR_DROPDOWN_LABELS: Record<GPUVendor, string> = {
   nvidia: 'NVIDIA (NVENC)',
   amd: 'AMD (AMF)',
   intel: 'Intel (Quick Sync)',
+  qualcomm: 'Qualcomm (Media Foundation)',
+};
+
+/** Qualcomm's Media Foundation encoders exist only on Windows on Arm. */
+const isQualcommHost = (): boolean => currentPlatform === 'win32' && currentArch === 'arm64';
+
+/** Linux Intel and AMD encode through VAAPI, so the dropdown names that path. */
+const getVendorDropdownLabel = (vendor: GPUVendor): string => {
+  if (currentPlatform === 'linux' && (vendor === 'intel' || vendor === 'amd')) {
+    return `${getGpuVendorLabel(vendor)} (VAAPI)`;
+  }
+  return GPU_VENDOR_DROPDOWN_LABELS[vendor] || getGpuVendorLabel(vendor);
 };
 
 const updateManualVendorDropdown = (
@@ -716,12 +733,14 @@ const updateManualVendorDropdown = (
   select.innerHTML = '';
 
   const availableVendors = getAvailableVendors(payload);
-  const vendorsToShow = settings.showAllGpuVendors ? GPU_VENDORS : availableVendors;
+  const vendorsToShow = (settings.showAllGpuVendors ? GPU_VENDORS : availableVendors).filter(
+    (vendor) => vendor !== 'qualcomm' || isQualcommHost()
+  );
 
   vendorsToShow.forEach((vendor) => {
     const option = document.createElement('option');
     option.value = vendor;
-    const label = GPU_VENDOR_DROPDOWN_LABELS[vendor] || getGpuVendorLabel(vendor);
+    const label = getVendorDropdownLabel(vendor);
     const isAvailableOverall = availableVendors.includes(vendor);
     const supportsCurrentCodec =
       vendor === 'cpu' ||
@@ -911,6 +930,36 @@ const gifTierInputs: Record<
   },
 };
 
+const webpTierInputs: Record<
+  WebpTierKey,
+  {
+    fps: HTMLInputElement;
+    maxDimension: HTMLInputElement;
+    quality: HTMLInputElement;
+  }
+> = {
+  bestQuality: {
+    fps: elements.webpBestQualityFps,
+    maxDimension: elements.webpBestQualityMaxDimension,
+    quality: elements.webpBestQualityQuality,
+  },
+  quality: {
+    fps: elements.webpQualityFps,
+    maxDimension: elements.webpQualityMaxDimension,
+    quality: elements.webpQualityQuality,
+  },
+  balanced: {
+    fps: elements.webpBalancedFps,
+    maxDimension: elements.webpBalancedMaxDimension,
+    quality: elements.webpBalancedQuality,
+  },
+  bestCompression: {
+    fps: elements.webpBestCompressionFps,
+    maxDimension: elements.webpBestCompressionMaxDimension,
+    quality: elements.webpBestCompressionQuality,
+  },
+};
+
 const av1TierInputs: Record<
   Av1TierKey,
   {
@@ -1047,6 +1096,7 @@ const settingsPanels = [
 
 const formatTabs = [
   elements.formatTabGif,
+  elements.formatTabWebp,
   elements.formatTabAv1,
   elements.formatTabH264,
   elements.formatTabH265,
@@ -1054,6 +1104,7 @@ const formatTabs = [
 ];
 const formatPanels = [
   elements.formatPanelGif,
+  elements.formatPanelWebp,
   elements.formatPanelAv1,
   elements.formatPanelH264,
   elements.formatPanelH265,
@@ -1081,7 +1132,12 @@ const setSettingsPanel = (
 };
 
 type FormatPanelId =
-  'formatPanelGif' | 'formatPanelAv1' | 'formatPanelH264' | 'formatPanelH265' | 'formatPanelAvi';
+  | 'formatPanelGif'
+  | 'formatPanelWebp'
+  | 'formatPanelAv1'
+  | 'formatPanelH264'
+  | 'formatPanelH265'
+  | 'formatPanelAvi';
 
 const setFormatPanel = (panelId: FormatPanelId): void => {
   formatPanels.forEach((panel) => {
@@ -1107,6 +1163,17 @@ const setGifControlValues = (gif: GifAdvancedSettings): void => {
     tierInputs.maxDimension.value = String(tierSettings.maxDimension);
     tierInputs.maxColors.value = String(tierSettings.maxColors);
     tierInputs.dither.value = tierSettings.dither;
+  });
+};
+
+const setWebpControlValues = (webp: WebpAdvancedSettings): void => {
+  elements.webpLoopModeSelect.value = webp.loopMode;
+  (Object.keys(webpTierInputs) as WebpTierKey[]).forEach((tier) => {
+    const tierInputs = webpTierInputs[tier];
+    const tierSettings = webp.tiers[tier];
+    tierInputs.fps.value = String(tierSettings.fps);
+    tierInputs.maxDimension.value = String(tierSettings.maxDimension);
+    tierInputs.quality.value = String(tierSettings.quality);
   });
 };
 
@@ -1155,6 +1222,7 @@ const setAviControlValues = (avi: AviAdvancedSettings): void => {
 
 const setAdvancedFormatControlValues = (advanced: AdvancedFormatSettings): void => {
   setGifControlValues(advanced.gif);
+  setWebpControlValues(advanced.webp);
   setAv1ControlValues(advanced.av1);
   setH264ControlValues(advanced.h264);
   setH265ControlValues(advanced.h265);
@@ -1193,6 +1261,34 @@ const readGifControls = (): GifAdvancedSettings => {
         maxDimension: parseNumericInput(elements.gifBestCompressionMaxDimension.value),
         maxColors: parseNumericInput(elements.gifBestCompressionMaxColors.value),
         dither: elements.gifBestCompressionDither.value as GifDither,
+      },
+    },
+  };
+};
+
+const readWebpControls = (): WebpAdvancedSettings => {
+  return {
+    loopMode: elements.webpLoopModeSelect.value as GifLoopMode,
+    tiers: {
+      bestQuality: {
+        fps: parseNumericInput(elements.webpBestQualityFps.value),
+        maxDimension: parseNumericInput(elements.webpBestQualityMaxDimension.value),
+        quality: parseNumericInput(elements.webpBestQualityQuality.value),
+      },
+      quality: {
+        fps: parseNumericInput(elements.webpQualityFps.value),
+        maxDimension: parseNumericInput(elements.webpQualityMaxDimension.value),
+        quality: parseNumericInput(elements.webpQualityQuality.value),
+      },
+      balanced: {
+        fps: parseNumericInput(elements.webpBalancedFps.value),
+        maxDimension: parseNumericInput(elements.webpBalancedMaxDimension.value),
+        quality: parseNumericInput(elements.webpBalancedQuality.value),
+      },
+      bestCompression: {
+        fps: parseNumericInput(elements.webpBestCompressionFps.value),
+        maxDimension: parseNumericInput(elements.webpBestCompressionMaxDimension.value),
+        quality: parseNumericInput(elements.webpBestCompressionQuality.value),
       },
     },
   };
@@ -1309,6 +1405,7 @@ const readAviControls = (): AviAdvancedSettings => {
 const readAdvancedFormatControls = (): AdvancedFormatSettings => {
   return {
     gif: readGifControls(),
+    webp: readWebpControls(),
     av1: readAv1Controls(),
     h264: readH264Controls(),
     h265: readH265Controls(),
@@ -1834,12 +1931,21 @@ const init = async () => {
 
 const checkPlatform = async () => {
   currentPlatform = await window.electronAPI.getPlatform();
+  currentArch = await window.electronAPI.getArch();
   const appleOption =
     elements.gpuManualVendorSelect.querySelector<HTMLOptionElement>('option[value="apple"]');
   if (appleOption) {
     const allowApple = currentPlatform === 'darwin';
     appleOption.hidden = !allowApple;
     appleOption.disabled = !allowApple;
+  }
+  const qualcommOption = elements.gpuManualVendorSelect.querySelector<HTMLOptionElement>(
+    'option[value="qualcomm"]'
+  );
+  if (qualcommOption) {
+    const allowQualcomm = isQualcommHost();
+    qualcommOption.hidden = !allowQualcomm;
+    qualcommOption.disabled = !allowQualcomm;
   }
 };
 
@@ -1890,6 +1996,7 @@ const loadSettings = async () => {
   if (
     !settings.advancedFormatSettings ||
     !settings.advancedFormatSettings.gif ||
+    !settings.advancedFormatSettings.webp ||
     !settings.advancedFormatSettings.av1 ||
     !settings.advancedFormatSettings.h264 ||
     !settings.advancedFormatSettings.h265 ||
@@ -1902,6 +2009,9 @@ const loadSettings = async () => {
     settings.gpuManualVendor = 'cpu';
   }
   if (currentPlatform !== 'darwin' && settings.gpuManualVendor === 'apple') {
+    settings.gpuManualVendor = 'cpu';
+  }
+  if (!isQualcommHost() && settings.gpuManualVendor === 'qualcomm') {
     settings.gpuManualVendor = 'cpu';
   }
   settings.uiPanels = normalizeUiPanels(settings.uiPanels);
@@ -2194,6 +2304,7 @@ const setupEventListeners = () => {
       const panelId = tab.dataset.formatPanel;
       if (
         panelId === 'formatPanelGif' ||
+        panelId === 'formatPanelWebp' ||
         panelId === 'formatPanelAv1' ||
         panelId === 'formatPanelH264' ||
         panelId === 'formatPanelH265' ||
@@ -2207,6 +2318,7 @@ const setupEventListeners = () => {
         const panelId = nextTab.dataset.formatPanel;
         if (
           panelId === 'formatPanelGif' ||
+          panelId === 'formatPanelWebp' ||
           panelId === 'formatPanelAv1' ||
           panelId === 'formatPanelH264' ||
           panelId === 'formatPanelH265' ||
@@ -2238,6 +2350,10 @@ const setupEventListeners = () => {
 
   elements.resetGifDefaultsBtn.addEventListener('click', async () => {
     await resetFormatSettingsToDefaults('gif', 'GIF');
+  });
+
+  elements.resetWebpDefaultsBtn.addEventListener('click', async () => {
+    await resetFormatSettingsToDefaults('webp', 'WebP');
   });
 
   elements.resetAv1DefaultsBtn.addEventListener('click', async () => {

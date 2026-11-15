@@ -1,4 +1,4 @@
-export const SETTINGS_SCHEMA_VERSION = 6;
+export const SETTINGS_SCHEMA_VERSION = 7;
 export const MAX_RECENT_PRESET_IDS = 8;
 
 export type ThemePreference = 'system' | 'dark' | 'light' | 'custom';
@@ -73,6 +73,8 @@ export const isSettingsCorrupted = (value: unknown): boolean => {
  * The consequence to keep in mind: if a field is ever renamed or its scale
  * changed, that field silently resets instead of being converted. Such a change
  * needs an explicit migration here alongside the version bump.
+ *
+ * v7 migrates untouched legacy tier defaults (see advancedFormatMigration.ts).
  */
 export const isSettingsSchemaOutdated = (value: unknown): boolean => {
   if (!value || typeof value !== 'object') {

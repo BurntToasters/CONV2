@@ -10,6 +10,11 @@
 //  - HDR10 into 8-bit H.264 keeps PQ transfer tags (washed-out, wrong on SDR players)
 //  - HDR10 into CPU H.265 loses 10-bit or HDR tags
 //  - 5.1 audio breaks the Opus/AAC encoders
+//  - a small low-fps source into a GIF or WebP preset is upscaled or gets duplicated frames
+//  - an animated WebP preset fails or produces a single still frame
+//  - an AV1 preset fails on a 5.1(side) audio source (libopus rejects that layout)
+//  - HDR10 into a WebP preset fails
+//  - a schema-6 settings.json keeps old slow tier defaults after upgrade, or loses a customised tier
 //  - MKV text subtitles break MP4 remux; WebM remux of AAC is not explained up front
 //  - each conversion leaves an abort listener on the shared queue signal, so a later
 //    cancel force-kills long-dead processes (and whatever reused their PIDs)
@@ -24,6 +29,7 @@ const {
   FFMPEG,
   ffmpegSkipReason,
   createFixtures,
+  countFrames,
   mkTemp,
   probe,
   writeArtifact,
@@ -93,6 +99,7 @@ const EXPECT = {
   h265: { videoCodec: 'hevc', videoTag: 'hvc1' },
   avi: { formatName: 'avi' },
   gif: { videoCodec: 'gif' },
+  webp: { videoCodec: 'webp_anim', formatName: 'webp_anim' },
 };
 const AUDIO_CODEC = { 'audio-mp3': 'mp3', 'audio-aac': 'aac', 'audio-flac': 'flac' };
 
@@ -118,7 +125,12 @@ test('every preset converts the standard source', { skip, timeout: 900_000 }, as
         assert.equal(info.audioCodec, AUDIO_CODEC[preset.id]);
       }
       if (preset.category === 'remux') assert.equal(info.videoCodec, 'h264');
-      if (preset.category !== 'gif') assert.ok(info.duration > 1.5, `duration ${info.duration}`);
+      if (preset.category === 'webp') {
+        // ffprobe reports no duration for animated WebP, so count frames instead.
+        assert.ok(info.frames > 1, `webp frames ${info.frames}`);
+      } else if (preset.category !== 'gif') {
+        assert.ok(info.duration > 1.5, `duration ${info.duration}`);
+      }
     });
   }
 });
@@ -182,6 +194,114 @@ test('5.1 audio survives Opus (AV1) and AAC (H.264)', { skip, timeout: 120_000 }
     assert.ok(entry.probe.audioChannels >= 2, `${presetId}: ${entry.probe.audioChannels} ch`);
   }
 });
+
+test('5.1(side) audio survives the fastest AV1 tier', { skip, timeout: 120_000 }, async () => {
+  assert.equal(probe(fixtures.surroundSide).audioLayout, '5.1(side)');
+  const entry = await convert(fixtures.surroundSide, 'av1-compression');
+  expectDone(entry);
+  assert.equal(entry.probe.audioCodec, 'opus');
+});
+
+test(
+  'small low-fps source is not upscaled or given duplicate frames in GIF and WebP',
+  { skip, timeout: 180_000 },
+  async () => {
+    const sourceFrames = countFrames(fixtures.lowFps);
+    assert.equal(sourceFrames, 20);
+    for (const presetId of ['gif-best-quality', 'webp-best-quality']) {
+      const entry = await convert(fixtures.lowFps, presetId);
+      expectDone(entry);
+      assert.equal(entry.probe.width, 320, `${presetId} width`);
+      assert.ok(
+        entry.probe.frames <= sourceFrames,
+        `${presetId}: ${entry.probe.frames} frames from ${sourceFrames}`
+      );
+    }
+  }
+);
+
+test(
+  'HDR10 into animated WebP converts to an animated WebP',
+  { skip, timeout: 120_000 },
+  async () => {
+    const entry = await convert(fixtures.hdr10, 'webp-balanced');
+    expectDone(entry);
+    assert.equal(entry.probe.videoCodec, 'webp_anim');
+    assert.ok(entry.probe.frames > 1, `frames ${entry.probe.frames}`);
+  }
+);
+
+test(
+  'schema-6 settings upgrade replaces legacy slow tiers and keeps customised ones',
+  { timeout: 60_000 },
+  async () => {
+    const legacy = {
+      ...returningUserSettings(),
+      settingsSchemaVersion: 6,
+      advancedFormatSettings: {
+        av1: {
+          tiers: {
+            bestQuality: { quality: 18, cpuPreset: 2, audioBitrateKbps: 256 },
+            balanced: { quality: 27, cpuPreset: 5, audioBitrateKbps: 160 },
+          },
+        },
+        h265: {
+          tiers: {
+            bestQuality: {
+              quality: 16,
+              preset: 'veryslow',
+              audioBitrateKbps: 256,
+              useAdvancedParams: true,
+            },
+          },
+        },
+        avi: {
+          tiers: {
+            balanced: {
+              codec: 'h264',
+              quality: 20,
+              preset: 'slow',
+              audioBitrateKbps: 192,
+              useAdvancedParams: false,
+            },
+          },
+        },
+      },
+    };
+    const started = Date.now();
+    const upgraded = await launchApp({ settings: legacy, label: 'migration' });
+    let settings;
+    try {
+      settings = await upgraded.window.evaluate(() => window.electronAPI.getSettings());
+    } finally {
+      await upgraded.close();
+    }
+    const tiers = settings.advancedFormatSettings;
+    const result = {
+      kind: 'settings-migration',
+      status: 'done',
+      input: 'settings.json (settingsSchemaVersion 6)',
+      settingsSchemaVersion: settings.settingsSchemaVersion,
+      av1BestQuality: tiers.av1.tiers.bestQuality,
+      av1Balanced: tiers.av1.tiers.balanced,
+      h265BestQuality: tiers.h265.tiers.bestQuality,
+      aviBalanced: tiers.avi.tiers.balanced,
+      ms: Date.now() - started,
+    };
+    matrix.push(result);
+
+    assert.equal(result.settingsSchemaVersion, 7);
+    assert.deepEqual(result.av1BestQuality, { quality: 18, cpuPreset: 4, audioBitrateKbps: 192 });
+    assert.deepEqual(result.av1Balanced, { quality: 27, cpuPreset: 5, audioBitrateKbps: 160 });
+    assert.deepEqual(result.h265BestQuality, {
+      quality: 16,
+      preset: 'slow',
+      audioBitrateKbps: 256,
+      useAdvancedParams: true,
+    });
+    assert.equal(result.aviBalanced.preset, 'medium');
+  }
+);
 
 test('MKV text subtitles become mov_text in MP4 remux', { skip, timeout: 60_000 }, async () => {
   const entry = await convert(fixtures.subtitled, 'remux-mp4');

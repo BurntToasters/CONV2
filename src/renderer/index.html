@@ -231,6 +231,7 @@
                   <option value="nvidia">NVIDIA (NVENC)</option>
                   <option value="amd">AMD (AMF)</option>
                   <option value="intel">Intel (Quick Sync)</option>
+                  <option value="qualcomm">Qualcomm (Media Foundation)</option>
                 </select>
               </div>
 
@@ -792,6 +793,17 @@
               </button>
               <button
                 class="format-tab"
+                id="formatTabWebp"
+                data-format-panel="formatPanelWebp"
+                role="tab"
+                aria-selected="false"
+                aria-controls="formatPanelWebp"
+                tabindex="-1"
+              >
+                WebP
+              </button>
+              <button
+                class="format-tab"
                 id="formatTabAv1"
                 data-format-panel="formatPanelAv1"
                 role="tab"
@@ -867,7 +879,7 @@
                         type="number"
                         id="gifBestQualityFps"
                         min="1"
-                        max="60"
+                        max="50"
                         data-gif-tier="bestQuality"
                         data-gif-field="fps"
                         class="advanced-control"
@@ -923,7 +935,7 @@
                         type="number"
                         id="gifQualityFps"
                         min="1"
-                        max="60"
+                        max="50"
                         data-gif-tier="quality"
                         data-gif-field="fps"
                         class="advanced-control"
@@ -979,7 +991,7 @@
                         type="number"
                         id="gifBalancedFps"
                         min="1"
-                        max="60"
+                        max="50"
                         data-gif-tier="balanced"
                         data-gif-field="fps"
                         class="advanced-control"
@@ -1035,7 +1047,7 @@
                         type="number"
                         id="gifBestCompressionFps"
                         min="1"
-                        max="60"
+                        max="50"
                         data-gif-tier="bestCompression"
                         data-gif-field="fps"
                         class="advanced-control"
@@ -1078,6 +1090,199 @@
                         <option value="bayer">Bayer</option>
                         <option value="none">None</option>
                       </select>
+                    </label>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div
+              class="format-panel"
+              id="formatPanelWebp"
+              role="tabpanel"
+              aria-labelledby="formatTabWebp"
+              hidden
+            >
+              <div class="advanced-format-header">
+                <h3>WebP Preset Tuning</h3>
+                <button class="btn btn-secondary btn-xs" id="resetWebpDefaultsBtn">
+                  Reset WebP Defaults
+                </button>
+              </div>
+
+              <div class="advanced-format-row">
+                <label class="advanced-format-label" for="webpLoopModeSelect">Loop</label>
+                <select id="webpLoopModeSelect" class="advanced-format-select advanced-control">
+                  <option value="forever">Forever</option>
+                  <option value="once">Once</option>
+                </select>
+              </div>
+
+              <div class="advanced-tier-grid">
+                <div class="advanced-tier-card">
+                  <h4>Best Quality</h4>
+                  <div class="advanced-tier-fields">
+                    <label>
+                      FPS
+                      <input
+                        type="number"
+                        id="webpBestQualityFps"
+                        min="1"
+                        max="60"
+                        data-webp-tier="bestQuality"
+                        data-webp-field="fps"
+                        class="advanced-control"
+                      />
+                    </label>
+                    <label>
+                      Max Dimension
+                      <input
+                        type="number"
+                        id="webpBestQualityMaxDimension"
+                        min="160"
+                        max="2160"
+                        data-webp-tier="bestQuality"
+                        data-webp-field="maxDimension"
+                        class="advanced-control"
+                      />
+                    </label>
+                    <label>
+                      Quality
+                      <input
+                        type="number"
+                        id="webpBestQualityQuality"
+                        min="1"
+                        max="100"
+                        data-webp-tier="bestQuality"
+                        data-webp-field="quality"
+                        class="advanced-control"
+                      />
+                    </label>
+                  </div>
+                </div>
+
+                <div class="advanced-tier-card">
+                  <h4>Quality</h4>
+                  <div class="advanced-tier-fields">
+                    <label>
+                      FPS
+                      <input
+                        type="number"
+                        id="webpQualityFps"
+                        min="1"
+                        max="60"
+                        data-webp-tier="quality"
+                        data-webp-field="fps"
+                        class="advanced-control"
+                      />
+                    </label>
+                    <label>
+                      Max Dimension
+                      <input
+                        type="number"
+                        id="webpQualityMaxDimension"
+                        min="160"
+                        max="2160"
+                        data-webp-tier="quality"
+                        data-webp-field="maxDimension"
+                        class="advanced-control"
+                      />
+                    </label>
+                    <label>
+                      Quality
+                      <input
+                        type="number"
+                        id="webpQualityQuality"
+                        min="1"
+                        max="100"
+                        data-webp-tier="quality"
+                        data-webp-field="quality"
+                        class="advanced-control"
+                      />
+                    </label>
+                  </div>
+                </div>
+
+                <div class="advanced-tier-card">
+                  <h4>Balanced</h4>
+                  <div class="advanced-tier-fields">
+                    <label>
+                      FPS
+                      <input
+                        type="number"
+                        id="webpBalancedFps"
+                        min="1"
+                        max="60"
+                        data-webp-tier="balanced"
+                        data-webp-field="fps"
+                        class="advanced-control"
+                      />
+                    </label>
+                    <label>
+                      Max Dimension
+                      <input
+                        type="number"
+                        id="webpBalancedMaxDimension"
+                        min="160"
+                        max="2160"
+                        data-webp-tier="balanced"
+                        data-webp-field="maxDimension"
+                        class="advanced-control"
+                      />
+                    </label>
+                    <label>
+                      Quality
+                      <input
+                        type="number"
+                        id="webpBalancedQuality"
+                        min="1"
+                        max="100"
+                        data-webp-tier="balanced"
+                        data-webp-field="quality"
+                        class="advanced-control"
+                      />
+                    </label>
+                  </div>
+                </div>
+
+                <div class="advanced-tier-card">
+                  <h4>Best Compression</h4>
+                  <div class="advanced-tier-fields">
+                    <label>
+                      FPS
+                      <input
+                        type="number"
+                        id="webpBestCompressionFps"
+                        min="1"
+                        max="60"
+                        data-webp-tier="bestCompression"
+                        data-webp-field="fps"
+                        class="advanced-control"
+                      />
+                    </label>
+                    <label>
+                      Max Dimension
+                      <input
+                        type="number"
+                        id="webpBestCompressionMaxDimension"
+                        min="160"
+                        max="2160"
+                        data-webp-tier="bestCompression"
+                        data-webp-field="maxDimension"
+                        class="advanced-control"
+                      />
+                    </label>
+                    <label>
+                      Quality
+                      <input
+                        type="number"
+                        id="webpBestCompressionQuality"
+                        min="1"
+                        max="100"
+                        data-webp-tier="bestCompression"
+                        data-webp-field="quality"
+                        class="advanced-control"
+                      />
                     </label>
                   </div>
                 </div>
