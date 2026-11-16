@@ -1,8 +1,8 @@
-// Release runner: `npm run release:<target> -- --skip-check`, same contract as S3 Sidekick and Zinnia.
+// Release runner: `npm run release:<target> -- --skip-check`, same contract as Zinnia.
 // Failure modes covered here:
 //  1. An unknown flag, an unknown target, or two targets runs release steps anyway.
 //  2. --skip-check is honored on a stable version.
-//  3. --skip-check works without the ALLOW_RELEASE_SKIP_CHECK=1 confirmation.
+//  3. --skip-check on a beta demands an extra confirmation variable instead of the flag alone.
 //  4. FORCE_UPLOAD reaches the prepare steps (their tests would run with the bypass on).
 //  5. FORCE_UPLOAD is not set on the continue step, so --skip-check does nothing.
 //  6. A failing step does not stop the run, or its exit code is lost.
@@ -21,7 +21,6 @@ const scripts = () => JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json')
 const runner = () => require('../build-scripts/run-release.js');
 
 const BETA = '9.9.9-beta.1';
-const ALLOW = { ALLOW_RELEASE_SKIP_CHECK: '1' };
 
 function record(argv, { env = {}, version = BETA, failAt = -1 } = {}) {
   const steps = [];
@@ -47,22 +46,14 @@ test('unknown flags, unknown targets, and extra targets are refused', () => {
   assert.equal(parseReleaseArgs(['linux']).skipCheck, false);
 });
 
-test('--skip-check needs a beta version and an explicit confirmation', () => {
+test('--skip-check is refused on stable and needs only the flag on beta', () => {
   const { assertSkipCheckAllowed } = runner();
-  assert.equal(assertSkipCheckAllowed(false, { env: {}, version: '1.7.0' }), false);
-  assert.throws(
-    () => assertSkipCheckAllowed(true, { env: ALLOW, version: '1.7.0' }),
-    /stable release/
-  );
-  assert.throws(
-    () => assertSkipCheckAllowed(true, { env: {}, version: BETA }),
-    /ALLOW_RELEASE_SKIP_CHECK=1/
-  );
-  assert.throws(
-    () => assertSkipCheckAllowed(true, { env: { ALLOW_RELEASE_SKIP_CHECK: '0' }, version: BETA }),
-    /ALLOW_RELEASE_SKIP_CHECK=1/
-  );
-  assert.equal(assertSkipCheckAllowed(true, { env: ALLOW, version: BETA }), true);
+  assert.equal(assertSkipCheckAllowed(false, { version: '1.7.0' }), false);
+  assert.throws(() => assertSkipCheckAllowed(true, { version: '1.7.0' }), /stable release/);
+  assert.equal(assertSkipCheckAllowed(true, { version: BETA }), true);
+  const { status, steps } = record(['linux', '--skip-check'], { env: {} });
+  assert.equal(status, 0);
+  assert.equal(steps.at(-1).env.FORCE_UPLOAD, '1');
 });
 
 function refusedBeforeAnyStep(argv, options, pattern) {
@@ -84,16 +75,7 @@ function refusedBeforeAnyStep(argv, options, pattern) {
 test('refused runs execute no steps', () => {
   refusedBeforeAnyStep(['linux', '--bogus'], { env: {}, version: BETA }, /Unknown release flag/);
   refusedBeforeAnyStep(['beos'], { env: {}, version: BETA }, /Usage/);
-  refusedBeforeAnyStep(
-    ['linux', '--skip-check'],
-    { env: {}, version: BETA },
-    /ALLOW_RELEASE_SKIP_CHECK=1/
-  );
-  refusedBeforeAnyStep(
-    ['linux', '--skip-check'],
-    { env: ALLOW, version: '1.7.0' },
-    /stable release/
-  );
+  refusedBeforeAnyStep(['linux', '--skip-check'], { env: {}, version: '1.7.0' }, /stable release/);
 });
 
 test('stable runs refuse inherited release overrides before prepare', () => {
@@ -132,7 +114,7 @@ test('steps run in release order with the target FFmpeg payload', () => {
 });
 
 test('--skip-check sets FORCE_UPLOAD on the continue step only', () => {
-  const { steps } = record(['mac', '--skip-check'], { env: ALLOW });
+  const { steps } = record(['mac', '--skip-check']);
   const last = steps.at(-1);
   assert.equal(last.args[1], 'release:mac:continue');
   assert.equal(last.env.FORCE_UPLOAD, '1');
@@ -162,7 +144,7 @@ test('child environment drops cleared variables instead of passing "undefined"',
 });
 
 test('CLI refuses bad input before running anything', () => {
-  const env = { ...process.env, ALLOW_RELEASE_SKIP_CHECK: '' };
+  const env = process.env;
   const unknown = spawnSync(process.execPath, [RUNNER, 'linux', '--bogus'], {
     env,
     encoding: 'utf8',
@@ -170,13 +152,13 @@ test('CLI refuses bad input before running anything', () => {
   assert.equal(unknown.status, 1);
   assert.match(unknown.stderr, /Unknown release flag: --bogus/);
   assert.equal(unknown.stdout, '');
-  const unconfirmed = spawnSync(process.execPath, [RUNNER, 'linux', '--skip-check'], {
+  const badTarget = spawnSync(process.execPath, [RUNNER, 'beos', '--skip-check'], {
     env,
     encoding: 'utf8',
   });
-  assert.equal(unconfirmed.status, 1);
-  assert.match(unconfirmed.stderr, /--skip-check/);
-  assert.equal(unconfirmed.stdout, '');
+  assert.equal(badTarget.status, 1);
+  assert.match(badTarget.stderr, /Usage/);
+  assert.equal(badTarget.stdout, '');
 });
 
 test('every release target routes through the runner and has a lean continue script', () => {
