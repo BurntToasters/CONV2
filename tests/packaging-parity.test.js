@@ -36,6 +36,8 @@ test('Flatpak does not share the host /tmp', () => {
   }
 });
 
+const FLATPAK_NPM_PREFIX = '/run/build/conv2/npm-global';
+
 test('Flatpak Node SDK extension matches the engines requirement', () => {
   const enginesNode = packageJson.engines.node;
   const supportedMajors = [
@@ -58,8 +60,8 @@ test('Flatpak Node SDK extension matches the engines requirement', () => {
   const buildOptions = flatpakManifest.modules?.[0]?.['build-options'] || {};
   assert.equal(
     buildOptions['prepend-path'],
-    `/usr/lib/sdk/node${manifestMajor}/bin`,
-    'prepend-path must point at the same Node SDK extension'
+    `${FLATPAK_NPM_PREFIX}/bin:/usr/lib/sdk/node${manifestMajor}/bin`,
+    'prepend-path must put the pinned npm first, then the same Node SDK extension'
   );
 
   // build/setup-flatpak.js installs the extension for local builds; if it
@@ -76,6 +78,33 @@ test('Flatpak Node SDK extension matches the engines requirement', () => {
       'build/setup-flatpak.js installs a different Node SDK major than the manifest needs'
     );
   }
+});
+
+// The Node SDK extension ships an npm below engines.npm. Failure modes: npm ci runs
+// on the SDK npm (EBADENGINE); the pin drifts from CI's NPM_VERSION; the install is
+// not verified, so a failed install silently falls back to the SDK npm.
+test('Flatpak build installs the CI npm version before npm ci', () => {
+  const ciNpm = yaml.load(read('.github/workflows/ci.yml')).env.NPM_VERSION;
+  const commands = flatpakManifest.modules[0]['build-commands'];
+  const install = commands.findIndex(
+    (cmd) =>
+      cmd.startsWith(`npm install --global npm@${ciNpm} `) &&
+      cmd.includes(`--prefix ${FLATPAK_NPM_PREFIX}`)
+  );
+  const verify = commands.indexOf(`test "$(npm --version)" = "${ciNpm}"`);
+  const firstCi = commands.findIndex((cmd) => cmd.startsWith('npm ci'));
+  assert.ok(install !== -1, `Flatpak must install npm@${ciNpm} into ${FLATPAK_NPM_PREFIX}`);
+  assert.ok(verify > install, 'Flatpak must verify the installed npm version');
+  assert.ok(firstCi > verify, 'npm ci must run after the pinned npm is verified');
+  const [major, minor, patch] = ciNpm.split('.').map(Number);
+  const floor = packageJson.engines.npm
+    .match(/>=(\d+)\.(\d+)\.(\d+)/)
+    .slice(1)
+    .map(Number);
+  assert.ok(
+    major * 1e6 + minor * 1e3 + patch >= floor[0] * 1e6 + floor[1] * 1e3 + floor[2],
+    `CI npm ${ciNpm} must satisfy engines.npm ${packageJson.engines.npm}`
+  );
 });
 
 test('Flatpak runtime and base versions agree across build paths', () => {
