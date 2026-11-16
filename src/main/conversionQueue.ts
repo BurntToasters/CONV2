@@ -206,6 +206,27 @@ export const shouldRetryWithCpu = (
     'openencodesessionex',
     'cuda',
     'd3d11',
+    // VAAPI runtime failures on Linux Intel/AMD
+    'no usable encoding profile',
+    'rate control mode',
+    'rc mode',
+    'failed to upload',
+    'failed to create surface',
+    'failed to create context',
+    'failed to create buffer',
+    'vabeginpicture',
+    'varenderpicture',
+    'vaendpicture',
+    'vacreate',
+    // Media Foundation runtime failures on Windows on Arm
+    'could not find any mft',
+    'hardware mft',
+    'format negotiation failed',
+    'could not start stream',
+    'failed to set d3d manager',
+    'mfplat.dll',
+    'could not set input type',
+    'could not set output type',
   ];
   return gpuMarkers.some((marker) => message.includes(marker));
 };

@@ -31,8 +31,8 @@ modules:
   - name: conv2
     buildsystem: simple
     build-options:
-      # Prepend so the extension Node wins over any older SDK /usr/bin/node.
-      prepend-path: /usr/lib/sdk/node24/bin
+      # Pinned npm first, then the extension Node over any older SDK /usr/bin/node.
+      prepend-path: /run/build/conv2/npm-global/bin:/usr/lib/sdk/node24/bin
       build-args:
         - --share=network
       env:
@@ -40,6 +40,9 @@ modules:
         npm_config_cache: /run/build/conv2/flatpak-node/npm-cache
         HUSKY: '0'
     build-commands:
+      # The Node 24 SDK ships npm 11.x; engines.npm needs 12.2.1 (CI's NPM_VERSION).
+      - npm install --global npm@12.2.1 --ignore-scripts --engine-strict=false --no-audit --no-fund --prefix /run/build/conv2/npm-global
+      - test "$(npm --version)" = "12.2.1"
       - npm ci --legacy-peer-deps
       # ELECTRON_SKIP_BINARY_DOWNLOAD skips electron's postinstall, so fetch the runtime explicitly.
       - node node_modules/electron/install.js

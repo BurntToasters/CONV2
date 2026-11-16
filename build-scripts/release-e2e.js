@@ -1,7 +1,9 @@
 'use strict';
 
 // Release E2E gate, run by release:prepare on the release VMs.
-// No usable display: warn, record the skip in coverage/e2e, and let the release go on.
+// Linux without a display or xvfb-run: warn, record the skip, and let the release go on.
+// A probe failure where a display should exist (macOS, Windows, Linux with DISPLAY/WAYLAND_DISPLAY) blocks.
+// A probe failure inside the gate's own xvfb-run display: warn, record the skip, and let it go on.
 // The app launched but a test failed: block the release.
 const fs = require('node:fs');
 const path = require('node:path');
@@ -54,7 +56,13 @@ function releaseE2E({
     env: { ELECTRON_RUN_AS_NODE: undefined },
     timeout: PROBE_TIMEOUT_MS,
   });
-  if (probe !== 0) return skip(`Electron could not open a hidden window (exit ${probe})`);
+  if (probe !== 0) {
+    const reason = `Electron could not open a hidden window (exit ${probe})`;
+    // Only the virtual display this gate supplied may fail soft.
+    if (plan.prefix.length > 0) return skip(reason);
+    record({ status: 'failed', reason, platform });
+    return probe;
+  }
 
   const suite = run({
     ...wrap(plan.prefix, process.execPath, ['build-scripts/run-e2e.js', '--skip-build']),

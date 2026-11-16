@@ -867,9 +867,40 @@ test('insertBeforeInput leaves arguments alone when there is nothing to add or n
 test('vaapiProbeOptions keys the probe cache by encoder and render node', () => {
   assert.deepEqual(vaapiProbeOptions('hevc_vaapi', '/dev/dri/renderD129'), {
     inputArgs: ['-vaapi_device', '/dev/dri/renderD129'],
-    outputArgs: ['-vf', 'format=nv12,hwupload'],
-    cacheKey: 'hevc_vaapi@/dev/dri/renderD129',
+    outputArgs: ['-vf', 'format=nv12,hwupload', '-rc_mode', 'CQP', '-global_quality', '23'],
+    cacheKey: 'hevc_vaapi@/dev/dri/renderD129#cqp',
   });
+});
+
+// Failure modes for the VAAPI probe matching conversion args. Written before the change.
+//  - the probe runs default rate control, so a driver that rejects CQP still passes
+//  - the probe omits -global_quality, or AV1 gets an H.264/HEVC range value
+//  - the cache key stays encoder@renderNode, so a stale default-RC result is reused
+//  - the rate-control flags are missing from the built probe argv, or follow -c:v
+
+test('vaapiProbeOptions probes CQP with a codec-valid global quality', () => {
+  const h264 = buildHwProbeArgs(
+    'h264_vaapi',
+    vaapiProbeOptions('h264_vaapi', '/dev/dri/renderD128')
+  );
+  assert.equal(h264[h264.indexOf('-rc_mode') + 1], 'CQP');
+  const q = Number(h264[h264.indexOf('-global_quality') + 1]);
+  assert.ok(q >= 1 && q <= 51, `h264 global_quality ${q}`);
+  assert.ok(h264.indexOf('-rc_mode') < h264.indexOf('-c:v'));
+  assert.ok(h264.indexOf('-global_quality') < h264.indexOf('-c:v'));
+
+  const av1 = buildHwProbeArgs('av1_vaapi', vaapiProbeOptions('av1_vaapi', '/dev/dri/renderD128'));
+  assert.equal(av1[av1.indexOf('-rc_mode') + 1], 'CQP');
+  assert.equal(Number(av1[av1.indexOf('-global_quality') + 1]), q * 4);
+  assert.ok(q * 4 <= 255);
+});
+
+test('vaapiProbeOptions cache keys never match the old default-RC key', () => {
+  for (const encoder of ['h264_vaapi', 'hevc_vaapi', 'av1_vaapi']) {
+    const { cacheKey } = vaapiProbeOptions(encoder, '/dev/dri/renderD129');
+    assert.notEqual(cacheKey, `${encoder}@/dev/dri/renderD129`);
+    assert.ok(cacheKey.startsWith(`${encoder}@/dev/dri/renderD129`), cacheKey);
+  }
 });
 
 test('buildHwProbeArgs puts the device before the input and the upload filter before the encoder', () => {

@@ -5,13 +5,23 @@
 
 | <img height="20" src="https://github.com/user-attachments/assets/340d360e-79b1-4c70-bfab-d944085f75df" /> Windows                                                                                                            | <img height="20" src="https://github.com/user-attachments/assets/42d7e887-4616-4e8c-b1d3-e44e01340f8c" /> macOS       | <img height="20" src="https://github.com/user-attachments/assets/e0cc4f33-4516-408b-9c5c-be71a3ac316b" /> Linux                                                                                                                              |
 | :--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | :-------------------------------------------------------------------------------------------------------------------- | :------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Setup:** [x64](https://github.com/BurntToasters/CONV2/releases/download/v1.7.0-beta.1/CONV2-Win-x64-Setup.exe) / [arm64](https://github.com/BurntToasters/CONV2/releases/download/v1.7.0-beta.1/CONV2-Win-arm64-Setup.exe) | **[Universal DMG](https://github.com/BurntToasters/CONV2/releases/download/v1.7.0-beta.1/CONV2-macOS-universal.dmg)** | **AppImage:** [x64](https://github.com/BurntToasters/CONV2/releases/download/v1.7.0-beta.1/CONV2-Linux-x86_64.AppImage) / [arm64](https://github.com/BurntToasters/CONV2/releases/download/v1.7.0-beta.1/CONV2-Linux-arm64.AppImage)         |
-| <div align="center"><!--<a href="#"><img src="https://get.microsoft.com/images/en-us%20light.svg" width="150"/></a>--></div>                                                                                                 | **[Universal ZIP](https://github.com/BurntToasters/CONV2/releases/download/v1.7.0-beta.1/CONV2-macOS-universal.zip)** | **Flatpak sideload:** [x64](https://github.com/BurntToasters/CONV2/releases/download/v1.7.0-beta.1/CONV2-Linux-x86_64.flatpak) / [arm64](https://github.com/BurntToasters/CONV2/releases/download/v1.7.0-beta.1/CONV2-Linux-aarch64.flatpak) |
+| **Setup:** [x64](https://github.com/BurntToasters/CONV2/releases/download/v1.7.0-beta.2/CONV2-Win-x64-Setup.exe) / [arm64](https://github.com/BurntToasters/CONV2/releases/download/v1.7.0-beta.2/CONV2-Win-arm64-Setup.exe) | **[Universal DMG](https://github.com/BurntToasters/CONV2/releases/download/v1.7.0-beta.2/CONV2-macOS-universal.dmg)** | **AppImage:** [x64](https://github.com/BurntToasters/CONV2/releases/download/v1.7.0-beta.2/CONV2-Linux-x86_64.AppImage) / [arm64](https://github.com/BurntToasters/CONV2/releases/download/v1.7.0-beta.2/CONV2-Linux-arm64.AppImage)         |
+| <div align="center"><!--<a href="#"><img src="https://get.microsoft.com/images/en-us%20light.svg" width="150"/></a>--></div>                                                                                                 | **[Universal ZIP](https://github.com/BurntToasters/CONV2/releases/download/v1.7.0-beta.2/CONV2-macOS-universal.zip)** | **Flatpak sideload:** [x64](https://github.com/BurntToasters/CONV2/releases/download/v1.7.0-beta.2/CONV2-Linux-x86_64.flatpak) / [arm64](https://github.com/BurntToasters/CONV2/releases/download/v1.7.0-beta.2/CONV2-Linux-aarch64.flatpak) |
 | _See MSI note in releases_                                                                                                                                                                                                   |                                                                                                                       |                                                                                                                                                                                                                                              |
 
 ### ℹ️ Enjoying CONV2? Consider [❤️ Supporting Me! ❤️](https://rosie.run/support)
 
 ---
+
+## Changes in `v1.7.0-beta.2:`
+
+- **Fix - GPU:** Hardware encoding that fails to start now retries on CPU instead of failing the job. This covers VAAPI on Linux Intel and AMD, and Media Foundation on Windows on Arm.
+- **Fix - GPU:** Encoder errors on Linux Intel and AMD now show VAAPI driver advice. They no longer show the Windows-only AMF and Quick Sync text.
+- **Fix - GPU:** The encoder check now uses the same rate-control settings as a real conversion, so a codec it passes is one the encoder accepts.
+- **Fix - GPU:** An **encoder unavailable** result is no longer kept for 7 days. After you install a GPU driver and restart CONV2, the encoder is checked again.
+- **Building:** Fixed the Flatpak build failing on the pinned npm version.
+- **Testing:** The release E2E gate now blocks a release when CONV2 cannot open a window on macOS, Windows, or Linux with a display. A headless Linux builder with no display still warns and skips.
+- **Tooling:** Beta releases accept `--skip-check` without the extra confirmation variable. Stable releases stay protected.
 
 ## Changes in `v1.7.0-beta.1:`
 
@@ -23,6 +33,7 @@
 - **UI:** The GIF frame rate is now capped at `50` fps, since browsers misplay GIF frames above that.
 - **Codebase:** The default AV1, H.265, and AVI quality tiers now use faster encoder presets. Tiers you never changed are moved to the new defaults automatically; tiers you customized are kept.
 - **Codebase:** Updated the default x265 and SVT-AV1 tuning parameters. AVI keeps its previous x265 parameters.
+- **Codebase:** H.265 tiers that use the advanced x265 parameters (Best Quality and Best Compression by default) now encode 10-bit output on CPU, even from 8-bit sources.
 - **Fix - Audio:** Fixed an issue where surround sources with layouts like `5.1(side)` or `7.1(wide)` failed to encode to Opus.
 - **Fix - Audio:** Fixed an issue where only the first audio track got a proper bitrate. Each surround track now gets a bitrate scaled to its channel count.
 - **FFMPEG:** Updated the bundled FFMPEG binaries on _ALL_ platforms.

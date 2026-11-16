@@ -180,6 +180,53 @@ test('shouldRetryWithCpu still retries real hardware failures found only in erro
   assert.equal(shouldRetryWithCpu(nvenc, 'nvidia', true), true);
 });
 
+// Failure modes for VAAPI and Media Foundation CPU retries. Written before the change.
+//  - a VAAPI runtime failure is not retried, because only NVENC/AMF/QSV markers exist
+//  - a Media Foundation runtime failure is not retried on Windows on Arm
+//  - the banner's --enable-vaapi alone is treated as a retry reason
+//  - an input error in the detail still wins over a VAAPI marker
+
+const RETRYABLE_HARDWARE_ERRORS = [
+  ['amd', 'No usable encoding profile found.'],
+  ['intel', '[h264_vaapi @ 0x1] Driver does not support the required rate control mode.'],
+  ['amd', '[h264_vaapi @ 0x1] Failed to upload frame: -1 (operation failed).'],
+  ['intel', 'Failed to create surface: 2 (resource allocation failed).'],
+  ['amd', 'vaBeginPicture failed: 1'],
+  ['intel', 'vaCreateContext failed: 4'],
+  ['qualcomm', 'could not find any MFT for the given media type'],
+  ['qualcomm', 'format negotiation failed (1/2)'],
+  ['qualcomm', 'hardware MFT is not async'],
+  ['qualcomm', 'DLL mfplat.dll failed to open'],
+];
+
+test('shouldRetryWithCpu retries VAAPI and Media Foundation failures without a suggestion', () => {
+  for (const [gpu, error] of RETRYABLE_HARDWARE_ERRORS) {
+    const result = { success: false, outputPath: '', error };
+    assert.equal(shouldRetryWithCpu(result, gpu, true), true, `${gpu}: ${error}`);
+    assert.equal(result.retryWithCpuSuggested, undefined, `${gpu}: ${error}`);
+  }
+});
+
+test('shouldRetryWithCpu keeps input errors ahead of VAAPI markers', () => {
+  const result = {
+    success: false,
+    outputPath: '',
+    error: 'Error opening input: Invalid data found when processing input',
+    errorDetail: 'No usable encoding profile found.',
+  };
+  assert.equal(shouldRetryWithCpu(result, 'intel', true), false);
+});
+
+test('shouldRetryWithCpu ignores the --enable-vaapi banner', () => {
+  const result = {
+    success: false,
+    outputPath: '',
+    error: 'Conversion error: out of memory',
+    errorDetail: 'configuration: --enable-vaapi --enable-libvpl --enable-ffnvcodec',
+  };
+  assert.equal(shouldRetryWithCpu(result, 'intel', true), false);
+});
+
 // Failure modes for the requested-GPU mapping. Written before the change.
 //  - Linux AMD is still forced to CPU, so the AMD encoder never gets checked
 //  - Apple AV1 stops mapping to CPU and receives VideoToolbox flags

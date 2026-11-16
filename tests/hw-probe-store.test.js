@@ -7,6 +7,9 @@ const { createHwProbeStore, binaryFingerprint } = require('../dist/main/hwProbeS
 
 // Failure modes for caching hardware-encoder probe results on disk. Written before the store.
 //  - a stale "unavailable" survives an FFmpeg upgrade or driver install forever
+//  - a driver install cannot revive an encoder because "false" was cached on disk
+//  - a persisted "true" survives the encoder later being reported unavailable
+//  - "false" entries left behind by older versions are read back as known results
 //  - a corrupt or hand-edited cache file crashes startup or yields non-boolean results
 //  - a write failure (read-only profile) throws into the conversion path
 //  - a half-written file is read back after a crash
@@ -29,7 +32,7 @@ test('missing file starts empty', () => {
   });
 });
 
-test('results persist across instances with the same fingerprint', () => {
+test('available results persist across instances with the same fingerprint', () => {
   withDir((dir) => {
     const filePath = path.join(dir, 'p.json');
     const first = createHwProbeStore({ filePath, fingerprint: 'ffmpeg-8.1.2' });
@@ -37,14 +40,57 @@ test('results persist across instances with the same fingerprint', () => {
     first.set('av1_nvenc', false);
     const second = createHwProbeStore({ filePath, fingerprint: 'ffmpeg-8.1.2' });
     assert.equal(second.get('h264_nvenc'), true);
-    assert.equal(second.get('av1_nvenc'), false);
+    assert.equal(second.get('av1_nvenc'), undefined);
+  });
+});
+
+test('unavailable results do not reach the disk', () => {
+  withDir((dir) => {
+    const filePath = path.join(dir, 'p.json');
+    const store = createHwProbeStore({ filePath, fingerprint: 'a' });
+    store.set('h264_nvenc', false);
+    assert.equal(store.get('h264_nvenc'), undefined);
+    assert.equal(createHwProbeStore({ filePath, fingerprint: 'a' }).get('h264_nvenc'), undefined);
+    assert.equal(fs.existsSync(filePath), false);
+  });
+});
+
+test('an older file\'s "false" entries are ignored on load', () => {
+  withDir((dir) => {
+    const filePath = path.join(dir, 'p.json');
+    fs.writeFileSync(
+      filePath,
+      JSON.stringify({
+        version: 1,
+        fingerprint: 'a',
+        savedAt: Date.now(),
+        results: { h264_nvenc: false, hevc_qsv: true },
+      })
+    );
+    const store = createHwProbeStore({ filePath, fingerprint: 'a' });
+    assert.equal(store.get('h264_nvenc'), undefined);
+    assert.equal(store.get('hevc_qsv'), true);
+  });
+});
+
+test('marking an encoder unavailable drops its persisted "true"', () => {
+  withDir((dir) => {
+    const filePath = path.join(dir, 'p.json');
+    createHwProbeStore({ filePath, fingerprint: 'a' }).set('h264_nvenc', true);
+    createHwProbeStore({ filePath, fingerprint: 'a' }).set('hevc_qsv', true);
+    const store = createHwProbeStore({ filePath, fingerprint: 'a' });
+    assert.equal(store.get('h264_nvenc'), true);
+    store.set('h264_nvenc', false);
+    const persisted = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+    assert.deepEqual(persisted.results, { hevc_qsv: true });
+    assert.equal(createHwProbeStore({ filePath, fingerprint: 'a' }).get('h264_nvenc'), undefined);
   });
 });
 
 test('a different FFmpeg binary invalidates every result', () => {
   withDir((dir) => {
     const filePath = path.join(dir, 'p.json');
-    createHwProbeStore({ filePath, fingerprint: 'old' }).set('h264_nvenc', false);
+    createHwProbeStore({ filePath, fingerprint: 'old' }).set('h264_nvenc', true);
     assert.equal(createHwProbeStore({ filePath, fingerprint: 'new' }).get('h264_nvenc'), undefined);
   });
 });

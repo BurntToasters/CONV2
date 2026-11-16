@@ -47,7 +47,8 @@ const readResults = (filePath: string, fingerprint: string, now: number, ttlMs: 
       return { results, savedAt: now };
     }
     for (const [encoder, value] of Object.entries(parsed.results)) {
-      if (typeof value === 'boolean') results.set(encoder, value);
+      // Negatives are session-only; older files may still hold `false`.
+      if (value === true) results.set(encoder, true);
     }
     return { results, savedAt: parsed.savedAt };
   } catch {
@@ -89,8 +90,13 @@ export const createHwProbeStore = (options: {
   return {
     get: (encoder) => results.get(encoder),
     set: (encoder, available) => {
+      if (!available) {
+        // Unavailable lasts for the session only: drop any persisted known-good entry.
+        if (results.delete(encoder)) persist();
+        return;
+      }
       if (results.size === 0) savedAt = now();
-      results.set(encoder, available);
+      results.set(encoder, true);
       persist();
     },
     clear: () => {
