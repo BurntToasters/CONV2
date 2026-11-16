@@ -149,3 +149,19 @@ test('converted scripts keep their failure exit codes and exit promptly', () => 
   assert.equal(warning.status, 0, warning.stderr);
   assert.match(warning.stderr, /DESTRUCTIVE/);
 });
+
+// Electron 45 has no postinstall; its binary downloads on the first require('electron').
+// Failure modes: after npm ci, parallel unit tests race that download and one fails;
+// the release VM (release:deps) or the CI Test job skips the explicit install.
+test('Electron binary is installed right after npm ci', () => {
+  const { scripts } = JSON.parse(read('package.json'));
+  assert.equal(scripts['electron:install'], 'node node_modules/electron/install.js');
+  assert.equal(scripts['release:deps'], 'npm ci && npm run electron:install');
+  const yaml = require('js-yaml');
+  const ci = yaml.load(read('.github/workflows/ci.yml'));
+  const steps = ci.jobs.test.steps.map((step) => step.run || '');
+  const install = steps.findIndex((run) => /npm run electron:install/.test(run));
+  const unit = steps.findIndex((run) => /npm run tests\b/.test(run));
+  assert.ok(install !== -1, 'CI Test job must install the Electron binary');
+  assert.ok(install < unit, 'Electron must be installed before the unit tests');
+});
