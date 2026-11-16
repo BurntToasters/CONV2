@@ -3,12 +3,13 @@
 //  1. Linux without a display launches Electron with no X server instead of under xvfb-run.
 //  2. Linux without a display or xvfb-run fails the release instead of skipping loudly.
 //  3. A machine that has a display still gets wrapped in xvfb-run.
-//  4. A failed display probe fails the release, or runs the suite anyway.
-//  5. A skip is silent: no warning, or no record in coverage/e2e.
-//  6. A failing suite (the app did launch) is treated as a skip and the release goes on.
-//  7. Conversion tests skip because CONV2_REQUIRE_FFMPEG_TESTS=1 is not set on the suite.
-//  8. A build failure is reported as a display skip.
-//  9. release:prepare does not run the gate, or runs it before test:all.
+//  4. A probe failure on macOS, Windows, or Linux with a real display is skipped and ships untested.
+//  5. A probe failure inside the gate's own xvfb-run display runs the suite anyway or skips silently.
+//  6. A skip is silent: no warning, or no record in coverage/e2e.
+//  7. A failing suite (the app did launch) is treated as a skip and the release goes on.
+//  8. Conversion tests skip because CONV2_REQUIRE_FFMPEG_TESTS=1 is not set on the suite.
+//  9. A build failure is reported as a display skip.
+// 10. release:prepare does not run the gate, or runs it before test:all.
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -74,8 +75,28 @@ test('a machine with a display is not wrapped in xvfb-run', () => {
   }
 });
 
-test('a failed display probe skips loudly without running the suite', () => {
-  const { status, steps, records, warnings } = simulate({ fail: { probe: 1 } });
+test('a failed display probe blocks the release where a display exists', () => {
+  for (const [platform, env] of [
+    ['darwin', {}],
+    ['win32', {}],
+    ['linux', { DISPLAY: ':0' }],
+    ['linux', { WAYLAND_DISPLAY: 'wayland-0' }],
+  ]) {
+    const { status, steps, records } = simulate({ platform, env, fail: { probe: 1 } });
+    assert.equal(status, 1, platform);
+    assert.ok(!steps.some(isSuite), `${platform}: suite must not run`);
+    assert.equal(records.at(-1).status, 'failed', platform);
+    assert.match(records.at(-1).reason, /hidden window/, platform);
+  }
+});
+
+test('a failed probe under the gate xvfb-run display skips loudly', () => {
+  const { status, steps, records, warnings } = simulate({
+    platform: 'linux',
+    env: {},
+    hasXvfb: true,
+    fail: { probe: 1 },
+  });
   assert.equal(status, 0);
   assert.ok(!steps.some(isSuite), 'suite must not run without a display');
   assert.equal(records.at(-1).status, 'skipped');

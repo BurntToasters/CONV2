@@ -18,13 +18,13 @@ test('detects NVIDIA encoder initialization errors', () => {
 });
 
 test('detects AMD AMF errors', () => {
-  const error = parseGPUError('AMF failed', 'amd', 'h265');
+  const error = parseGPUError('AMF failed', 'amd', 'h265', 'win32');
   assert.ok(error);
   assert.equal(error.type, 'gpu_capability');
 });
 
 test('detects Intel QSV errors', () => {
-  const error = parseGPUError('QSV not found', 'intel', 'h264');
+  const error = parseGPUError('QSV not found', 'intel', 'h264', 'win32');
   assert.ok(error);
   assert.equal(error.type, 'gpu_capability');
 });
@@ -198,6 +198,68 @@ test('libva informational lines are not treated as failures', () => {
 
 test('VAAPI messages on an NVIDIA conversion are not claimed as VAAPI errors', () => {
   assert.equal(parseGPUError('vaInitialize failed: unknown libva error', 'nvidia', 'h264'), null);
+});
+
+// Failure modes for VAAPI runtime errors and platform wording. Written before the change.
+//  - a runtime VAAPI failure (profile, RC mode, surface, va* call) is unrecognised, so no CPU retry
+//  - a Linux AMD or Intel error keeps the Windows AMF or Quick Sync wording
+//  - a VAAPI-platform error matching neither VAAPI pattern returns AMF/QSV text instead of null
+//  - AMF and Quick Sync wording is lost on Windows
+//  - the banner's --enable-vaapi string is read as a runtime failure
+
+const VAAPI_RUNTIME_FAILURES = [
+  '[h264_vaapi @ 0x1] No usable encoding profile found.',
+  '[h264_vaapi @ 0x1] Driver does not support the required rate control mode.',
+  '[h264_vaapi @ 0x1] Driver does not support CQP RC mode.',
+  '[h264_vaapi @ 0x1] Failed to upload frame: -1 (operation failed).',
+  '[hevc_vaapi @ 0x2] Failed to create surface: 2 (resource allocation failed).',
+  'Failed to create context: 1 (operation failed).',
+  '[h264_vaapi @ 0x1] vaBeginPicture failed: 1 (operation failed).',
+  'vaRenderPicture failed: 5',
+  'vaEndPicture failed: 1',
+  'vaCreateContext failed: 4',
+  'vaCreateSurfaces failed: 2',
+];
+
+test('VAAPI runtime failures on Linux Intel and AMD are retryable capability errors', () => {
+  for (const gpu of ['intel', 'amd']) {
+    for (const line of VAAPI_RUNTIME_FAILURES) {
+      const error = parseGPUError(line, gpu, 'h264', 'linux');
+      assert.ok(error, `${gpu}: ${line}`);
+      assert.equal(error.type, 'gpu_capability', `${gpu}: ${line}`);
+      assert.equal(error.canRetryWithCPU, true, `${gpu}: ${line}`);
+      assert.match(error.message, /VAAPI/, `${gpu}: ${line}`);
+      assert.doesNotMatch(error.details, /RX 7000|Quick Sync/, `${gpu}: ${line}`);
+      assert.match(error.suggestion, /CPU/, `${gpu}: ${line}`);
+    }
+  }
+});
+
+test('VAAPI platforms never receive AMF or Quick Sync wording', () => {
+  assert.equal(parseGPUError('AMF failed', 'amd', 'h265', 'linux'), null);
+  assert.equal(parseGPUError('not supported by the driver', 'amd', 'av1', 'linux'), null);
+  assert.equal(parseGPUError('QSV not found', 'intel', 'h264', 'linux'), null);
+});
+
+test('Windows AMF and Quick Sync wording is unchanged', () => {
+  const amf = parseGPUError('AMF failed', 'amd', 'h265', 'win32');
+  assert.ok(amf);
+  assert.match(amf.details, /AMF/);
+
+  const av1 = parseGPUError('not supported', 'amd', 'av1', 'win32');
+  assert.ok(av1);
+  assert.match(av1.details, /RX 7000/);
+
+  const qsv = parseGPUError('QSV not found', 'intel', 'h264', 'win32');
+  assert.ok(qsv);
+  assert.match(qsv.message, /Quick Sync/);
+});
+
+test('the --enable-vaapi banner is not a runtime failure', () => {
+  assert.equal(
+    parseGPUError('configuration: --enable-vaapi --enable-libvpl\n', 'amd', 'h264', 'linux'),
+    null
+  );
 });
 
 // Failure modes for Media Foundation errors. Written before the change.

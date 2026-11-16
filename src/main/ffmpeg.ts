@@ -614,11 +614,26 @@ export interface GpuSupportOptions {
   findRenderNode?: (vendor: VaapiVendor) => string | null;
 }
 
+/** Middle of the H.264/HEVC VAAPI CQP range; AV1 uses the 1..255 scale. */
+const VAAPI_PROBE_QP = 23;
+
+const vaapiProbeGlobalQuality = (encoder: string): number =>
+  encoder === 'av1_vaapi' ? Math.min(255, VAAPI_PROBE_QP * 4) : VAAPI_PROBE_QP;
+
 /** Probe options for a VAAPI encoder bound to one render node. */
 export const vaapiProbeOptions = (encoder: string, renderNode: string): HwProbeOptions => ({
   inputArgs: ['-vaapi_device', renderNode],
-  outputArgs: ['-vf', 'format=nv12,hwupload'],
-  cacheKey: `${encoder}@${renderNode}`,
+  // Mirrors the conversion's -rc_mode CQP, so a pass means the driver accepts it.
+  outputArgs: [
+    '-vf',
+    'format=nv12,hwupload',
+    '-rc_mode',
+    'CQP',
+    '-global_quality',
+    String(vaapiProbeGlobalQuality(encoder)),
+  ],
+  // Suffix keeps probe results from the old default-RC probe out of the cache.
+  cacheKey: `${encoder}@${renderNode}#cqp`,
 });
 
 /**
@@ -741,13 +756,20 @@ const MF_FAILURE_PATTERN =
 const VAAPI_FAILURE_PATTERN =
   /Failed to initialise VAAPI connection|vaInitialize failed|No VA display found|Failed to create a VAAPI device|libva[^\n]*cannot open shared object/;
 
+// Runtime VAAPI failures: the driver opened but rejected the encode settings.
+const VAAPI_RUNTIME_FAILURE_PATTERN =
+  /No usable encoding profile found|Driver does not support[^\n]*(?:RC|rate control) mode|Failed to (?:upload|create) (?:[a-z0-9_.]+ ){0,2}(?:surface|context|buffer|image|frame)|va(?:Create\w*|BeginPicture|RenderPicture|EndPicture)[^\n]*fail/i;
+
 export const parseGPUError = (
   errorOutput: string,
   gpu: GPUVendor,
-  codec?: string
+  codec?: string,
+  platform: NodeJS.Platform = process.platform
 ): GPUEncoderError | null => {
   const gpuName = GPU_NAMES[gpu];
   const codecName = codec ? CODEC_NAMES[codec] || codec : 'video';
+  // Linux Intel/AMD encode through VAAPI, so AMF and QSV wording never applies.
+  const vaapiPlatform = usesVaapi(gpu, platform);
 
   // NVIDIA specific errors
   if (gpu === 'nvidia') {
@@ -786,8 +808,35 @@ export const parseGPUError = (
     }
   }
 
-  // AMD specific errors
-  if (gpu === 'amd') {
+  // VAAPI errors on Linux Intel and AMD. These run before the AMF/QSV branches so
+  // a VAAPI failure is never reported with Windows-only wording.
+  if ((gpu === 'intel' || gpu === 'amd') && VAAPI_FAILURE_PATTERN.test(errorOutput)) {
+    const driver =
+      gpu === 'intel' ? 'intel-media-va-driver (or intel-media-driver)' : 'mesa-va-drivers';
+    return {
+      type: 'gpu_capability',
+      message: `${gpuName} VAAPI encoder initialization failed`,
+      details: `FFmpeg could not open the VA-API driver for the ${gpuName} GPU. Install ${driver} and libva2, then restart CONV2.`,
+      suggestion: `Install ${driver} and libva2, or use CPU encoding.`,
+      canRetryWithCPU: true,
+      codec,
+      gpu,
+    };
+  }
+  if ((gpu === 'intel' || gpu === 'amd') && VAAPI_RUNTIME_FAILURE_PATTERN.test(errorOutput)) {
+    return {
+      type: 'gpu_capability',
+      message: `${gpuName} VAAPI encoder could not start`,
+      details: `The VA-API driver rejected the ${codecName} encode settings. This usually means:\n• The driver does not support this codec, profile or rate-control mode\n• The VA-API driver is outdated or incomplete`,
+      suggestion: `Update the ${gpuName} VA driver and libva, or use CPU encoding.`,
+      canRetryWithCPU: true,
+      codec,
+      gpu,
+    };
+  }
+
+  // AMD specific errors (AMF on Windows)
+  if (!vaapiPlatform && gpu === 'amd') {
     if (
       errorOutput.includes('AMF') &&
       (errorOutput.includes('failed') || errorOutput.includes('error'))
@@ -822,8 +871,8 @@ export const parseGPUError = (
     }
   }
 
-  // Intel specific errors
-  if (gpu === 'intel') {
+  // Intel specific errors (Quick Sync on Windows)
+  if (!vaapiPlatform && gpu === 'intel') {
     if (
       errorOutput.includes('QSV') &&
       (errorOutput.includes('failed') ||
@@ -871,21 +920,6 @@ export const parseGPUError = (
       details:
         'FFmpeg could not start the Media Foundation hardware encoder. This usually means:\n• The Qualcomm GPU driver is missing or outdated\n• The device has no hardware encoder for this codec',
       suggestion: 'Update your Windows or Qualcomm GPU driver, or use CPU encoding.',
-      canRetryWithCPU: true,
-      codec,
-      gpu,
-    };
-  }
-
-  // VAAPI errors on Linux Intel and AMD, usually a missing or mismatched VA driver
-  if ((gpu === 'intel' || gpu === 'amd') && VAAPI_FAILURE_PATTERN.test(errorOutput)) {
-    const driver =
-      gpu === 'intel' ? 'intel-media-va-driver (or intel-media-driver)' : 'mesa-va-drivers';
-    return {
-      type: 'gpu_capability',
-      message: `${gpuName} VAAPI encoder initialization failed`,
-      details: `FFmpeg could not open the VA-API driver for the ${gpuName} GPU. Install ${driver} and libva2, then restart CONV2.`,
-      suggestion: `Install ${driver} and libva2, or use CPU encoding.`,
       canRetryWithCPU: true,
       codec,
       gpu,
