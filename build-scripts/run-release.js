@@ -2,14 +2,12 @@
 
 // Runs one release target: shared prepare steps, then release:<target>:continue.
 // Usage: npm run release:<target> [-- --skip-check]
-// --skip-check is a beta recovery override (same contract as S3 Sidekick and Zinnia):
-// it needs ALLOW_RELEASE_SKIP_CHECK=1 and sets FORCE_UPLOAD=1 on the continue step,
-// which bypasses the draft target-commit check.
+// --skip-check is a beta recovery override (same contract as Zinnia): it sets
+// FORCE_UPLOAD=1 on the continue step, which bypasses the draft target-commit check.
 const { spawnSync } = require('node:child_process');
 const path = require('node:path');
 const {
   assertStableReleaseOverridesAllowed,
-  isExplicitTruthy,
   isStableReleaseVersion,
   readPackageVersion,
 } = require('./release-policy');
@@ -49,7 +47,7 @@ function parseReleaseArgs(argv) {
   };
 }
 
-function assertSkipCheckAllowed(skipCheck, { env = process.env, version } = {}) {
+function assertSkipCheckAllowed(skipCheck, { version } = {}) {
   if (!skipCheck) return false;
   const releaseVersion = version ?? readPackageVersion();
   if (isStableReleaseVersion(releaseVersion)) {
@@ -57,13 +55,8 @@ function assertSkipCheckAllowed(skipCheck, { env = process.env, version } = {}) 
       `--skip-check is not allowed for stable release ${releaseVersion}; stable releases always check the draft target.`
     );
   }
-  if (!isExplicitTruthy(env.ALLOW_RELEASE_SKIP_CHECK)) {
-    throw new Error(
-      '--skip-check is an explicit beta recovery override; set ALLOW_RELEASE_SKIP_CHECK=1 to confirm it.'
-    );
-  }
   console.warn(
-    `WARNING: ALLOW_RELEASE_SKIP_CHECK=1 set for beta ${releaseVersion}; this run sets FORCE_UPLOAD=1 and bypasses the draft target check.`
+    `WARNING: --skip-check on beta ${releaseVersion}; this run sets FORCE_UPLOAD=1 and bypasses the draft target check.`
   );
   return true;
 }
@@ -118,7 +111,7 @@ function main(argv = process.argv.slice(2), { run = runStep, env = process.env, 
   const releaseVersion = version ?? readPackageVersion();
   // The draft step refuses these too; failing here skips a full prepare run first.
   assertStableReleaseOverridesAllowed(env, releaseVersion);
-  assertSkipCheckAllowed(parsed.skipCheck, { env, version: releaseVersion });
+  assertSkipCheckAllowed(parsed.skipCheck, { version: releaseVersion });
   for (const step of releaseSteps(parsed)) {
     const status = run(step);
     if (status !== 0) return status;
