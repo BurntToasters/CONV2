@@ -77,9 +77,11 @@ function probe(file) {
   const video = streams.find((s) => s.codec_type === 'video');
   const audio = streams.find((s) => s.codec_type === 'audio');
   const rotation = video?.side_data_list?.find((d) => typeof d.rotation === 'number')?.rotation;
+  const animated = video?.codec_name === 'gif' || video?.codec_name === 'webp_anim';
   return {
     formatName: data.format?.format_name,
     duration: Number(data.format?.duration || 0),
+    frames: animated ? countFrames(file) : undefined,
     videoCodec: video?.codec_name,
     videoTag: video?.codec_tag_string,
     pixFmt: video?.pix_fmt,
@@ -90,9 +92,27 @@ function probe(file) {
     rotation: rotation ?? 0,
     audioCodec: audio?.codec_name,
     audioChannels: audio?.channels,
+    audioLayout: audio?.channel_layout,
     audioStreams: streams.filter((s) => s.codec_type === 'audio').length,
     subtitleCodecs: streams.filter((s) => s.codec_type === 'subtitle').map((s) => s.codec_name),
   };
+}
+
+/** Decoded frame count of the first video stream (ffprobe -count_frames). */
+function countFrames(file) {
+  const raw = run(FFMPEG.ffprobe, [
+    '-v',
+    'error',
+    '-count_frames',
+    '-select_streams',
+    'v:0',
+    '-show_entries',
+    'stream=nb_read_frames',
+    '-of',
+    'csv=p=0',
+    file,
+  ]).toString();
+  return Number(raw.trim());
 }
 
 const LAVFI_VIDEO = (seconds, size = '320x240') => [
@@ -119,6 +139,8 @@ function createFixtures(dir) {
     rotated: out('rotated.mp4'),
     hdr10: out('hdr10.mkv'),
     surround: out('surround-5.1.mkv'),
+    surroundSide: out('surround-5.1-side.mkv'),
+    lowFps: out('low-fps.mp4'),
     subtitled: out('subtitled.mkv'),
     corrupt: out('corrupt.mp4'),
     unicode: out('ünïcode clip ✓.mp4'),
@@ -146,6 +168,17 @@ function createFixtures(dir) {
     f.hdr10,
   ]);
   ffmpeg([...LAVFI_VIDEO(2), ...LAVFI_AUDIO(2, '5.1'), ...h264, ...aac, '-shortest', f.surround]);
+  // FLAC keeps the 5.1(side) layout; AAC would silently remap it to 5.1 back.
+  ffmpeg([
+    ...LAVFI_VIDEO(2),
+    ...LAVFI_AUDIO(2, '5.1(side)'),
+    ...h264,
+    '-c:a',
+    'flac',
+    '-shortest',
+    f.surroundSide,
+  ]);
+  ffmpeg(['-f', 'lavfi', '-i', 'testsrc2=size=320x180:rate=10:duration=2', ...h264, f.lowFps]);
   const srt = out('subs.srt');
   fs.writeFileSync(srt, '1\n00:00:00,000 --> 00:00:01,500\nHello\n');
   ffmpeg(['-i', f.standard, '-i', srt, '-map', '0', '-map', '1', '-c', 'copy', f.subtitled]);
@@ -202,6 +235,7 @@ module.exports = {
   ffmpegSkipReason,
   ffmpeg,
   probe,
+  countFrames,
   createFixtures,
   mkTemp,
   processesMentioning,

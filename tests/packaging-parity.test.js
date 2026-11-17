@@ -36,6 +36,8 @@ test('Flatpak does not share the host /tmp', () => {
   }
 });
 
+const FLATPAK_NPM_PREFIX = '/run/build/conv2/npm-global';
+
 test('Flatpak Node SDK extension matches the engines requirement', () => {
   const enginesNode = packageJson.engines.node;
   const supportedMajors = [
@@ -58,8 +60,8 @@ test('Flatpak Node SDK extension matches the engines requirement', () => {
   const buildOptions = flatpakManifest.modules?.[0]?.['build-options'] || {};
   assert.equal(
     buildOptions['prepend-path'],
-    `/usr/lib/sdk/node${manifestMajor}/bin`,
-    'prepend-path must point at the same Node SDK extension'
+    `${FLATPAK_NPM_PREFIX}/bin:/usr/lib/sdk/node${manifestMajor}/bin`,
+    'prepend-path must put the pinned npm first, then the same Node SDK extension'
   );
 
   // build/setup-flatpak.js installs the extension for local builds; if it
@@ -78,13 +80,70 @@ test('Flatpak Node SDK extension matches the engines requirement', () => {
   }
 });
 
-test('Flatpak runtime versions agree across build paths', () => {
+// The Node SDK extension ships an npm below engines.npm. Failure modes: npm ci runs
+// on the SDK npm (EBADENGINE); the pin drifts from CI's NPM_VERSION; the install is
+// not verified, so a failed install silently falls back to the SDK npm.
+test('Flatpak build installs the CI npm version before npm ci', () => {
+  const ciNpm = yaml.load(read('.github/workflows/ci.yml')).env.NPM_VERSION;
+  const commands = flatpakManifest.modules[0]['build-commands'];
+  const install = commands.findIndex(
+    (cmd) =>
+      cmd.startsWith(`npm install --global npm@${ciNpm} `) &&
+      cmd.includes(`--prefix ${FLATPAK_NPM_PREFIX}`)
+  );
+  const verify = commands.indexOf(`test "$(npm --version)" = "${ciNpm}"`);
+  const firstCi = commands.findIndex((cmd) => cmd.startsWith('npm ci'));
+  assert.ok(install !== -1, `Flatpak must install npm@${ciNpm} into ${FLATPAK_NPM_PREFIX}`);
+  assert.ok(verify > install, 'Flatpak must verify the installed npm version');
+  assert.ok(firstCi > verify, 'npm ci must run after the pinned npm is verified');
+  const [major, minor, patch] = ciNpm.split('.').map(Number);
+  const floor = packageJson.engines.npm
+    .match(/>=(\d+)\.(\d+)\.(\d+)/)
+    .slice(1)
+    .map(Number);
+  assert.ok(
+    major * 1e6 + minor * 1e3 + patch >= floor[0] * 1e6 + floor[1] * 1e3 + floor[2],
+    `CI npm ${ciNpm} must satisfy engines.npm ${packageJson.engines.npm}`
+  );
+});
+
+test('Flatpak runtime and base versions agree across build paths', () => {
   const setupFlatpak = read('build/setup-flatpak.js');
   const setupRuntime = setupFlatpak.match(/RUNTIME_VERSION = '([^']+)'/)?.[1];
+  const setupBase = setupFlatpak.match(/BASE_VERSION = '([^']+)'/)?.[1];
   assert.equal(setupRuntime, flatpakManifest['runtime-version']);
-  assert.equal(setupRuntime, flatpakManifest['base-version']);
   assert.equal(setupRuntime, packageJson.build.flatpak.runtimeVersion);
-  assert.equal(setupRuntime, packageJson.build.flatpak.baseVersion);
+  assert.equal(setupBase, flatpakManifest['base-version']);
+  assert.equal(setupBase, packageJson.build.flatpak.baseVersion);
+  // SDK extensions follow the freedesktop branch, not the GNOME version.
+  assert.match(setupFlatpak, /\$\{ext\}\/\/\$\{BASE_VERSION\}/);
+});
+
+test('Flatpak setup verification sees BaseApp, which is an app, not a runtime', () => {
+  // `flatpak list --runtime` omits apps, so BaseApp was always reported missing.
+  const setupFlatpak = read('build/setup-flatpak.js');
+  assert.doesNotMatch(setupFlatpak, /runSilent\('flatpak list --runtime/);
+  assert.match(setupFlatpak, /runSilent\('flatpak list --columns=application,arch,branch'\)/);
+});
+
+test('Flatpak sideload bundles name Flathub as the runtime source', () => {
+  // Without it, installing the bundle fails on systems that lack the Flathub remote.
+  const flatpakScript = read('build-scripts/flatpak.js');
+  assert.match(flatpakScript, /build-bundle[^`]*--runtime-repo=\$\{FLATHUB_REPO\}/);
+  assert.match(
+    flatpakScript,
+    /FLATHUB_REPO = 'https:\/\/flathub\.org\/repo\/flathub\.flatpakrepo'/
+  );
+});
+
+test('Flatpak uses the GNOME runtime on every build path', () => {
+  const setupFlatpak = read('build/setup-flatpak.js');
+  assert.equal(flatpakManifest.runtime, 'org.gnome.Platform');
+  assert.equal(flatpakManifest.sdk, 'org.gnome.Sdk');
+  assert.equal(packageJson.build.flatpak.runtime, flatpakManifest.runtime);
+  assert.equal(packageJson.build.flatpak.sdk, flatpakManifest.sdk);
+  assert.match(setupFlatpak, /'org\.gnome\.Platform'/);
+  assert.match(setupFlatpak, /'org\.gnome\.Sdk'/);
 });
 
 test('macOS hardened runtime does not disable library validation', () => {

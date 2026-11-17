@@ -5,6 +5,7 @@ const path = require('node:path');
 
 const {
   getQualityArgs,
+  getPresetGpuCodec,
   resolveEncodeVendor,
   isTextSubtitleCodec,
   presets,
@@ -18,7 +19,7 @@ test('preset argument building resolves encoders from the shared map', () => {
   // A second copy of this map would let the capability probe validate one
   // encoder while the conversion invokes a different one.
   const source = fs.readFileSync(path.join(__dirname, '..', 'src', 'main', 'presets.ts'), 'utf8');
-  assert.match(source, /import \{ GPU_ENCODERS \} from '\.\/gpuEncoders'/);
+  assert.match(source, /import \{[^}]*\bGPU_ENCODERS\b[^}]*\} from '\.\/gpuEncoders'/);
   assert.doesNotMatch(source, /nvidia: 'h264_nvenc'/, 'encoder names must not be redeclared');
   assert.doesNotMatch(source, /cpu: 'libx264'/, 'encoder names must not be redeclared');
 });
@@ -26,8 +27,11 @@ test('preset argument building resolves encoders from the shared map', () => {
 test('every preset encoder name comes from GPU_ENCODERS', () => {
   const known = new Set(Object.values(GPU_ENCODERS).flatMap((byVendor) => Object.values(byVendor)));
   for (const preset of presets) {
-    for (const gpu of ['nvidia', 'amd', 'intel', 'apple', 'cpu']) {
-      const args = preset.getArgs('in.mp4', `out.${preset.extension}`, gpu);
+    // WebP has one fixed CPU encoder and no vendor choice, so it is not in the map.
+    if (preset.category === 'webp') continue;
+    for (const gpu of ['nvidia', 'amd', 'intel', 'qualcomm', 'apple', 'cpu']) {
+      // Pinned to Windows: Linux Intel/AMD resolve to VAAPI names, covered in presets.test.js.
+      const args = preset.getArgs('in.mp4', `out.${preset.extension}`, gpu, { platform: 'win32' });
       const codecIdx = args.indexOf('-c:v');
       if (codecIdx === -1) continue;
       assert.ok(
@@ -61,6 +65,52 @@ test('Apple AV1 gets CPU arguments, never VideoToolbox flags', () => {
   assert.ok(presetArgs.includes('-svtav1-params'), 'should apply SVT-AV1 tuning');
 });
 
+// Failure modes for hardware argument stability, written before the change.
+//  - a change to shared tier or quality code alters NVENC/QSV/AMF/VideoToolbox argv
+//  - a CPU-only tuning flag leaks into a hardware encode (libx265 or SVT-AV1 options)
+//  - WebP is given a GPU encoder instead of staying CPU only
+
+test('hardware H.265 argv is pinned exactly', () => {
+  const preset = presets.find((p) => p.id === 'h265-best-quality');
+  assert.deepEqual(preset.getArgs('in.mp4', 'out.mp4', 'nvidia'), [
+    '-i',
+    'in.mp4',
+    '-map',
+    '0:v:0',
+    '-map',
+    '0:a?',
+    '-c:v',
+    'hevc_nvenc',
+    '-cq',
+    '16',
+    '-b:v',
+    '0',
+    '-preset',
+    'p6',
+    '-multipass',
+    'qres',
+    '-tune',
+    'hq',
+    '-spatial_aq',
+    '1',
+    '-temporal_aq',
+    '1',
+    '-c:a',
+    'aac',
+    '-b:a',
+    '256k',
+    'out.mp4',
+  ]);
+});
+
+test('WebP presets are CPU only and never receive a hardware encoder', () => {
+  for (const preset of presets.filter((p) => p.category === 'webp')) {
+    assert.equal(getPresetGpuCodec(preset), null, preset.id);
+    const args = preset.getArgs('in.mp4', 'out.webp', 'nvidia');
+    assert.equal(args[args.indexOf('-c:v') + 1], 'libwebp_anim', preset.id);
+  }
+});
+
 // ── Quality range clamping ──────────────────────────────────────────────────
 
 test('hardware encoders never receive a QP above 51', () => {
@@ -69,11 +119,11 @@ test('hardware encoders never receive a QP above 51', () => {
   const nvidia = getQualityArgs('nvidia', 63, 'av1');
   assert.equal(nvidia[nvidia.indexOf('-cq') + 1], '51');
 
-  const amd = getQualityArgs('amd', 63, 'av1');
+  const amd = getQualityArgs('amd', 63, 'av1', 'max', 'win32');
   assert.equal(amd[amd.indexOf('-qp_i') + 1], '51');
   assert.equal(amd[amd.indexOf('-qp_p') + 1], '51');
 
-  const intel = getQualityArgs('intel', 63, 'av1');
+  const intel = getQualityArgs('intel', 63, 'av1', 'max', 'win32');
   assert.equal(intel[intel.indexOf('-global_quality') + 1], '51');
 });
 

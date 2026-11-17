@@ -30,6 +30,7 @@ import {
 } from './osIntegration';
 import { resolveExistingDirectoryPath, resolveExistingFilePath } from './pathResolvers';
 import { getPresetById, getPresetGpuCodec, type GPUVendor, type Preset } from './presets';
+import { effectiveConversionGpu } from './gpuEncoders';
 import { normalizeGpuVendor } from './settingsStore';
 
 // Owns the conversion lifecycle: request validation, one-at-a-time queue runs, cancel and stop.
@@ -193,12 +194,7 @@ export const createConversionController = (
     const codec = getPresetGpuCodec(preset, {
       advancedFormatSettings: deps.getSettings().advancedFormatSettings,
     });
-    const effectiveGpu =
-      requestedGpu === 'apple' && codec === 'av1'
-        ? 'cpu'
-        : requestedGpu === 'amd' && process.platform === 'linux'
-          ? 'cpu'
-          : requestedGpu;
+    const effectiveGpu = effectiveConversionGpu(requestedGpu, codec);
 
     const conversionAbortController = options?.abortController ?? new AbortController();
     if (conversionAbortController.signal.aborted) {

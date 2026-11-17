@@ -46,9 +46,8 @@ try {
   banner(
     `finished ok; copied=${result.copiedEntries ?? 0}; dest=${result.destination}; skippedBetaMirror=${result.skippedBetaMirror}`
   );
-  process.exit(0);
 } catch (error) {
   const message = error && error.message ? error.message : String(error);
   banner(`FAILED: ${message}`);
-  process.exit(1);
+  process.exitCode = 1;
 }

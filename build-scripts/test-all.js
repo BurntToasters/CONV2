@@ -339,11 +339,12 @@ function run() {
       recordSuccessfulQualityGate(process.cwd());
       console.log(`${colors.green}Release quality-gate proof recorded.${colors.reset}`);
     }
-    process.exit(0);
+    process.exitCode = 0;
+    return;
   }
 
   console.log(`${colors.red}${colors.bold}✗ Some checks failed.${colors.reset}`);
-  process.exit(1);
+  process.exitCode = 1;
 }
 
 if (require.main === module) {

@@ -15,16 +15,17 @@ import {
   getPresetGpuCodec,
   resolveEncodeVendor,
 } from './presets';
-import { applyVideoFilter, planVideoPipeline } from './videoPipeline';
+import { applyVideoFilter, planVideoPipeline, vaapiUploadFilter } from './videoPipeline';
+import { findVaapiRenderNode, type VaapiVendor } from './vaapiDevices';
 import type { HwProbeStore } from './hwProbeStore';
 import { AdvancedFormatSettings } from './advancedFormats';
-import { CODEC_NAMES, GPU_ENCODERS, GPU_NAMES } from './gpuEncoders';
+import { CODEC_NAMES, GPU_NAMES, resolveEncoder, supportsQualcomm, usesVaapi } from './gpuEncoders';
 import { parseOutTimeMs, parseProgress } from './ffmpegProgress';
 import { describeFFmpegFailure, ffmpegErrorDetail, NO_VIDEO_MESSAGE } from './ffmpegFailure';
 import type { FFmpegStatus } from '../shared/electronApi';
 
 // Presets whose output needs a video stream from the input.
-const VIDEO_OUTPUT_CATEGORIES = new Set(['av1', 'h264', 'h265', 'avi', 'gif']);
+const VIDEO_OUTPUT_CATEGORIES = new Set(['av1', 'h264', 'h265', 'avi', 'gif', 'webp']);
 
 export { GPU_ENCODERS } from './gpuEncoders';
 
@@ -126,6 +127,8 @@ export interface VideoInfo {
   audioCodec?: string;
   /** Codec names of every subtitle stream, in subtitle-stream order. */
   subtitleCodecs?: string[];
+  /** Channel count of every audio stream, in audio-stream order (0 when unknown). */
+  audioChannels?: number[];
   /** False when the probe found no video stream (audio-only files). */
   hasVideo?: boolean;
 }
@@ -455,44 +458,62 @@ export const checkEncoderAvailable = async (encoder: string): Promise<boolean> =
 
 const HW_PROBE_TIMEOUT_MS = 8000;
 
-const probeHwEncoderAvailable = async (encoder: string, signal?: AbortSignal): Promise<boolean> => {
+export interface HwProbeOptions {
+  /** Placed before the lavfi input, e.g. -vaapi_device. */
+  inputArgs?: string[];
+  /** Placed before -c:v, e.g. the VAAPI upload filter. */
+  outputArgs?: string[];
+  /** Cache key; defaults to the encoder name. */
+  cacheKey?: string;
+}
+
+export const buildHwProbeArgs = (encoder: string, options: HwProbeOptions = {}): string[] => [
+  '-hide_banner',
+  '-loglevel',
+  'error',
+  ...(options.inputArgs ?? []),
+  '-f',
+  'lavfi',
+  '-i',
+  'color=black:s=256x256:d=0.04:r=25,format=yuv420p',
+  '-frames:v',
+  '1',
+  ...(options.outputArgs ?? []),
+  '-c:v',
+  encoder,
+  '-f',
+  'null',
+  process.platform === 'win32' ? 'NUL' : '/dev/null',
+];
+
+const probeHwEncoderAvailable = async (
+  encoder: string,
+  signal?: AbortSignal,
+  options: HwProbeOptions = {}
+): Promise<boolean> => {
   // Failure mode: a listing that fails because the binary is not ok must not be cached as "absent".
   if (!(await getFFmpegStatus()).ok) return false;
-  const cached = hwEncoderProbeCache.get(encoder);
+  const key = options.cacheKey ?? encoder;
+  const cached = hwEncoderProbeCache.get(key);
   if (cached !== undefined) return cached;
   if (signal?.aborted) return false;
 
-  const stored = getHwProbeStore()?.get(encoder);
+  const stored = getHwProbeStore()?.get(key);
   if (stored !== undefined) {
-    hwEncoderProbeCache.set(encoder, stored);
+    hwEncoderProbeCache.set(key, stored);
     return stored;
   }
 
   const listed = await checkEncoderAvailable(encoder);
   if (signal?.aborted) return false;
   if (!listed) {
-    hwEncoderProbeCache.set(encoder, false);
+    hwEncoderProbeCache.set(key, false);
     return false;
   }
 
   if (!(await getFFmpegStatus()).ok) return false;
   return new Promise((resolve) => {
-    const args = [
-      '-hide_banner',
-      '-loglevel',
-      'error',
-      '-f',
-      'lavfi',
-      '-i',
-      'color=black:s=256x256:d=0.04:r=25,format=yuv420p',
-      '-frames:v',
-      '1',
-      '-c:v',
-      encoder,
-      '-f',
-      'null',
-      process.platform === 'win32' ? 'NUL' : '/dev/null',
-    ];
+    const args = buildHwProbeArgs(encoder, options);
     const proc = spawn(getFFmpegBinaryPath(), args);
     let settled = false;
     const finish = (available: boolean, cacheResult = true): void => {
@@ -501,7 +522,7 @@ const probeHwEncoderAvailable = async (encoder: string, signal?: AbortSignal): P
       clearTimeout(timer);
       signal?.removeEventListener('abort', handleAbort);
       if (cacheResult) {
-        hwEncoderProbeCache.set(encoder, available);
+        hwEncoderProbeCache.set(key, available);
       }
       resolve(available);
     };
@@ -519,7 +540,7 @@ const probeHwEncoderAvailable = async (encoder: string, signal?: AbortSignal): P
     proc.on('close', (code) => {
       if (settled) return;
       // Only a real exit code is worth keeping across launches; timeouts may be transient.
-      getHwProbeStore()?.set(encoder, code === 0);
+      getHwProbeStore()?.set(key, code === 0);
       finish(code === 0);
     });
 
@@ -584,33 +605,107 @@ export const checkDecoderAvailable = async (decoder: string): Promise<boolean> =
   return decoders.has(decoder);
 };
 
+export interface GpuSupportOptions {
+  /** Platform used to choose the encoder; defaults to process.platform. */
+  platform?: NodeJS.Platform;
+  /** CPU architecture; Qualcomm needs arm64. Defaults to process.arch. */
+  arch?: NodeJS.Architecture;
+  /** Render-node lookup for Linux Intel/AMD; defaults to scanning /sys/class/drm. */
+  findRenderNode?: (vendor: VaapiVendor) => string | null;
+}
+
+/** Middle of the H.264/HEVC VAAPI CQP range; AV1 uses the 1..255 scale. */
+const VAAPI_PROBE_QP = 23;
+
+const vaapiProbeGlobalQuality = (encoder: string): number =>
+  encoder === 'av1_vaapi' ? Math.min(255, VAAPI_PROBE_QP * 4) : VAAPI_PROBE_QP;
+
+/** Probe options for a VAAPI encoder bound to one render node. */
+export const vaapiProbeOptions = (encoder: string, renderNode: string): HwProbeOptions => ({
+  inputArgs: ['-vaapi_device', renderNode],
+  // Mirrors the conversion's -rc_mode CQP, so a pass means the driver accepts it.
+  outputArgs: [
+    '-vf',
+    'format=nv12,hwupload',
+    '-rc_mode',
+    'CQP',
+    '-global_quality',
+    String(vaapiProbeGlobalQuality(encoder)),
+  ],
+  // Suffix keeps probe results from the old default-RC probe out of the cache.
+  cacheKey: `${encoder}@${renderNode}#cqp`,
+});
+
+/**
+ * Probe for a Media Foundation encoder: NV12 hardware output, under its own cache
+ * key so a software MFT result never answers for the hardware encoder.
+ */
+export const qualcommProbeOptions = (encoder: string): HwProbeOptions => ({
+  outputArgs: [
+    '-pix_fmt',
+    'nv12',
+    '-hw_encoding',
+    '1',
+    '-rate_control',
+    'quality',
+    '-quality',
+    '50',
+  ],
+  cacheKey: `${encoder}@hw`,
+});
+
+const qualcommUnsupportedError = (codec: 'h264' | 'h265' | 'av1'): GPUEncoderError => ({
+  type: 'encoder_unavailable',
+  message: `Qualcomm ${CODEC_NAMES[codec]} encoder requires Windows on Arm`,
+  details: 'Qualcomm Media Foundation encoders run only on Windows on Arm (Snapdragon) devices.',
+  suggestion: 'Choose another GPU vendor, or use CPU encoding.',
+  canRetryWithCPU: true,
+  codec,
+  gpu: 'qualcomm',
+});
+
+const noRenderNodeError = (gpu: GPUVendor, codec: 'h264' | 'h265' | 'av1'): GPUEncoderError => ({
+  type: 'encoder_unavailable',
+  message: `No ${GPU_NAMES[gpu]} render node found`,
+  details: `${GPU_NAMES[gpu]} GPUs encode through VAAPI, which needs a /dev/dri/renderD* node. None was found under /sys/class/drm.`,
+  suggestion: 'Install the VA-API driver for your GPU, or use CPU encoding.',
+  canRetryWithCPU: true,
+  codec,
+  gpu,
+});
+
 export const checkGPUEncoderSupport = async (
   gpu: GPUVendor,
   codec: 'h264' | 'h265' | 'av1',
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  options: GpuSupportOptions = {}
 ): Promise<{ available: boolean; encoder: string; error?: GPUEncoderError }> => {
+  const platform = options.platform ?? process.platform;
+  const arch = options.arch ?? process.arch;
   if (gpu === 'cpu') {
-    return { available: true, encoder: GPU_ENCODERS[codec].cpu };
+    return { available: true, encoder: resolveEncoder(codec, 'cpu', platform) };
   }
-
-  if (gpu === 'amd' && process.platform === 'linux') {
+  if (gpu === 'qualcomm' && !supportsQualcomm(platform, arch)) {
     return {
       available: false,
-      encoder: GPU_ENCODERS[codec].amd,
-      error: {
-        type: 'encoder_unavailable',
-        message: 'AMD hardware encoding is not available on Linux',
-        details:
-          'AMD AMF encoders are not provided in Linux FFmpeg builds. CONV2 falls back to CPU encoding for AMD GPUs on Linux.',
-        suggestion: 'CPU encoding is used automatically.',
-        canRetryWithCPU: true,
-        codec,
-        gpu,
-      },
+      encoder: resolveEncoder(codec, gpu, platform),
+      error: qualcommUnsupportedError(codec),
     };
   }
 
-  const encoder = GPU_ENCODERS[codec]?.[gpu];
+  let renderNode: string | null = null;
+  if (usesVaapi(gpu, platform)) {
+    renderNode = (options.findRenderNode ?? findVaapiRenderNode)(gpu as VaapiVendor);
+    if (!renderNode) {
+      return {
+        available: false,
+        encoder: resolveEncoder(codec, gpu, platform),
+        error: noRenderNodeError(gpu, codec),
+      };
+    }
+  }
+
+  const encoder = resolveEncoder(codec, gpu, platform);
   if (!encoder) {
     return {
       available: false,
@@ -627,7 +722,10 @@ export const checkGPUEncoderSupport = async (
     };
   }
 
-  const available = await probeHwEncoderAvailable(encoder, signal);
+  let probeOptions: HwProbeOptions = {};
+  if (renderNode) probeOptions = vaapiProbeOptions(encoder, renderNode);
+  else if (gpu === 'qualcomm') probeOptions = qualcommProbeOptions(encoder);
+  const available = await probeHwEncoderAvailable(encoder, signal, probeOptions);
   if (!available) {
     return {
       available: false,
@@ -650,13 +748,28 @@ export const checkGPUEncoderSupport = async (
   return { available: true, encoder };
 };
 
+// Media Foundation failures from mfenc.c and mf_utils.c. "MFT name:" is an INFO line
+// printed on success too, so it is left out.
+const MF_FAILURE_PATTERN =
+  /could not find any MFT|could not (?:set|get) (?:input|output) type|format negotiation failed|hardware MFT is not async|could not start stream|Failed to set D3D manager|mfplat\.dll/;
+
+const VAAPI_FAILURE_PATTERN =
+  /Failed to initialise VAAPI connection|vaInitialize failed|No VA display found|Failed to create a VAAPI device|libva[^\n]*cannot open shared object/;
+
+// Runtime VAAPI failures: the driver opened but rejected the encode settings.
+const VAAPI_RUNTIME_FAILURE_PATTERN =
+  /No usable encoding profile found|Driver does not support[^\n]*(?:RC|rate control) mode|Failed to (?:upload|create) (?:[a-z0-9_.]+ ){0,2}(?:surface|context|buffer|image|frame)|va(?:Create\w*|BeginPicture|RenderPicture|EndPicture)[^\n]*fail/i;
+
 export const parseGPUError = (
   errorOutput: string,
   gpu: GPUVendor,
-  codec?: string
+  codec?: string,
+  platform: NodeJS.Platform = process.platform
 ): GPUEncoderError | null => {
   const gpuName = GPU_NAMES[gpu];
   const codecName = codec ? CODEC_NAMES[codec] || codec : 'video';
+  // Linux Intel/AMD encode through VAAPI, so AMF and QSV wording never applies.
+  const vaapiPlatform = usesVaapi(gpu, platform);
 
   // NVIDIA specific errors
   if (gpu === 'nvidia') {
@@ -695,8 +808,35 @@ export const parseGPUError = (
     }
   }
 
-  // AMD specific errors
-  if (gpu === 'amd') {
+  // VAAPI errors on Linux Intel and AMD. These run before the AMF/QSV branches so
+  // a VAAPI failure is never reported with Windows-only wording.
+  if ((gpu === 'intel' || gpu === 'amd') && VAAPI_FAILURE_PATTERN.test(errorOutput)) {
+    const driver =
+      gpu === 'intel' ? 'intel-media-va-driver (or intel-media-driver)' : 'mesa-va-drivers';
+    return {
+      type: 'gpu_capability',
+      message: `${gpuName} VAAPI encoder initialization failed`,
+      details: `FFmpeg could not open the VA-API driver for the ${gpuName} GPU. Install ${driver} and libva2, then restart CONV2.`,
+      suggestion: `Install ${driver} and libva2, or use CPU encoding.`,
+      canRetryWithCPU: true,
+      codec,
+      gpu,
+    };
+  }
+  if ((gpu === 'intel' || gpu === 'amd') && VAAPI_RUNTIME_FAILURE_PATTERN.test(errorOutput)) {
+    return {
+      type: 'gpu_capability',
+      message: `${gpuName} VAAPI encoder could not start`,
+      details: `The VA-API driver rejected the ${codecName} encode settings. This usually means:\n• The driver does not support this codec, profile or rate-control mode\n• The VA-API driver is outdated or incomplete`,
+      suggestion: `Update the ${gpuName} VA driver and libva, or use CPU encoding.`,
+      canRetryWithCPU: true,
+      codec,
+      gpu,
+    };
+  }
+
+  // AMD specific errors (AMF on Windows)
+  if (!vaapiPlatform && gpu === 'amd') {
     if (
       errorOutput.includes('AMF') &&
       (errorOutput.includes('failed') || errorOutput.includes('error'))
@@ -731,8 +871,8 @@ export const parseGPUError = (
     }
   }
 
-  // Intel specific errors
-  if (gpu === 'intel') {
+  // Intel specific errors (Quick Sync on Windows)
+  if (!vaapiPlatform && gpu === 'intel') {
     if (
       errorOutput.includes('QSV') &&
       (errorOutput.includes('failed') ||
@@ -772,6 +912,20 @@ export const parseGPUError = (
     }
   }
 
+  // Qualcomm errors come from the Media Foundation encoder on Windows on Arm.
+  if (gpu === 'qualcomm' && MF_FAILURE_PATTERN.test(errorOutput)) {
+    return {
+      type: 'gpu_capability',
+      message: 'Qualcomm Media Foundation encoder initialization failed',
+      details:
+        'FFmpeg could not start the Media Foundation hardware encoder. This usually means:\n• The Qualcomm GPU driver is missing or outdated\n• The device has no hardware encoder for this codec',
+      suggestion: 'Update your Windows or Qualcomm GPU driver, or use CPU encoding.',
+      canRetryWithCPU: true,
+      codec,
+      gpu,
+    };
+  }
+
   // Generic encoder errors
   if (errorOutput.includes('Encoder') && errorOutput.includes('not found')) {
     return {
@@ -808,8 +962,13 @@ const normalizeCodec = (codec?: string): string | null => {
   return normalized;
 };
 
-const getHardwareDecodeArgs = async (gpu: GPUVendor, codec?: string): Promise<string[]> => {
-  if (gpu === 'cpu') {
+export const getHardwareDecodeArgs = async (
+  gpu: GPUVendor,
+  codec?: string,
+  platform: NodeJS.Platform = process.platform
+): Promise<string[]> => {
+  // Qualcomm's Media Foundation encoders take software frames, so no decode is attached.
+  if (gpu === 'cpu' || gpu === 'qualcomm') {
     return [];
   }
 
@@ -818,7 +977,7 @@ const getHardwareDecodeArgs = async (gpu: GPUVendor, codec?: string): Promise<st
     return [];
   }
 
-  if (process.platform === 'darwin') {
+  if (platform === 'darwin') {
     if (gpu !== 'apple') return [];
     const decoder = VIDEOTOOLBOX_DECODERS[normalized];
     if (decoder && (await checkDecoderAvailable(decoder))) {
@@ -827,7 +986,7 @@ const getHardwareDecodeArgs = async (gpu: GPUVendor, codec?: string): Promise<st
     return [];
   }
 
-  if (process.platform === 'win32') {
+  if (platform === 'win32') {
     if (gpu === 'nvidia') {
       const decoder = NVIDIA_DECODERS[normalized];
       if (decoder && (await checkDecoderAvailable(decoder))) {
@@ -853,7 +1012,7 @@ const getHardwareDecodeArgs = async (gpu: GPUVendor, codec?: string): Promise<st
     }
   }
 
-  if (process.platform === 'linux') {
+  if (platform === 'linux') {
     if (gpu === 'nvidia') {
       const decoder = NVIDIA_DECODERS[normalized];
       if (decoder && (await checkDecoderAvailable(decoder))) {
@@ -862,19 +1021,8 @@ const getHardwareDecodeArgs = async (gpu: GPUVendor, codec?: string): Promise<st
       return [];
     }
 
-    if (gpu === 'intel') {
-      const decoder = INTEL_DECODERS[normalized];
-      if (decoder && (await checkDecoderAvailable(decoder))) {
-        return ['-hwaccel', 'qsv', '-hwaccel_output_format', 'qsv', '-c:v', decoder];
-      }
-      return [];
-    }
-
-    // AMD on Linux is not reachable here: AMF encoders ship only in Windows
-    // FFmpeg builds, so checkGPUEncoderSupport reports AMD/Linux unavailable and
-    // the conversion is switched to CPU before decode arguments are built.
-    // Enabling it would require VAAPI *encoders* plus a hwdownload filter, since
-    // -hwaccel_output_format vaapi cannot feed a software encoder.
+    // Linux Intel and AMD encode through VAAPI, which takes software-decoded frames.
+    // No hardware decode is attached, so their decode arguments stay empty.
   }
 
   return [];
@@ -983,9 +1131,8 @@ export const getVideoInfo = async (inputPath: string, signal?: AbortSignal): Pro
   );
   try {
     const data = JSON.parse(output);
-    const streams: Array<{ codec_type?: string; codec_name?: string }> = Array.isArray(data.streams)
-      ? data.streams
-      : [];
+    const streams: Array<{ codec_type?: string; codec_name?: string; channels?: unknown }> =
+      Array.isArray(data.streams) ? data.streams : [];
     const videoStream = data.streams?.find(
       (stream: { codec_type: string }) => stream.codec_type === 'video'
     );
@@ -993,10 +1140,14 @@ export const getVideoInfo = async (inputPath: string, signal?: AbortSignal): Pro
     const subtitleCodecs = streams
       .filter((stream) => stream.codec_type === 'subtitle')
       .map((stream) => stream.codec_name || 'unknown');
+    const audioChannels = streams
+      .filter((stream) => stream.codec_type === 'audio')
+      .map((stream) => (typeof stream.channels === 'number' ? stream.channels : 0));
     return {
       hasVideo: videoStream !== undefined,
       audioCodec: audioStream?.codec_name || undefined,
       subtitleCodecs,
+      audioChannels,
       duration: parseFloat(data.format?.duration || '0'),
       size: parseInt(data.format?.size || '0'),
       width: videoStream?.width || 0,
@@ -1121,6 +1272,19 @@ export const resolveUniqueOutputPath = (
 const HEVC_CODEC_NAMES = ['hevc', 'h265'];
 
 /**
+ * Splices pipeline options before the output path. A flag the preset already
+ * sets is skipped, so the final argv never repeats an option.
+ */
+export const spliceOutputArgs = (presetArgs: string[], extraArgs: string[]): string[] => {
+  const additions: string[] = [];
+  for (let i = 0; i + 1 < extraArgs.length; i += 2) {
+    if (!presetArgs.includes(extraArgs[i])) additions.push(extraArgs[i], extraArgs[i + 1]);
+  }
+  if (additions.length === 0) return presetArgs;
+  return [...presetArgs.slice(0, -1), ...additions, presetArgs[presetArgs.length - 1]];
+};
+
+/**
  * Applies MP4 container fixes: faststart for progressive playback, and the
  * `hvc1` codec tag for HEVC.
  *
@@ -1235,6 +1399,32 @@ export const getRemuxIncompatibilityReason = (
   }
 
   return null;
+};
+
+export interface VaapiDevicePlan {
+  gpu: GPUVendor;
+  renderNode: string | null;
+}
+
+/**
+ * Chooses the render node for a Linux Intel/AMD conversion. Without one, the
+ * conversion falls back to CPU, the same as an unsupported GPU.
+ */
+export const resolveVaapiDevice = (
+  gpu: GPUVendor,
+  platform: NodeJS.Platform = process.platform,
+  findRenderNode: (vendor: VaapiVendor) => string | null = findVaapiRenderNode
+): VaapiDevicePlan => {
+  if (!usesVaapi(gpu, platform)) return { gpu, renderNode: null };
+  const renderNode = findRenderNode(gpu as VaapiVendor);
+  return renderNode ? { gpu, renderNode } : { gpu: 'cpu', renderNode: null };
+};
+
+/** Inserts input options right before the first -i; leaves args alone without one. */
+export const insertBeforeInput = (args: string[], extra: string[]): string[] => {
+  const index = args.indexOf('-i');
+  if (index === -1 || extra.length === 0) return args;
+  return [...args.slice(0, index), ...extra, ...args.slice(index)];
 };
 
 export const convertVideo = async (
@@ -1362,9 +1552,17 @@ export const convertVideo = async (
       : undefined
   );
   const isVideoPreset = presetCodec !== null;
+  // Linux Intel/AMD encode through VAAPI; with no render node the conversion runs on CPU.
+  const vaapi = isVideoPreset ? resolveVaapiDevice(gpu) : { gpu, renderNode: null };
+  if (vaapi.gpu !== gpu) {
+    onLog?.(`No ${GPU_NAMES[gpu]} render node found under /dev/dri; converting on CPU.\n`);
+  }
+  const activeGpu = vaapi.gpu;
   const shouldUseHardwareDecode =
-    isVideoPreset && !(options.useCpuDecodingWhenGpu === true && gpu !== 'cpu');
-  const decodeArgs = shouldUseHardwareDecode ? await getHardwareDecodeArgs(gpu, inputCodec) : [];
+    isVideoPreset && !(options.useCpuDecodingWhenGpu === true && activeGpu !== 'cpu');
+  const decodeArgs = shouldUseHardwareDecode
+    ? await getHardwareDecodeArgs(activeGpu, inputCodec)
+    : [];
   if (options.signal?.aborted) {
     return canceledResult();
   }
@@ -1380,13 +1578,14 @@ export const convertVideo = async (
             videoCodec: videoInfo.codec,
             audioCodec: videoInfo.audioCodec,
             subtitleCodecs: videoInfo.subtitleCodecs ?? [],
+            audioChannels: videoInfo.audioChannels ?? [],
           },
         }
       : {}),
   };
   let presetArgs = ensureMp4PlaybackCompatibilityArgs(
     preset,
-    preset.getArgs(inputPath, outputPath, gpu, presetContext),
+    preset.getArgs(inputPath, outputPath, activeGpu, presetContext),
     videoInfo?.codec
   );
   const guardedPresetArgs = withInputProtocolArgs(presetArgs, inputPath);
@@ -1395,15 +1594,28 @@ export const convertVideo = async (
     return { success: false, outputPath: '', error: 'Internal error: preset has no input.' };
   }
   presetArgs = guardedPresetArgs;
+  if (vaapi.renderNode) {
+    // The upload filter goes in first, so a tone-map prepended later runs before it.
+    presetArgs = insertBeforeInput(presetArgs, ['-vaapi_device', vaapi.renderNode]);
+    presetArgs = applyVideoFilter(
+      presetArgs,
+      vaapiUploadFilter({
+        category: preset.category,
+        codec: presetCodec ?? '',
+        sourcePixFmt: videoInfo?.pixFmt,
+      })
+    );
+  }
 
   // Colour tags, bit depth, HDR tone-mapping, and GPU frame residency (skip remux/audio).
   let activeDecodeArgs = decodeArgs;
-  const needsVideoPlan = isVideoPreset || preset.category === 'gif';
-  if (needsVideoPlan && videoInfo && presetArgs.length > 0) {
+  const needsVideoPlan = isVideoPreset || preset.category === 'gif' || preset.category === 'webp';
+  // Qualcomm still needs its NV12 output flag when the probe found no source info.
+  if (needsVideoPlan && (videoInfo || activeGpu === 'qualcomm') && presetArgs.length > 0) {
     const pipeline = planVideoPipeline({
       category: preset.category,
-      encodeVendor: presetCodec ? resolveEncodeVendor(presetCodec, gpu) : 'cpu',
-      source: videoInfo,
+      encodeVendor: presetCodec ? resolveEncodeVendor(presetCodec, activeGpu) : 'cpu',
+      source: videoInfo ?? undefined,
       decodeArgs,
       canTonemap: await canTonemapHdr(),
     });
@@ -1413,10 +1625,10 @@ export const convertVideo = async (
       onLog?.('HDR source: tone-mapping to SDR (BT.709) for an 8-bit output.\n');
     }
     if (pipeline.warning) onLog?.(`Warning: ${pipeline.warning}\n`);
-    const outputArgs = preset.category === 'gif' ? [] : pipeline.outputArgs;
-    if (outputArgs.length > 0) {
-      presetArgs = [...presetArgs.slice(0, -1), ...outputArgs, presetArgs[presetArgs.length - 1]];
-    }
+    // GIF and WebP carry no colour tags or pixel format, so their output stays bare.
+    const outputArgs =
+      preset.category === 'gif' || preset.category === 'webp' ? [] : pipeline.outputArgs;
+    presetArgs = spliceOutputArgs(presetArgs, outputArgs);
   }
   let conversionCanceled = false;
   const runAttempt = async (

@@ -76,9 +76,15 @@ test('retired updater channel alias is gone', () => {
   assert.doesNotMatch(source, /shouldAcceptUpdateForChannel/);
 });
 
-test('Electron stays on the 44.9 patch line', () => {
+// 44.9.1+ blocks the compromised eMudhra intermediate CAs.
+test('Electron is at least 44.9.1', () => {
   const pkg = JSON.parse(read('package.json'));
-  assert.match(String(pkg.devDependencies.electron), /\^?44\.9\./);
+  const match = String(pkg.devDependencies.electron).match(/(\d+)\.(\d+)\.(\d+)/);
+  assert.ok(match, 'electron version is not a plain semver range');
+  const [major, minor, patch] = match.slice(1).map(Number);
+  const floor = [44, 9, 1];
+  const cmp = major - floor[0] || minor - floor[1] || patch - floor[2];
+  assert.ok(cmp >= 0, `electron ${match[0]} is below 44.9.1`);
 });
 
 // Windows refuses to spawn npm.cmd without a shell (EINVAL since the CVE-2024-27980 fix).
@@ -99,4 +105,63 @@ test('beta release only runs plain release:* script names', () => {
 // A bare Enter accelerator swallows Enter in text fields and on buttons and starts a run.
 test('Start Conversion has no bare Enter menu accelerator', () => {
   assert.doesNotMatch(read('src/main/applicationMenu.ts'), /accelerator: 'Enter'/);
+});
+
+// Node 26 can deadlock in process.exit (exit joins a V8 compile thread waiting
+// on a main-thread GC). Failure modes: a release-path script still calls it;
+// a converted script loses its exit code; a converted script hangs on a
+// leftover handle instead of exiting.
+const EXIT_CODE_SCRIPTS = [
+  'build-scripts/ensure-release-ffmpeg.js',
+  'build/dist-tools.js',
+  'build/update-metainfo.js',
+  'build-scripts/windows-build.js',
+  'build/finalize-release-assets.js',
+  'build-scripts/test-all.js',
+  'build-scripts/release-warning.js',
+  'build-scripts/release-beta.js',
+  'build-scripts/run-e2e.js',
+];
+
+test('release-path scripts end with process.exitCode, not process.exit', () => {
+  for (const script of EXIT_CODE_SCRIPTS) {
+    assert.doesNotMatch(read(script), /process\.exit\(/, script);
+  }
+});
+
+test('converted scripts keep their failure exit codes and exit promptly', () => {
+  const { spawnSync } = require('node:child_process');
+  const run = (script, args) =>
+    spawnSync(process.execPath, [path.join(ROOT, script), ...args], {
+      cwd: ROOT,
+      encoding: 'utf8',
+      timeout: 15000,
+    });
+  const distTools = run('build/dist-tools.js', ['bogus']);
+  assert.equal(distTools.status, 1, distTools.stderr);
+  assert.match(distTools.stderr, /Usage/);
+  const beta = run('build-scripts/release-beta.js', ['bogus']);
+  assert.equal(beta.status, 1, beta.stderr);
+  const betaFlag = run('build-scripts/release-beta.js', ['release:linux', 'linux']);
+  assert.equal(betaFlag.status, 1, betaFlag.stderr);
+  assert.match(betaFlag.stderr, /Refusing release flag/);
+  const warning = run('build-scripts/release-warning.js', []);
+  assert.equal(warning.status, 0, warning.stderr);
+  assert.match(warning.stderr, /DESTRUCTIVE/);
+});
+
+// Electron 45 has no postinstall; its binary downloads on the first require('electron').
+// Failure modes: after npm ci, parallel unit tests race that download and one fails;
+// the release VM (release:deps) or the CI Test job skips the explicit install.
+test('Electron binary is installed right after npm ci', () => {
+  const { scripts } = JSON.parse(read('package.json'));
+  assert.equal(scripts['electron:install'], 'node node_modules/electron/install.js');
+  assert.equal(scripts['release:deps'], 'npm ci && npm run electron:install');
+  const yaml = require('js-yaml');
+  const ci = yaml.load(read('.github/workflows/ci.yml'));
+  const steps = ci.jobs.test.steps.map((step) => step.run || '');
+  const install = steps.findIndex((run) => /npm run electron:install/.test(run));
+  const unit = steps.findIndex((run) => /npm run tests\b/.test(run));
+  assert.ok(install !== -1, 'CI Test job must install the Electron binary');
+  assert.ok(install < unit, 'Electron must be installed before the unit tests');
 });

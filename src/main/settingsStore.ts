@@ -6,6 +6,10 @@ import {
   normalizeAdvancedFormatSettings,
 } from './advancedFormats';
 import {
+  TIER_DEFAULTS_MIGRATION_VERSION,
+  migrateLegacyTierDefaults,
+} from './advancedFormatMigration';
+import {
   SETTINGS_SCHEMA_VERSION,
   isSettingsCorrupted,
   isSettingsSchemaOutdated,
@@ -81,6 +85,7 @@ export const normalizeGpuVendor = (value: unknown): GPUVendor => {
   return value === 'nvidia' ||
     value === 'amd' ||
     value === 'intel' ||
+    value === 'qualcomm' ||
     value === 'apple' ||
     value === 'cpu'
     ? value
@@ -185,7 +190,14 @@ export const readSettingsFile = (
       backUpCorruptFile(settingsPath);
       return { settings: createDefaultSettings(), shouldPersist: true };
     }
-    return { settings: normalizeSettings(parsed), shouldPersist: isSettingsSchemaOutdated(parsed) };
+    const storedVersion = (parsed as { settingsSchemaVersion?: unknown }).settingsSchemaVersion;
+    const predatesTierMigration =
+      typeof storedVersion !== 'number' || storedVersion < TIER_DEFAULTS_MIGRATION_VERSION;
+    const upgraded = predatesTierMigration ? migrateLegacyTierDefaults(parsed) : parsed;
+    return {
+      settings: normalizeSettings(upgraded),
+      shouldPersist: isSettingsSchemaOutdated(parsed),
+    };
   } catch {
     backUpCorruptFile(settingsPath);
     return { settings: createDefaultSettings(), shouldPersist: true };

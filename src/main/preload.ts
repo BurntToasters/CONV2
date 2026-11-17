@@ -79,6 +79,8 @@ const api: ElectronApi = {
   // App info
   getVersion: (): Promise<string> => ipcRenderer.invoke('get-version'),
   getPlatform: (): Promise<string> => ipcRenderer.invoke('get-platform'),
+  // Sandboxed preloads expose process.arch; no IPC round trip is needed.
+  getArch: (): Promise<string> => Promise.resolve(process.arch),
 
   // Reveal in the OS file manager (shell.showItemInFolder). This deliberately
   // does not open/execute the file.

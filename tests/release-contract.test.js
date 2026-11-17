@@ -58,6 +58,8 @@ test('all release artifacts and updater metadata are explicitly uploaded', () =>
       'CONV2-Win-x64-Setup.exe.blockmap',
       'CONV2-Win-x64-Setup.exe.asc',
       'CONV2-Linux-x86_64.flatpak',
+      'CONV2-Linux-amd64.deb',
+      'CONV2-Linux-x86_64.rpm',
       'SHA256SUMS-Windows.txt',
       'beta.yml',
       'builder-debug.yml',
@@ -73,6 +75,50 @@ test('all release artifacts and updater metadata are explicitly uploaded', () =>
     path.join(releaseDir, 'SHA256SUMS-Windows.txt'),
     path.join(releaseDir, 'beta.yml'),
   ]);
+});
+
+test('Linux release builds only ship AppImage in the config target list', () => {
+  const packageJson = JSON.parse(read('package.json'));
+  const targets = packageJson.build.linux.target.map((entry) => entry.target);
+  assert.ok(targets.length > 0);
+  assert.deepEqual([...new Set(targets)], ['AppImage']);
+});
+
+test('Linux release builds and signs the Flatpak bundles', () => {
+  const { scripts } = JSON.parse(read('package.json'));
+  assert.match(
+    scripts['release:linux:continue'],
+    /npm run flatpak:clean && npm run flatpak:bundle && npm run sign:gpg/
+  );
+});
+
+test('packaged FFmpeg verifier ends without process.exit', () => {
+  // process.exit deadlocked the Linux release VM on Node 26: exit joins a V8
+  // background compile thread that is waiting for a GC on the main thread.
+  const source = read('build-scripts/verify-packaged-ffmpeg.js');
+  assert.doesNotMatch(source, /process\.exit\(/);
+  assert.match(source, /process\.exitCode = /);
+});
+
+test('packaged FFmpeg verifier keeps its exit codes', () => {
+  const { spawnSync } = require('node:child_process');
+  const os = require('node:os');
+  const emptyRelease = fs.mkdtempSync(path.join(os.tmpdir(), 'conv2-verify-'));
+  try {
+    const script = path.join(ROOT, 'build-scripts', 'verify-packaged-ffmpeg.js');
+    const env = { ...process.env, REQUIRE_FFMPEG_PAYLOAD: '' };
+    const skip = spawnSync(process.execPath, [script, emptyRelease], { env, encoding: 'utf8' });
+    assert.equal(skip.status, 0, skip.stderr);
+    assert.match(skip.stdout, /SKIP no unpacked CONV2 app/);
+    const required = spawnSync(process.execPath, [script, emptyRelease, '--require'], {
+      env,
+      encoding: 'utf8',
+    });
+    assert.equal(required.status, 1);
+    assert.match(required.stderr, /no unpacked CONV2 app/);
+  } finally {
+    fs.rmSync(emptyRelease, { recursive: true, force: true });
+  }
 });
 
 test('release commands disable electron-builder publishing', () => {

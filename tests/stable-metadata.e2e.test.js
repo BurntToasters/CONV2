@@ -3,7 +3,8 @@
 // beta-suffix-removal with the synchronized metadata set passes.
 // Failure modes: extra files, renamed/deleted files, version jumps, partial
 // metadata set, package.json content drift, lockfile drift, unsynced changelog
-// URLs, leftover beta sections, empty stable notes, bad metainfo date.
+// URLs, leftover beta sections, empty stable notes, bad metainfo date,
+// live downloads-block beta note on stable.
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -105,7 +106,7 @@ function metainfo(version, date) {
   ].join('\n');
 }
 
-function setup(mutateHead) {
+function setup(mutateHead, { baseChangelog = betaChangelog() } = {}) {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'conv2-metadata-'));
   const work = path.join(tmp, 'work');
   fs.mkdirSync(work);
@@ -119,7 +120,7 @@ function setup(mutateHead) {
     JSON.stringify({ name: 'conv2', version: BETA }, null, 2) + '\n'
   );
   fs.writeFileSync(work + '/package-lock.json', betaLock());
-  fs.writeFileSync(work + '/CHANGELOG.md', betaChangelog());
+  fs.writeFileSync(work + '/CHANGELOG.md', baseChangelog);
   fs.writeFileSync(work + '/com.burnttoasters.conv2.metainfo.xml', metainfo(BETA, '2026-10-01'));
   git(work, ['add', '-A']);
   git(work, ['commit', '-m', 'beta']);
@@ -260,4 +261,40 @@ test('metainfo with a bad date fails', (t) => {
   const result = run(repo);
   assert.notEqual(result.status, 0);
   assert.match(result.stderr, /date|release/);
+});
+
+// Downloads-block beta note: sync-version comments it out for stable.
+const DOWNLOADS_NOTE = '> [!NOTE] \n> 🅱️ This is a Beta\n';
+
+function withDownloadsNote(changelogText, note) {
+  return changelogText.replace('# Downloads\n\n', `# Downloads\n\n${note}\n`);
+}
+
+test('commented downloads beta note on stable passes', (t) => {
+  const repo = setup(
+    (work) =>
+      fs.writeFileSync(
+        work + '/CHANGELOG.md',
+        withDownloadsNote(stableChangelog(), `<!--\n${DOWNLOADS_NOTE}-->\n`)
+      ),
+    { baseChangelog: withDownloadsNote(betaChangelog(), DOWNLOADS_NOTE) }
+  );
+  t.after(() => cleanup(repo));
+  const result = run(repo);
+  assert.equal(result.status, 0, result.stderr);
+});
+
+test('live downloads beta note on stable fails', (t) => {
+  const repo = setup(
+    (work) =>
+      fs.writeFileSync(
+        work + '/CHANGELOG.md',
+        withDownloadsNote(stableChangelog(), DOWNLOADS_NOTE)
+      ),
+    { baseChangelog: withDownloadsNote(betaChangelog(), DOWNLOADS_NOTE) }
+  );
+  t.after(() => cleanup(repo));
+  const result = run(repo);
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /Beta callout/);
 });

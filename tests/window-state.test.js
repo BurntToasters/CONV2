@@ -85,7 +85,7 @@ test('saving a destroyed or missing window is a no-op', () => {
 });
 
 test('positions on a disconnected monitor are treated as off-screen', () => {
-  assert.equal(isWindowBoundsOnScreen(100, 100, 800, 600), true);
-  assert.equal(isWindowBoundsOnScreen(2500, 100, 800, 600), false);
-  assert.equal(isWindowBoundsOnScreen(100, -2000, 800, 600), false);
+  assert.equal(isWindowBoundsOnScreen(100, 100, 800), true);
+  assert.equal(isWindowBoundsOnScreen(2500, 100, 800), false);
+  assert.equal(isWindowBoundsOnScreen(100, -2000, 800), false);
 });

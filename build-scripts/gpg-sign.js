@@ -81,8 +81,6 @@ const SIGNABLE_EXTENSIONS = [
   '.exe',
   '.msi',
   '.appimage',
-  '.deb',
-  '.rpm',
   '.appx',
   '.msix',
   '.flatpak',

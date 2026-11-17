@@ -30,7 +30,9 @@ const { presets, getPresetById, getPresetGpuCodec } = require('../dist/main/pres
 const {
   ensureMp4PlaybackCompatibilityArgs,
   getRemuxIncompatibilityReason,
+  spliceOutputArgs,
 } = require('../dist/main/ffmpeg');
+const { planVideoPipeline } = require('../dist/main/videoPipeline');
 
 const ROOT = path.join(__dirname, '..');
 
@@ -89,11 +91,15 @@ function probe(file) {
   const streams = Array.isArray(data.streams) ? data.streams : [];
   const video = streams.find((s) => s.codec_type === 'video');
   const audio = streams.find((s) => s.codec_type === 'audio');
+  const audioStreams = streams.filter((s) => s.codec_type === 'audio');
   return {
     videoCodec: video?.codec_name,
     videoTag: video?.codec_tag_string,
+    pixFmt: video?.pix_fmt,
     audioCodec: audio?.codec_name,
-    audioStreams: streams.filter((s) => s.codec_type === 'audio').length,
+    audioStreams: audioStreams.length,
+    audioChannels: audioStreams.map((s) => (typeof s.channels === 'number' ? s.channels : 0)),
+    audioBitrates: audioStreams.map((s) => Number(s.bit_rate) || 0),
     subtitleCodecs: streams
       .filter((s) => s.codec_type === 'subtitle')
       .map((s) => s.codec_name || 'unknown'),
@@ -120,6 +126,7 @@ function runPreset(presetId, inputPath, outputName) {
         videoCodec: info.videoCodec,
         audioCodec: info.audioCodec,
         subtitleCodecs: info.subtitleCodecs,
+        audioChannels: info.audioChannels,
       },
     }),
     info.videoCodec
@@ -239,6 +246,45 @@ before(() => {
     fixtures.twoAudio,
   ]);
 
+  // 5.1(side) is the layout libopus refuses; FLAC keeps it, Matroska PCM does not.
+  fixtures.side51 = path.join(work, 'side51.mkv');
+  ffmpeg([
+    '-f',
+    'lavfi',
+    '-i',
+    'testsrc2=size=320x240:rate=25:duration=1',
+    '-f',
+    'lavfi',
+    '-i',
+    // Noise, not silence: a silent track encodes to nearly nothing, so bitrates would not show.
+    'aevalsrc=random(0)*2-1|random(1)*2-1|random(2)*2-1|random(3)*2-1|random(4)*2-1|random(5)*2-1:d=1:c=5.1(side)',
+    '-map',
+    '0:v',
+    '-map',
+    '1:a',
+    '-c:v',
+    'libx264',
+    '-pix_fmt',
+    'yuv420p',
+    '-c:a',
+    'flac',
+    fixtures.side51,
+  ]);
+
+  // 10 fps, 320x180: small and low-rate, the case the GIF graph used to upscale and pad.
+  fixtures.smallLowFps = path.join(work, 'small_10fps.mp4');
+  ffmpeg([
+    '-f',
+    'lavfi',
+    '-i',
+    'testsrc2=size=320x180:rate=10:duration=1',
+    '-c:v',
+    'libx264',
+    '-pix_fmt',
+    'yuv420p',
+    fixtures.smallLowFps,
+  ]);
+
   fixtures.tenBit = path.join(work, 'ten_bit.mkv');
   ffmpeg([
     '-i',
@@ -266,7 +312,15 @@ test('bundled FFmpeg is executable when integration tests are enforced', () => {
 
 // ── Every preset actually runs ───────────────────────────────────────────────
 
-const EXPECTED_VIDEO_CODEC = { av1: 'av1', h264: 'h264', h265: 'hevc', avi: 'h264', gif: 'gif' };
+// ffprobe reports animated WebP as webp_anim, not webp.
+const EXPECTED_VIDEO_CODEC = {
+  av1: 'av1',
+  h264: 'h264',
+  h265: 'hevc',
+  avi: 'h264',
+  gif: 'gif',
+  webp: 'webp_anim',
+};
 
 test('every encoding preset completes and produces the expected codec', { skip }, async (t) => {
   const encodePresets = presets.filter((p) => p.category in EXPECTED_VIDEO_CODEC);
@@ -280,10 +334,10 @@ test('every encoding preset completes and produces the expected codec', { skip }
         EXPECTED_VIDEO_CODEC[preset.category],
         `${preset.id} produced ${result.videoCodec}`
       );
-      if (preset.category !== 'gif') {
-        assert.ok(result.audioCodec, `${preset.id} lost the audio track`);
+      if (preset.category === 'gif' || preset.category === 'webp') {
+        assert.equal(result.audioCodec, undefined, `${preset.id} must not carry audio`);
       } else {
-        assert.equal(result.audioCodec, undefined, 'GIF output must not carry audio');
+        assert.ok(result.audioCodec, `${preset.id} lost the audio track`);
       }
     });
   }
@@ -425,6 +479,121 @@ test('supported remux combinations are not blocked by the preflight', { skip }, 
   assert.equal(getRemuxIncompatibilityReason(h264.videoCodec, 'mp4', h264.audioCodec), null);
 });
 
+// Failure modes for the GIF, WebP, AV1 audio and 10-bit changes, written before the change.
+//  - GIF upscales a small source, or pads its frame rate above the source's
+//  - WebP writes the wrong codec, or loops with the GIF convention (-1/0)
+//  - AV1 with 5.1(side) audio fails because libopus rejects the layout
+//  - a 10-bit H.265 run gets two -pix_fmt flags from preset and pipeline
+
+const WEBP_IDS = ['webp-best-quality', 'webp-quality', 'webp-balanced', 'webp-best-compression'];
+
+/** Reads the ANIM chunk loop count of an animated WebP (0 = forever). */
+function webpLoopCount(file) {
+  const bytes = fs.readFileSync(file);
+  const anim = bytes.indexOf('ANIM');
+  assert.notEqual(anim, -1, 'animated WebP has no ANIM chunk');
+  return bytes.readUInt16LE(anim + 12);
+}
+
+/** Width, height and decoded frame count of the first video stream. */
+function videoGeometry(file) {
+  const out = execFileSync(
+    FFPROBE,
+    [
+      '-v',
+      'error',
+      '-count_frames',
+      '-select_streams',
+      'v:0',
+      '-show_entries',
+      'stream=width,height,nb_read_frames',
+      '-of',
+      'csv=p=0',
+      file,
+    ],
+    { stdio: ['ignore', 'pipe', 'pipe'] }
+  )
+    .toString()
+    .trim();
+  const [width, height, frames] = out.split(',').map(Number);
+  return { width, height, frames };
+}
+
+test(
+  'every WebP preset writes animated WebP that loops forever by default',
+  { skip },
+  async (t) => {
+    for (const id of WEBP_IDS) {
+      await t.test(id, () => {
+        const { result, output } = runPreset(id, fixtures.base);
+        assert.equal(result.videoCodec, 'webp_anim');
+        assert.equal(result.audioCodec, undefined);
+        assert.equal(webpLoopCount(output), 0, 'forever must map to loop count 0');
+      });
+    }
+  }
+);
+
+test('WebP loop mode once writes loop count 1', { skip }, () => {
+  const output = path.join(work, 'out_webp_once.webp');
+  const args = getPresetById('webp-quality').getArgs(fixtures.base, output, 'cpu', {
+    advancedFormatSettings: { webp: { loopMode: 'once' } },
+  });
+  ffmpeg(args);
+  assert.equal(webpLoopCount(output), 1);
+});
+
+test('GIF from a small low-fps source keeps its size and frame count', { skip }, () => {
+  const source = videoGeometry(fixtures.smallLowFps);
+  assert.deepEqual([source.width, source.height, source.frames], [320, 180, 10]);
+
+  const { output } = runPreset('gif-best-quality', fixtures.smallLowFps, 'small_source.gif');
+  const out = videoGeometry(output);
+  assert.equal(out.width, 320, 'must not upscale to the tier dimension');
+  assert.equal(out.height, 180);
+  assert.ok(out.frames <= source.frames, `frames ${out.frames} exceed source ${source.frames}`);
+});
+
+test('AV1 encodes a 5.1(side) source that libopus rejects without aformat', { skip }, () => {
+  const source = probe(fixtures.side51);
+  assert.deepEqual(source.audioChannels, [6], 'fixture should carry one 6-channel track');
+
+  const { result } = runPreset('av1-balanced', fixtures.side51, 'side51_av1.mp4');
+  assert.equal(result.videoCodec, 'av1');
+  assert.equal(result.audioCodec, 'opus');
+  assert.deepEqual(result.audioChannels, [6], 'surround layout must survive the aformat mapping');
+});
+
+test('a surround track gets its scaled bitrate in a real encode', { skip }, () => {
+  // Failure mode: the per-stream -b:a:0 is ignored, leaving the track at the 128k base.
+  const { result } = runPreset('h264-fast', fixtures.side51, 'side51_h264.mp4');
+  assert.equal(result.audioCodec, 'aac');
+  assert.ok(result.audioBitrates[0] > 250_000, `surround bitrate ${result.audioBitrates[0]}`);
+});
+
+test('a 10-bit H.265 run carries exactly one -pix_fmt after the pipeline merge', { skip }, () => {
+  // The preset sets yuv420p10le for advanced params and the pipeline adds it for a 10-bit
+  // source; the merge must keep one copy or FFmpeg receives a repeated option.
+  const source = probe(fixtures.tenBit);
+  const plan = planVideoPipeline({
+    category: 'h265',
+    encodeVendor: 'cpu',
+    source: { pixFmt: source.pixFmt },
+    decodeArgs: [],
+    canTonemap: false,
+  });
+  const output = path.join(work, 'h265_10bit_merged.mp4');
+  const preset = getPresetById('h265-best-quality');
+  const args = ensureMp4PlaybackCompatibilityArgs(
+    preset,
+    spliceOutputArgs(preset.getArgs(fixtures.tenBit, output, 'cpu'), plan.outputArgs),
+    source.videoCodec
+  );
+  assert.equal(args.filter((arg) => arg === '-pix_fmt').length, 1);
+  ffmpeg(args);
+  assert.equal(probe(output).pixFmt, 'yuv420p10le');
+});
+
 // ── Advanced settings at their limits ───────────────────────────────────────
 
 test('AV1 accepts the top of its allowed CRF range on CPU', { skip }, () => {
@@ -512,7 +681,7 @@ test('output naming and extensions match each preset', { skip }, () => {
       typeof preset.extension === 'string' && preset.extension.length > 0,
       `${preset.id} has no extension`
     );
-    if (preset.category === 'gif' || preset.category === 'audio') {
+    if (['gif', 'webp', 'audio'].includes(preset.category)) {
       assert.equal(codec, null, `${preset.id} should not report a GPU codec`);
     }
   }

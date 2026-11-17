@@ -75,13 +75,27 @@ function expectedMetainfo(baseContent, headVersion, date) {
   return baseContent.replace(/<releases>[\s\S]*?<\/releases>/, replacement);
 }
 
+// Mirror of build/sync-version.js: stable comments out the downloads-block beta note.
+const BETA_NOTE = /(?:<!--\n)?(> \[!NOTE\][^\n]*\n> [^\n]*This is a Beta[^\n]*\n)(?:-->\n)?/;
+
+function commentDownloadsBetaNote(content) {
+  const downloads = content.match(/^# .*Downloads\s*$/m);
+  const firstChanges = content.search(/^## Changes in /m);
+  if (!downloads || downloads.index === undefined || firstChanges <= downloads.index) {
+    return content;
+  }
+  const section = content
+    .slice(downloads.index, firstChanges)
+    .replace(BETA_NOTE, (_match, note) => `<!--\n${note}-->\n`);
+  return content.slice(0, downloads.index) + section + content.slice(firstChanges);
+}
+
 function validateStableChangelog(baseContent, headContent, headVersion) {
-  // Mirror build/sync-changelog.js, then the promotion renames the top beta
+  // Mirror build/sync-version.js, then the promotion renames the top beta
   // section to the stable one and drops the beta callout. Stable promotion may
   // also collapse the changelog to the current release section.
-  const synced = baseContent.replace(
-    /\/releases\/download\/v[^/]+\//g,
-    `/releases/download/v${headVersion}/`
+  const synced = commentDownloadsBetaNote(
+    baseContent.replace(/\/releases\/download\/v[^/]+\//g, `/releases/download/v${headVersion}/`)
   );
   const betaHeadingMatch = synced.match(/^## Changes in `v[^`]+:`/m);
   if (!betaHeadingMatch) {
@@ -102,7 +116,8 @@ function validateStableChangelog(baseContent, headContent, headVersion) {
   }
   const prefix = promoted.slice(0, bodyStart);
   const suffix = historyRemoved ? headContent.slice(headProductStart) : promoted.slice(nextSection);
-  if (/This is a Beta build/.test(headContent)) {
+  // A commented-out note is the expected stable form; only a live one fails.
+  if (/This is a Beta\b/.test(headContent.replace(/<!--[\s\S]*?-->/g, ''))) {
     throw new Error('CHANGELOG.md stable content still has the Beta callout.');
   }
   if (/^## Changes in `v\d+\.\d+\.\d+-beta\.\d+:`/m.test(headContent)) {
