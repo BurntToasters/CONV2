@@ -6,9 +6,6 @@ if [[ "$(uname -s)" != "Darwin" ]]; then
   exit 0
 fi
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-source "$SCRIPT_DIR/keychain-security.sh"
-
 KEYCHAIN_PATH="${KEYCHAIN_PATH:-$HOME/Library/Keychains/login.keychain-db}"
 DOTENV_FILE="${DOTENV_FILE:-.env}"
 
@@ -43,28 +40,21 @@ if [[ -z "${KEYCHAIN_PASSWORD:-}" ]]; then
   fi
 fi
 
-if ! command -v expect >/dev/null 2>&1; then
-  echo "expect is required so the keychain password is not placed on security argv."
-  exit 1
-fi
-
 echo "Preparing keychain for non-GUI codesign..."
-export KEYCHAIN_PASSWORD
-
-# A locked keychain here means codesign prompts mid-release, so stop instead.
-if ! security_with_password unlock-keychain "$KEYCHAIN_PATH" >/dev/null; then
-  echo "Could not unlock $KEYCHAIN_PATH. Check SSH_USER_PWD in $DOTENV_FILE."
-  exit 1
-fi
-
-security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
-security list-keychains -d user -s "$KEYCHAIN_PATH"
-security default-keychain -d user -s "$KEYCHAIN_PATH"
-
-if ! security_with_password set-key-partition-list -S apple-tool:,apple:,codesign: -s \
-  "$KEYCHAIN_PATH" >/dev/null; then
-  echo "Could not allow codesign to use keys in $KEYCHAIN_PATH."
-  exit 1
-fi
+case $KEYCHAIN_PASSWORD in
+  *[[:space:]\'\"\\$\`]*)
+    echo "KEYCHAIN_PASSWORD must not contain whitespace, quotes, backslashes, or expansion characters."
+    exit 1
+    ;;
+esac
+# Password goes on security's stdin, not argv (ps). Prefer KEYCHAIN_PATH to a
+# dedicated signing keychain; partition-list still applies to that file.
+security -i <<EOF
+unlock-keychain -p $KEYCHAIN_PASSWORD $KEYCHAIN_PATH
+set-keychain-settings -lut 21600 $KEYCHAIN_PATH
+list-keychains -d user -s $KEYCHAIN_PATH
+default-keychain -d user -s $KEYCHAIN_PATH
+set-key-partition-list -S apple-tool:,apple:,codesign: -s -k $KEYCHAIN_PASSWORD $KEYCHAIN_PATH
+EOF
 
 echo "Keychain ready for SSH signing."

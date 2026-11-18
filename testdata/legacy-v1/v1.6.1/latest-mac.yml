@@ -1,0 +1,11 @@
+version: 1.6.1
+files:
+  - url: CONV2-macOS-universal.zip
+    sha512: 3i4mKMnh+XH+qcvcU/DbeTB67rkc8Sz7w5eCMypAcncJamUlIZ7zh1Q3AU1Pt1H0W28M5rNVRbtq4mbOB6swyw==
+    size: 327564750
+  - url: CONV2-macOS-universal.dmg
+    sha512: R2gOgJikbDIct5p2+84/p6VD+9NsT/y6plwUz63IBIWyPBdpxmJRPtA3Hnxz00P2ieP+9sQI2V85MH4bq+dlFw==
+    size: 328945728
+path: CONV2-macOS-universal.zip
+sha512: 3i4mKMnh+XH+qcvcU/DbeTB67rkc8Sz7w5eCMypAcncJamUlIZ7zh1Q3AU1Pt1H0W28M5rNVRbtq4mbOB6swyw==
+releaseDate: '2026-10-22T00:40:40.731Z'

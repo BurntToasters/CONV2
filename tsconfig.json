@@ -1,22 +1,21 @@
 {
   "compilerOptions": {
     "target": "ES2022",
-    "module": "node16",
-    "lib": ["ES2022", "DOM"],
-    "outDir": "./dist",
-    "rootDir": "./src",
-    "strict": true,
-    "esModuleInterop": true,
+    "useDefineForClassFields": true,
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
     "skipLibCheck": true,
-    "forceConsistentCasingInFileNames": true,
+    "moduleResolution": "Bundler",
+    "types": ["node"],
     "resolveJsonModule": true,
-    "sourceMap": true,
-    "moduleResolution": "node16",
+    "noEmit": true,
+    "strict": true,
     "noImplicitReturns": true,
+    "noImplicitOverride": true,
     "noFallthroughCasesInSwitch": true,
-    "noUnusedLocals": true,
-    "noUnusedParameters": true
+    "noUncheckedIndexedAccess": true,
+    "forceConsistentCasingInFileNames": true
   },
-  "include": ["src/main/**/*", "src/shared/**/*"],
-  "exclude": ["node_modules", "dist", "release"]
+  "include": ["src", "vite.config.ts", "vitest.config.ts"],
+  "exclude": ["src/main"]
 }

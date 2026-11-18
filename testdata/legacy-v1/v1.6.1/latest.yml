@@ -1,0 +1,14 @@
+version: 1.6.1
+files:
+  - url: CONV2-Win-Setup.exe
+    sha512: yYA/y4i1qlPXFH4rNeZmhWIarql4CLW2YMpm2kRlNqNSLne82gMkA16L2TYG9NbMUkWaCFe1Fv17E0Pfnk22rA==
+    size: 290776856
+  - url: CONV2-Win-x64-Setup.exe
+    sha512: Vt8fYhjzGEKrHVFbnrsT1fVWTw6YNKO/kLVDujiZu/d/hXtHyxt4ZdDU1rBREbGgVpE03Vj6cw6dei2yQVYuHg==
+    size: 155558456
+  - url: CONV2-Win-arm64-Setup.exe
+    sha512: mUKSg0KOvMI/+tcV4YS+jSi/q31QVC+399BDtleg9yDy5vI9xT9vlzfaA5/2UxKFtZlwuytY7yLdhyQcaylGug==
+    size: 136239080
+path: CONV2-Win-Setup.exe
+sha512: yYA/y4i1qlPXFH4rNeZmhWIarql4CLW2YMpm2kRlNqNSLne82gMkA16L2TYG9NbMUkWaCFe1Fv17E0Pfnk22rA==
+releaseDate: '2026-10-22T00:40:08.794Z'

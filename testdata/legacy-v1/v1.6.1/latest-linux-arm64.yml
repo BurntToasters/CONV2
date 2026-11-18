@@ -1,0 +1,15 @@
+version: 1.6.1
+files:
+  - url: CONV2-Linux-arm64.AppImage
+    sha512: h06pI+L6PIRQqrDAmARqmJSe34S2SXT4u6lIP+ziDaloicC85FbabVm8YP2My+nS47KfaRCxXfvb5K40SP+WQg==
+    size: 178155300
+    blockMapSize: 186992
+  - url: CONV2-Linux-arm64.deb
+    sha512: UVpyfkYwwSqoKQ86X+qf2Mbn9nHrGyGF4CX4dUosVnqtgTVZ+9YYevzCSSgTB2XCTT7t40mQKsVQjfLLpNHFAw==
+    size: 132514532
+  - url: CONV2-Linux-aarch64.rpm
+    sha512: GAR4t9pWWIZvUnDakU0eVPCGBgng7ng2X6dsywH2SLcyrQZp7zGToDqN2byF87IUAy4j1ckko9A64phtPv6UKQ==
+    size: 103293485
+path: CONV2-Linux-arm64.AppImage
+sha512: h06pI+L6PIRQqrDAmARqmJSe34S2SXT4u6lIP+ziDaloicC85FbabVm8YP2My+nS47KfaRCxXfvb5K40SP+WQg==
+releaseDate: '2026-10-22T00:37:18.928Z'

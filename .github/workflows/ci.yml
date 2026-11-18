@@ -1,12 +1,14 @@
 name: CI
 
-# To save CI minutes, tests run only for pushes to main and beta, never on
-# any other branch. PRs into main run only the stable promotion check.
+# Pull requests prove candidate changes. Pushes prove the exact post-merge tips
+# of the protected release branches without duplicating every PR branch update.
+# Jobs run tests, not signed release artifacts (never npm run release:*).
+
 on:
   push:
-    branches: [main, beta]
+    branches: [main, beta, "next-*"]
   pull_request:
-    branches: [main]
+    branches: [main, beta, "next-*"]
 
 permissions:
   contents: read
@@ -17,242 +19,156 @@ concurrency:
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 env:
-  NODE_VERSION: '26.13.0'
-  NPM_VERSION: '12.2.1'
-  # Real FFmpeg payloads are not published for GitHub-hosted runners yet.
-  # ci:prepare-ffmpeg skips the download, and payload tests skip with it.
+  NODE_VERSION: "26.13.0"
+  NPM_VERSION: "12.2.1"
+  # Real FFmpeg payloads download from FFMPEG_DL_SERVER (repo secret). When the
+  # secret is absent, scripts/ci-ffmpeg.cjs skips the download loudly and the
+  # payload checks skip with it; trusted pushes fail hard instead.
 
 jobs:
-  typecheck:
-    name: Lint & Type Check
-    if: github.event_name == 'push'
-    runs-on: ubuntu-24.04
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-
-      - name: Setup Node.js
-        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-          cache: 'npm'
-
-      - name: Upgrade npm
-        run: npm install -g npm@${{ env.NPM_VERSION }}
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Verify synchronized version files
-        run: npm run sync-version && git diff --exit-code
-
-      - name: Check formatting
-        run: npm run format:check
-
-      - name: Comment lint
-        run: npm run lint
-
-      - name: Run TypeScript compiler
-        run: npm run typecheck
-
-      - name: Audit dependencies
-        run: |
-          npm audit --omit=dev --audit-level=high
-          # Dev tooling is not shipped; critical findings still fail CI.
-          npm audit --audit-level=critical
-
-  test:
-    name: Test
-    if: github.event_name == 'push'
-    runs-on: ubuntu-24.04
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-
-      - name: Setup Node.js
-        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-          cache: 'npm'
-
-      - name: Upgrade npm
-        run: npm install -g npm@${{ env.NPM_VERSION }}
-
-      - name: Install dependencies
-        run: npm ci
-
-      # Electron 45 downloads lazily; parallel tests would race the download.
-      - name: Install Electron binary
-        run: npm run electron:install
-
-      - name: Prepare FFmpeg payload
-        run: npm run ci:prepare-ffmpeg
-
-      - name: Build and run tests
-        run: npm run tests
-
-      # Authenticode tests skip without osslsigncode, which drops ffmpegIntegrity coverage.
-      - name: Install osslsigncode
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y osslsigncode
-
-      - name: Coverage thresholds
-        run: npm run test:coverage
-
-      - name: Config and syntax checks
-        run: npm run test:checks
-
-  build:
-    name: Build + Package Smoke
-    if: github.event_name == 'push'
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-24.04, windows-latest, macos-latest]
-    env:
-      CSC_IDENTITY_AUTO_DISCOVERY: 'false'
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-
-      - name: Setup Node.js
-        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-          cache: 'npm'
-
-      - name: Upgrade npm
-        run: npm install -g npm@${{ env.NPM_VERSION }}
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Configure Electron sandbox
-        if: runner.os == 'Linux'
-        run: |
-          node node_modules/electron/install.js
-          sudo chown root:root node_modules/electron/dist/chrome-sandbox
-          sudo chmod 4755 node_modules/electron/dist/chrome-sandbox
-          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
-
-      - name: Prepare FFmpeg payload for package smoke
-        run: npm run ci:prepare-ffmpeg
-
-      - name: Build
-        run: npm run build
-
-      # Skips until a bundled FFmpeg payload is available on the runner.
-      - name: FFmpeg integration tests
-        run: npm run test:ffmpeg
-
-      - name: Runtime smoke (headless)
-        if: runner.os == 'Linux'
-        run: xvfb-run -a npm run smoke:runtime -- --skip-compile
-
-      - name: Runtime smoke
-        if: runner.os != 'Linux'
-        run: npm run smoke:runtime -- --skip-compile
-
-      - name: Generate license manifest
-        run: npm run licenses
-
-      - name: Package smoke (Linux AppImage)
-        if: runner.os == 'Linux'
-        run: npx electron-builder --linux AppImage --publish never
-
-      - name: Package smoke (Windows NSIS)
-        if: runner.os == 'Windows'
-        run: npx electron-builder --win nsis --publish never
-
-      - name: Package smoke (macOS DMG)
-        if: runner.os == 'macOS'
-        run: npx electron-builder --mac dmg -c.mac.notarize=false --publish never
-
-      - name: Verify packaged app contents
-        run: node build-scripts/verify-package-contents.js release
-
-      - name: Verify packaged FFmpeg
-        run: node build-scripts/verify-packaged-ffmpeg.js release
-
-      - name: Upload package contents report
-        if: always()
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: package-contents-${{ runner.os }}
-          path: coverage/e2e/package-contents.json
-          if-no-files-found: warn
-
-  e2e:
-    name: E2E (UI + conversion matrix)
-    if: github.event_name == 'push'
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-24.04, macos-latest, windows-latest]
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-
-      - name: Setup Node.js
-        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-          cache: 'npm'
-
-      - name: Upgrade npm
-        run: npm install -g npm@${{ env.NPM_VERSION }}
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Configure Electron sandbox
-        if: runner.os == 'Linux'
-        run: |
-          node node_modules/electron/install.js
-          sudo chown root:root node_modules/electron/dist/chrome-sandbox
-          sudo chmod 4755 node_modules/electron/dist/chrome-sandbox
-          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
-
-      # Skips conversion coverage when the runner has no bundled FFmpeg.
-      - name: E2E (headless)
-        if: runner.os == 'Linux'
-        run: xvfb-run -a npm run test:e2e
-
-      - name: E2E
-        if: runner.os != 'Linux'
-        run: npm run test:e2e
-
-      - name: Upload E2E artifacts
-        if: always()
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: e2e-${{ runner.os }}
-          path: coverage/e2e/
-          if-no-files-found: warn
-
-  stable-metadata:
-    name: Stable promotion metadata only
-    # A release/* branch promoted to main must remove only the beta suffix and
-    # touch exactly the synchronized release metadata set.
-    if: >-
-      ${{
-        github.event_name == 'pull_request' &&
-        github.base_ref == 'main' &&
-        startsWith(github.head_ref, 'release/')
-      }}
+  commit-message-policy:
+    if: github.event_name == 'pull_request'
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
           persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - name: Enforce Co-authored-by email policy
+        run: node scripts/strip-coauthor-trailers.js --check-range ${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }}
+      - name: Enforce stable metadata-only main PR
+        if: >-
+          ${{
+            github.event.pull_request.base.ref == 'main' &&
+            startsWith(github.head_ref, 'release/')
+          }}
+        run: >-
+          node scripts/check-stable-metadata-pr.mjs
+          ${{ github.event.pull_request.base.sha }}
+          ${{ github.event.pull_request.head.sha }}
+
+  quality-gate:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Setup Node.js
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: ${{ env.NODE_VERSION }}
+          cache: "npm"
 
-      - name: Enforce stable metadata-only promotion
-        run: >-
-          node build-scripts/check-stable-metadata-pr.js
-          ${{ github.event.pull_request.base.sha }}
-          ${{ github.event.pull_request.head.sha }}
+      - name: Upgrade npm
+        run: npm install -g npm@${{ env.NPM_VERSION }}
+
+      - name: Read pinned Rust toolchain
+        id: rust-toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          channel="$(node scripts/rust-toolchain.mjs)"
+          test -n "$channel"
+          echo "channel=$channel" >> "$GITHUB_OUTPUT"
+
+      - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
+        with:
+          toolchain: ${{ steps.rust-toolchain.outputs.channel }}
+          components: rustfmt, clippy
+
+      - name: Install Linux dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            patchelf
+
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Validate the bundled FFmpeg payload
+        env:
+          FFMPEG_DL_SERVER: ${{ secrets.FFMPEG_DL_SERVER }}
+        run: node scripts/ci-ffmpeg.cjs
+
+      - name: Prepare Rust test sidecars
+        run: npm run prepare:rust-tests
+
+      - name: Run TypeScript compiler
+        run: npm run typecheck
+
+      - name: Comment lint
+        run: npm run lint
+
+      - name: Check formatting
+        run: npm run format:check
+
+      - name: Run vitest
+        run: npm run test
+
+      - name: Check Rust formatting
+        run: cargo fmt --manifest-path src-tauri/Cargo.toml --check
+
+      - name: Clippy
+        run: cargo clippy --locked --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
+
+      - name: Run Rust tests
+        run: cargo test --locked --manifest-path src-tauri/Cargo.toml --all-targets
+
+      - name: Validate changelog version
+        run: npm run validate:changelog
+
+      - name: Validate no em-dash
+        run: npm run validate:no-em-dash
+
+      - name: Cargo/npm safe-update acceptance
+        run: npm run test:cargo-safe-update
+
+  updater-manifest:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - name: Upgrade npm
+        run: npm install -g npm@${{ env.NPM_VERSION }}
+      - name: Validate updater manifests
+        run: npm run validate:updater
+      # Read-only shape smoke. Exact candidate version is checked after publish
+      # by release:verify:published; requiring it here makes version bumps
+      # circular because build VMs cannot publish until this CI passes.
+      - name: Published updater feed sanity
+        run: npm run validate:updater:live
+
+  ci-gate:
+    if: ${{ always() }}
+    needs:
+      - commit-message-policy
+      - quality-gate
+      - updater-manifest
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Require every release check
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          COMMIT_MESSAGE_POLICY: ${{ needs.commit-message-policy.result }}
+          QUALITY_GATE: ${{ needs.quality-gate.result }}
+          UPDATER_MANIFEST: ${{ needs.updater-manifest.result }}
+        run: |
+          set -euo pipefail
+          test "$QUALITY_GATE" = success
+          test "$UPDATER_MANIFEST" = success
+          if [ "$EVENT_NAME" = pull_request ]; then
+            test "$COMMIT_MESSAGE_POLICY" = success
+          else
+            test "$COMMIT_MESSAGE_POLICY" = skipped
+          fi

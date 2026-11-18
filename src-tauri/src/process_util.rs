@@ -1,0 +1,1120 @@
+//! Child-process helpers: a minimal allow-listed environment, an enhanced
+//! PATH for GUI launches, no console windows on Windows, process-group
+//! spawning, whole-tree termination, and bounded output capture.
+//!
+//! CONV2 kill semantics (v1 ffmpegProcessControl.ts): v1 used Windows
+//! `taskkill /t /f` and POSIX `kill(-pid, SIGKILL)`. The ROSI job object with
+//! KILL_ON_JOB_CLOSE replaces taskkill (strictly stronger), and the POSIX
+//! path keeps the killpg SIGTERM -> SIGKILL escalation.
+
+use shared_child::SharedChild;
+use std::ffi::OsStr;
+use std::io::Read;
+use std::path::PathBuf;
+use std::process::{Command, Stdio};
+use std::sync::{mpsc, Arc, Condvar, Mutex};
+use std::time::Duration;
+
+const ENV_ALLOWLIST: &[&str] = &[
+    "HOME",
+    "USER",
+    "LOGNAME",
+    "SHELL",
+    "LANG",
+    "LC_ALL",
+    "LC_CTYPE",
+    "TERM",
+    "TMPDIR",
+    "TEMP",
+    "TMP",
+    "USERPROFILE",
+    "LOCALAPPDATA",
+    "APPDATA",
+    "SystemRoot",
+    "SYSTEMDRIVE",
+    "PROGRAMFILES",
+    "PROGRAMFILES(X86)",
+    "PROGRAMW6432",
+    "PROGRAMDATA",
+    "ALLUSERSPROFILE",
+    "PUBLIC",
+    "HOMEDRIVE",
+    "HOMEPATH",
+    "USERNAME",
+    "COMSPEC",
+    "WINDIR",
+    "PATHEXT",
+    "OS",
+    "PROCESSOR_ARCHITECTURE",
+    "PROCESSOR_ARCHITEW6432",
+    "NUMBER_OF_PROCESSORS",
+    "XDG_RUNTIME_DIR",
+    "XDG_DATA_HOME",
+    "XDG_CONFIG_HOME",
+    "XDG_CACHE_HOME",
+    "FLATPAK_ID",
+    "DISPLAY",
+    "WAYLAND_DISPLAY",
+    "DBUS_SESSION_BUS_ADDRESS",
+];
+
+const PIPE_DRAIN_TIMEOUT: Duration = Duration::from_secs(2);
+
+#[cfg(windows)]
+const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+#[cfg(windows)]
+const CREATE_SUSPENDED: u32 = 0x0000_0004;
+
+fn env_path(name: &str) -> PathBuf {
+    std::env::var_os(name)
+        .map(PathBuf::from)
+        .unwrap_or_default()
+}
+
+/// PATH with common per-user tool locations prepended, so GUI launches (which
+/// inherit a minimal PATH on macOS) still find Homebrew, FFmpeg, and similar.
+pub fn enhanced_path() -> std::ffi::OsString {
+    let current = std::env::var_os("PATH").unwrap_or_default();
+    let mut entries: Vec<PathBuf> = if cfg!(windows) {
+        // Store-installed CLI shims (winget user installs) live here; the
+        // inherited PATH only covers processes started after installation.
+        vec![env_path("LOCALAPPDATA")
+            .join("Microsoft")
+            .join("WindowsApps")]
+    } else {
+        vec![
+            PathBuf::from("/opt/homebrew/bin"),
+            PathBuf::from("/usr/local/bin"),
+            PathBuf::from("/usr/bin"),
+            PathBuf::from("/bin"),
+            PathBuf::from("/usr/sbin"),
+            PathBuf::from("/sbin"),
+            PathBuf::from("/home/linuxbrew/.linuxbrew/bin"),
+            env_path("HOME").join(".local").join("bin"),
+        ]
+    };
+    entries.extend(std::env::split_paths(&current));
+    entries.retain(|entry| !entry.as_os_str().is_empty());
+    std::env::join_paths(entries).unwrap_or(current)
+}
+
+/// Build a command with piped stdout/stderr, null stdin, and a scrubbed
+/// environment. `new_group` makes the child a process-group leader on Unix so
+/// the whole tree (an FFmpeg that spawned helpers) can be signalled together.
+/// On Windows, the child starts suspended and resumes after Job Object
+/// assignment.
+pub fn command<P: AsRef<OsStr>>(
+    program: P,
+    args: &[String],
+    extra_env: &[(&str, &str)],
+    new_group: bool,
+) -> Command {
+    let mut command = Command::new(program);
+    command.args(args);
+    command.env_clear();
+    for key in ENV_ALLOWLIST {
+        if let Some(value) = std::env::var_os(key) {
+            command.env(key, value);
+        }
+    }
+    for (key, value) in extra_env {
+        command.env(key, value);
+    }
+    command.env("PATH", enhanced_path());
+    command
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        let _ = new_group;
+        // Do not let user-space code create descendants before this process
+        // belongs to its owned Job Object.
+        command.creation_flags(CREATE_NO_WINDOW | CREATE_SUSPENDED);
+    }
+    #[cfg(unix)]
+    {
+        // Known gap: release builds use `panic = "abort"`, so a CONV2 abort
+        // skips every cleanup path. On Linux and macOS the helpers (FFmpeg,
+        // ffprobe) can then outlive CONV2. Windows is covered by the
+        // kill-on-close job. Linux PR_SET_PDEATHSIG is the planned fix, but
+        // it tracks the spawning thread and so needs a process-lifetime
+        // spawner thread. Deferred until a Linux build can verify it; macOS
+        // has no equivalent.
+        use std::os::unix::process::CommandExt;
+        if new_group {
+            command.process_group(0);
+        }
+    }
+    command
+}
+
+struct ManagedState {
+    status: Option<std::process::ExitStatus>,
+    terminating: bool,
+    owned_group_survivors: bool,
+}
+
+/// Shared child handle with a short polling gate around reaping. Tree
+/// termination holds the gate while it escalates, so a waiter cannot reap the
+/// group leader and free its PID before the process group has been checked.
+pub struct ManagedChild {
+    child: SharedChild,
+    state: Mutex<ManagedState>,
+    #[cfg(unix)]
+    process_group: bool,
+    #[cfg(windows)]
+    job: WindowsJob,
+}
+
+#[cfg(windows)]
+struct WindowsJob {
+    handle: windows_sys::Win32::Foundation::HANDLE,
+}
+
+// The owned kernel handle stays valid until the final Arc<ManagedChild> drops.
+// TerminateJobObject is safe to call concurrently with waiting on the child.
+#[cfg(windows)]
+unsafe impl Send for WindowsJob {}
+#[cfg(windows)]
+unsafe impl Sync for WindowsJob {}
+
+#[cfg(windows)]
+impl WindowsJob {
+    fn terminate(&self) {
+        unsafe {
+            windows_sys::Win32::System::JobObjects::TerminateJobObject(self.handle, 1);
+        }
+    }
+}
+
+#[cfg(windows)]
+fn assign_windows_job(pid: u32) -> std::io::Result<WindowsJob> {
+    use std::ptr::null;
+    use windows_sys::Win32::Foundation::{CloseHandle, HANDLE};
+    use windows_sys::Win32::System::JobObjects::{
+        AssignProcessToJobObject, CreateJobObjectW, JobObjectExtendedLimitInformation,
+        SetInformationJobObject, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
+        JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+    };
+    use windows_sys::Win32::System::Threading::{
+        OpenProcess, PROCESS_SET_QUOTA, PROCESS_SUSPEND_RESUME, PROCESS_TERMINATE,
+    };
+
+    let job = unsafe { CreateJobObjectW(null(), null()) };
+    if job.is_null() {
+        return Err(std::io::Error::last_os_error());
+    }
+    let owned_job = WindowsJob { handle: job };
+    let mut limits = JOBOBJECT_EXTENDED_LIMIT_INFORMATION::default();
+    limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+    let configured = unsafe {
+        SetInformationJobObject(
+            job,
+            JobObjectExtendedLimitInformation,
+            (&limits as *const JOBOBJECT_EXTENDED_LIMIT_INFORMATION).cast(),
+            std::mem::size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
+        )
+    };
+    if configured == 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+
+    let process: HANDLE = unsafe {
+        OpenProcess(
+            PROCESS_SET_QUOTA | PROCESS_TERMINATE | PROCESS_SUSPEND_RESUME,
+            0,
+            pid,
+        )
+    };
+    if process.is_null() {
+        return Err(std::io::Error::last_os_error());
+    }
+    let assigned = unsafe { AssignProcessToJobObject(job, process) };
+    if assigned == 0 {
+        let error = std::io::Error::last_os_error();
+        unsafe {
+            CloseHandle(process);
+        }
+        return Err(error);
+    }
+
+    // CommandExt::creation_flags starts the primary thread suspended, so the
+    // process cannot spawn descendants before it joins this owned job.
+    #[link(name = "ntdll")]
+    extern "system" {
+        fn NtResumeProcess(process_handle: HANDLE) -> i32;
+    }
+    let resumed = unsafe { NtResumeProcess(process) } >= 0;
+    let resume_error = (!resumed).then(std::io::Error::last_os_error);
+    unsafe {
+        CloseHandle(process);
+    }
+    if let Some(error) = resume_error {
+        return Err(error);
+    }
+    Ok(owned_job)
+}
+
+#[cfg(windows)]
+impl Drop for WindowsJob {
+    fn drop(&mut self) {
+        if !self.handle.is_null() {
+            // JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE reaps descendants even if
+            // the leader exited before the owner finished draining its pipes.
+            unsafe {
+                windows_sys::Win32::Foundation::CloseHandle(self.handle);
+            }
+        }
+    }
+}
+
+impl ManagedChild {
+    fn state(&self) -> std::sync::MutexGuard<'_, ManagedState> {
+        self.state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    #[cfg(unix)]
+    #[allow(dead_code)]
+    pub fn id(&self) -> u32 {
+        self.child.id()
+    }
+
+    pub fn take_stdout(&self) -> Option<std::process::ChildStdout> {
+        self.child.take_stdout()
+    }
+
+    pub fn take_stderr(&self) -> Option<std::process::ChildStderr> {
+        self.child.take_stderr()
+    }
+
+    pub fn wait_timeout(
+        self: &Arc<Self>,
+        timeout: Duration,
+    ) -> std::io::Result<Option<std::process::ExitStatus>> {
+        let deadline = std::time::Instant::now().checked_add(timeout);
+        loop {
+            let mut state = self.state();
+            if let Some(status) = state.status.as_ref() {
+                let status = *status;
+                let clean_group = state.owned_group_survivors;
+                drop(state);
+                if clean_group {
+                    terminate_tree(self);
+                }
+                return Ok(Some(status));
+            }
+            // Keep cancellation responsive while retaining exclusive control
+            // of the small interval in which SharedChild may reap the leader.
+            let poll = deadline
+                .map(|deadline| deadline.saturating_duration_since(std::time::Instant::now()))
+                .unwrap_or(Duration::from_millis(50))
+                .min(Duration::from_millis(50));
+            #[cfg(unix)]
+            let status = if child_exit_observed(self.child.id())? {
+                if self.process_group {
+                    // WNOWAIT keeps the exited group leader as a zombie until
+                    // after this signal, so its PID/PGID cannot be reused.
+                    // Once the leader has exited, any remaining group member
+                    // is an orphaned helper and must not outlive the operation.
+                    signal_group(self.child.id(), libc::SIGKILL);
+                }
+                Some(self.child.wait()?)
+            } else {
+                None
+            };
+            #[cfg(windows)]
+            let status = self.child.wait_timeout(poll)?;
+            if let Some(status) = status {
+                #[cfg(windows)]
+                self.job.terminate();
+                state.owned_group_survivors = false;
+                state.status = Some(status);
+                state.terminating = false;
+                return Ok(Some(status));
+            }
+            if deadline.is_some_and(|deadline| std::time::Instant::now() >= deadline) {
+                return Ok(None);
+            }
+            drop(state);
+            if cfg!(unix) {
+                std::thread::sleep(poll);
+            } else {
+                // The Windows poll already waited on the process. A short
+                // pause lets other lock users (such as `terminate_tree`) in;
+                // without it this loop can retake the unfair lock every time.
+                std::thread::sleep(Duration::from_millis(1));
+            }
+        }
+    }
+
+    pub fn wait(self: &Arc<Self>) -> std::io::Result<std::process::ExitStatus> {
+        loop {
+            if let Some(status) = self.wait_timeout(Duration::from_secs(24 * 60 * 60))? {
+                return Ok(status);
+            }
+        }
+    }
+}
+
+#[cfg(unix)]
+fn child_exit_observed(pid: u32) -> std::io::Result<bool> {
+    loop {
+        let mut info: libc::siginfo_t = unsafe { std::mem::zeroed() };
+        let result = unsafe {
+            libc::waitid(
+                libc::P_PID,
+                pid as libc::id_t,
+                &mut info,
+                libc::WEXITED | libc::WNOHANG | libc::WNOWAIT,
+            )
+        };
+        if result == 0 {
+            return Ok(info.si_signo == libc::SIGCHLD);
+        }
+        let error = std::io::Error::last_os_error();
+        if error.kind() != std::io::ErrorKind::Interrupted {
+            return Err(error);
+        }
+    }
+}
+
+pub fn spawn(command: &mut Command) -> std::io::Result<Arc<ManagedChild>> {
+    let child = SharedChild::spawn(command)?;
+    #[cfg(windows)]
+    let job = match assign_windows_job(child.id()) {
+        Ok(job) => job,
+        Err(error) => {
+            // The process was created suspended. If ownership cannot be
+            // established, terminate it before returning the spawn failure.
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(error);
+        }
+    };
+    #[cfg(unix)]
+    let process_group =
+        unsafe { libc::getpgid(child.id() as libc::pid_t) == child.id() as libc::pid_t };
+    Ok(Arc::new(ManagedChild {
+        child,
+        state: Mutex::new(ManagedState {
+            status: None,
+            terminating: false,
+            owned_group_survivors: false,
+        }),
+        #[cfg(unix)]
+        process_group,
+        #[cfg(windows)]
+        job,
+    }))
+}
+
+#[cfg(unix)]
+fn signal_group(pid: u32, signal: i32) -> bool {
+    // A process-group leader has PGID == PID. For children that were not
+    // spawned as leaders this targets an empty group and fails harmlessly.
+    unsafe { libc::killpg(pid as libc::pid_t, signal) == 0 }
+}
+
+/// Kill a child and its descendants immediately, without the SIGTERM grace
+/// period `terminate_tree` allows. Used by conversion cancel, which discards
+/// partial output anyway.
+pub fn kill_tree(child: &Arc<ManagedChild>) {
+    #[cfg(unix)]
+    let pid = child.id();
+    #[cfg(windows)]
+    child.job.terminate();
+    let mut state = child.state();
+    if state.status.is_some() && !state.owned_group_survivors {
+        return;
+    }
+    #[cfg(unix)]
+    {
+        if child.process_group {
+            signal_group(pid, libc::SIGKILL);
+        }
+        let _ = child.child.kill();
+    }
+    #[cfg(windows)]
+    {
+        let _ = child.child.kill();
+    }
+}
+
+/// Stop a child and its descendants. Unix: SIGTERM to the process group, then
+/// SIGKILL after five seconds. Windows: terminate the owned kill-on-close job.
+pub fn terminate_tree(child: &Arc<ManagedChild>) {
+    #[cfg(unix)]
+    let pid = child.id();
+    // A waiter in `wait_timeout` can hold the state lock for most of the time
+    // (Windows mutexes are not fair), so the kill must not wait for that lock.
+    // TerminateJobObject is safe to call concurrently with a wait and does
+    // nothing to an empty job.
+    #[cfg(windows)]
+    child.job.terminate();
+    let mut state = child.state();
+    if state.terminating {
+        return;
+    }
+    if state.status.is_some() && !state.owned_group_survivors {
+        return;
+    }
+    state.terminating = true;
+    #[cfg(unix)]
+    {
+        if child.process_group {
+            if !signal_group(pid, libc::SIGTERM) {
+                let _ = child.child.kill();
+            }
+            let deadline = std::time::Instant::now() + Duration::from_secs(5);
+            loop {
+                match child_exit_observed(pid) {
+                    Ok(true) => {
+                        // WNOWAIT leaves our exited leader unreaped, pinning
+                        // its PID/PGID while orphaned descendants are killed.
+                        signal_group(pid, libc::SIGKILL);
+                        break;
+                    }
+                    Ok(false) if std::time::Instant::now() < deadline => {
+                        std::thread::sleep(Duration::from_millis(25));
+                    }
+                    Ok(false) => {
+                        // The still-live group leader pins this PGID, so the
+                        // bounded grace-period escalation cannot hit a reused
+                        // process group.
+                        signal_group(pid, libc::SIGKILL);
+                        let _ = child.child.kill();
+                        break;
+                    }
+                    Err(_) => {
+                        // If ownership can no longer be proven with waitid,
+                        // only target the specific child handle.
+                        let _ = child.child.kill();
+                        break;
+                    }
+                }
+            }
+        } else {
+            let _ = unsafe { libc::kill(pid as libc::pid_t, libc::SIGTERM) };
+            if matches!(child.child.wait_timeout(Duration::from_secs(5)), Ok(None)) {
+                let _ = child.child.kill();
+            }
+        }
+        if let Ok(status) = child.child.wait() {
+            state.status = Some(status);
+        }
+    }
+    #[cfg(windows)]
+    {
+        child.job.terminate();
+        let _ = child.child.kill();
+        if let Ok(status) = child.child.wait() {
+            state.status = Some(status);
+        }
+    }
+    state.owned_group_survivors = false;
+    state.terminating = false;
+}
+
+/// Reads a pipe to its end, keeping at most `limit` bytes. The reply says
+/// whether any bytes were dropped, so a caller never parses a cut buffer.
+fn drain<R: Read + Send + 'static>(
+    reader: Option<R>,
+    limit: usize,
+) -> mpsc::Receiver<(String, bool)> {
+    let (sender, receiver) = mpsc::channel();
+    std::thread::spawn(move || {
+        let Some(mut reader) = reader else {
+            let _ = sender.send((String::new(), false));
+            return;
+        };
+        let mut kept = Vec::new();
+        let mut truncated = false;
+        let mut chunk = [0u8; 8192];
+        loop {
+            match reader.read(&mut chunk) {
+                Ok(0) | Err(_) => break,
+                Ok(read) => {
+                    let room = limit.saturating_sub(kept.len());
+                    truncated |= read > room;
+                    kept.extend_from_slice(&chunk[..read.min(room)]);
+                }
+            }
+        }
+        let _ = sender.send((String::from_utf8_lossy(&kept).into_owned(), truncated));
+    });
+    receiver
+}
+
+fn receive_drain(
+    receiver: mpsc::Receiver<(String, bool)>,
+    deadline: std::time::Instant,
+) -> ((String, bool), bool) {
+    match receiver.recv_timeout(deadline.saturating_duration_since(std::time::Instant::now())) {
+        Ok(output) => (output, true),
+        Err(mpsc::RecvTimeoutError::Disconnected) => ((String::new(), false), true),
+        Err(mpsc::RecvTimeoutError::Timeout) => ((String::new(), false), false),
+    }
+}
+
+pub struct Output {
+    pub code: Option<i32>,
+    pub stdout: String,
+    pub stderr: String,
+    pub timed_out: bool,
+    /// True when stdout was longer than its capture limit; `stdout` then holds
+    /// only the first part of the stream.
+    pub stdout_truncated: bool,
+}
+
+/// Run a command to completion (or timeout), capturing bounded output.
+pub fn run_with_timeout(
+    command: &mut Command,
+    timeout: Duration,
+    max_stdout: usize,
+    max_stderr: usize,
+) -> std::io::Result<Output> {
+    let child = spawn(command)?;
+    wait_with_output(&child, timeout, max_stdout, max_stderr)
+}
+
+pub fn wait_with_output(
+    child: &Arc<ManagedChild>,
+    timeout: Duration,
+    max_stdout: usize,
+    max_stderr: usize,
+) -> std::io::Result<Output> {
+    let stdout = drain(child.take_stdout(), max_stdout);
+    let stderr = drain(child.take_stderr(), max_stderr);
+    let mut timed_out = false;
+    let mut wait_error = None;
+    let status = match child.wait_timeout(timeout) {
+        Ok(Some(status)) => Some(status),
+        Ok(None) => {
+            timed_out = true;
+            terminate_tree(child);
+            child.wait().ok()
+        }
+        Err(error) => {
+            wait_error = Some(error);
+            terminate_tree(child);
+            child.wait().ok()
+        }
+    };
+    let drain_deadline = std::time::Instant::now() + PIPE_DRAIN_TIMEOUT;
+    let ((stdout, stdout_truncated), stdout_drained) = receive_drain(stdout, drain_deadline);
+    let ((stderr, _), stderr_drained) = receive_drain(stderr, drain_deadline);
+    timed_out |= !stdout_drained || !stderr_drained;
+    if let Some(error) = wait_error {
+        return Err(error);
+    }
+    let Some(status) = status else {
+        return Err(std::io::Error::other(
+            "Child process status is unavailable.",
+        ));
+    };
+    let output = Output {
+        code: status.code(),
+        stdout,
+        stderr,
+        timed_out,
+        stdout_truncated,
+    };
+    Ok(output)
+}
+
+/// Minimal std-only watch channel: one value, replaced by senders, observed
+/// by receivers cloned at subscribe time. CONV2 has no async runtime
+/// dependency, so receivers poll `borrow`/`has_changed`; cancellers call
+/// `send_replace(true)` exactly like ROSI's tokio watch protocol. Cancel paths
+/// here terminate process trees directly instead of awaiting a flag.
+pub mod watch {
+    use std::sync::{Arc, Condvar, Mutex};
+
+    struct State<T> {
+        value: T,
+        version: u64,
+    }
+
+    struct Shared<T> {
+        state: Mutex<State<T>>,
+        changed: Condvar,
+    }
+
+    pub struct Sender<T> {
+        shared: Arc<Shared<T>>,
+    }
+
+    pub struct Receiver<T> {
+        shared: Arc<Shared<T>>,
+        seen: u64,
+    }
+
+    /// A new channel observing `initial`, mirroring `tokio::sync::watch`.
+    pub fn channel<T>(initial: T) -> (Sender<T>, Receiver<T>) {
+        let shared = Arc::new(Shared {
+            state: Mutex::new(State {
+                value: initial,
+                version: 0,
+            }),
+            changed: Condvar::new(),
+        });
+        (
+            Sender {
+                shared: Arc::clone(&shared),
+            },
+            Receiver { shared, seen: 0 },
+        )
+    }
+
+    impl<T> Sender<T> {
+        /// Replace the value; wakes every waiter. Returns the previous value.
+        pub fn send_replace(&self, value: T) -> T {
+            let mut state = self
+                .shared
+                .state
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            let previous = std::mem::replace(&mut state.value, value);
+            state.version += 1;
+            self.shared.changed.notify_all();
+            previous
+        }
+
+        /// The current value, for holders of only a sender (reservations).
+        pub fn borrow(&self) -> T
+        where
+            T: Clone,
+        {
+            self.shared
+                .state
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .value
+                .clone()
+        }
+    }
+
+    impl<T: Clone> Receiver<T> {
+        /// The current value.
+        pub fn borrow(&self) -> T {
+            self.shared
+                .state
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .value
+                .clone()
+        }
+
+        /// True when the value changed since this receiver subscribed.
+        #[allow(dead_code)]
+        pub fn has_changed(&self) -> bool {
+            let state = self
+                .shared
+                .state
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            state.version != self.seen
+        }
+    }
+
+    impl<T> Clone for Receiver<T> {
+        fn clone(&self) -> Self {
+            Self {
+                shared: Arc::clone(&self.shared),
+                seen: self.seen,
+            }
+        }
+    }
+
+    impl<T: Clone> Sender<T> {
+        /// A receiver that observes this sender's value from now on.
+        #[allow(dead_code)]
+        pub fn subscribe(&self) -> Receiver<T> {
+            let state = self
+                .shared
+                .state
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            Receiver {
+                shared: Arc::clone(&self.shared),
+                seen: state.version,
+            }
+        }
+    }
+}
+
+/// A cancellable, single-slot child process (file-info / status lookups).
+pub struct TrackedSlot {
+    state: Mutex<TrackedState>,
+    starting: Mutex<()>,
+}
+
+struct TrackedState {
+    generation: u64,
+    current: Option<TrackedOperation>,
+}
+
+struct TrackedOperation {
+    generation: u64,
+    child: Option<Arc<ManagedChild>>,
+    cancelled: Arc<watch::Sender<bool>>,
+}
+
+pub enum TrackedError {
+    Spawn(String),
+    Cancelled,
+    TimedOut,
+}
+
+/// A single-slot reservation acquired at the IPC boundary, before validation
+/// or work can be queued. Dropping it releases the slot only if no newer
+/// request has replaced it.
+pub struct TrackedReservation<'a> {
+    slot: &'a TrackedSlot,
+    generation: u64,
+    cancelled: Arc<watch::Sender<bool>>,
+}
+
+impl TrackedReservation<'_> {
+    pub fn is_cancelled(&self) -> bool {
+        self.cancelled.borrow()
+    }
+
+    /// A receiver that observes this reservation's cancellation. It starts
+    /// with the current value, so a cancel that already happened is seen.
+    #[allow(dead_code)]
+    pub fn cancellation_flag(&self) -> watch::Receiver<bool> {
+        self.cancelled.subscribe()
+    }
+}
+
+impl Drop for TrackedReservation<'_> {
+    fn drop(&mut self) {
+        self.slot
+            .release_reservation(self.generation, &self.cancelled);
+    }
+}
+
+impl TrackedSlot {
+    pub const fn new() -> Self {
+        Self {
+            state: Mutex::new(TrackedState {
+                generation: 0,
+                current: None,
+            }),
+            starting: Mutex::new(()),
+        }
+    }
+
+    pub fn cancel(&self) {
+        let operation = {
+            let mut state = self
+                .state
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            state.generation = state.generation.wrapping_add(1);
+            state.current.take()
+        };
+        if let Some(operation) = operation {
+            operation.cancelled.send_replace(true);
+            if let Some(child) = operation.child {
+                terminate_tree(&child);
+            }
+        }
+    }
+
+    /// Reserve the slot before validation or file checks. Replacing a pending
+    /// reservation invalidates its token; replacing a running one also
+    /// terminates its process tree.
+    pub fn reserve(&self) -> TrackedReservation<'_> {
+        let starting = self
+            .starting
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let cancelled = Arc::new(watch::channel(false).0);
+        let (generation, previous) = {
+            let mut state = self
+                .state
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            state.generation = state.generation.wrapping_add(1);
+            let generation = state.generation;
+            let previous = state.current.take();
+            state.current = Some(TrackedOperation {
+                generation,
+                child: None,
+                cancelled: Arc::clone(&cancelled),
+            });
+            (generation, previous)
+        };
+        if let Some(previous) = previous {
+            previous.cancelled.send_replace(true);
+            if let Some(child) = previous.child {
+                terminate_tree(&child);
+            }
+        }
+        drop(starting);
+        TrackedReservation {
+            slot: self,
+            generation,
+            cancelled,
+        }
+    }
+
+    fn reservation_is_current(&self, reservation: &TrackedReservation<'_>) -> bool {
+        let state = self
+            .state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        state.generation == reservation.generation
+            && state.current.as_ref().is_some_and(|operation| {
+                operation.generation == reservation.generation
+                    && Arc::ptr_eq(&operation.cancelled, &reservation.cancelled)
+                    && !reservation.is_cancelled()
+            })
+    }
+
+    fn release_reservation(&self, generation: u64, cancelled: &Arc<watch::Sender<bool>>) {
+        let mut state = self
+            .state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if state.generation == generation
+            && state.current.as_ref().is_some_and(|operation| {
+                operation.generation == generation && Arc::ptr_eq(&operation.cancelled, cancelled)
+            })
+        {
+            state.current = None;
+        }
+    }
+
+    /// Run a command using a reservation captured before an asynchronous
+    /// handoff. Cancellation during preparation refuses to spawn; cancellation
+    /// racing spawn kills the late child before it can become the active job.
+    pub fn run_reserved_with<T>(
+        &self,
+        reservation: TrackedReservation<'_>,
+        mut command: Command,
+        timeout: Duration,
+        max_stdout: usize,
+        max_stderr: usize,
+        transform: impl FnOnce(Output) -> T,
+    ) -> Result<T, TrackedError> {
+        // Serialize replacement through publication, but never hold this gate
+        // while waiting for a child. `cancel` can still invalidate a pending
+        // reservation while spawn is in progress.
+        let starting = self
+            .starting
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if !self.reservation_is_current(&reservation) {
+            return Err(TrackedError::Cancelled);
+        }
+        let child = match spawn(&mut command) {
+            Ok(child) => child,
+            Err(error) => return Err(TrackedError::Spawn(error.to_string())),
+        };
+        let registered = {
+            let mut state = self
+                .state
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            if state.generation == reservation.generation
+                && state.current.as_ref().is_some_and(|operation| {
+                    operation.generation == reservation.generation
+                        && Arc::ptr_eq(&operation.cancelled, &reservation.cancelled)
+                        && !reservation.is_cancelled()
+                })
+            {
+                if let Some(operation) = state.current.as_mut() {
+                    operation.child = Some(Arc::clone(&child));
+                }
+                true
+            } else {
+                false
+            }
+        };
+        drop(starting);
+        if !registered {
+            reservation.cancelled.send_replace(true);
+            terminate_tree(&child);
+            return Err(TrackedError::Cancelled);
+        }
+        let output = wait_with_output(&child, timeout, max_stdout, max_stderr);
+        if !self.reservation_is_current(&reservation) {
+            return Err(TrackedError::Cancelled);
+        }
+        let output = match output {
+            Ok(output) => output,
+            Err(error) => return Err(TrackedError::Spawn(error.to_string())),
+        };
+        if output.timed_out {
+            return Err(TrackedError::TimedOut);
+        }
+        let transformed = transform(output);
+        if !self.reservation_is_current(&reservation) {
+            return Err(TrackedError::Cancelled);
+        }
+        Ok(transformed)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    // Failure modes:
+    // - a scrubbed env leaking parent variables: the allowlist must exclude
+    //   anything not listed, so a planted marker variable never reaches the
+    //   child.
+    // - output past the capture cap: the drain must stop at the cap and set
+    //   the truncated flag so callers refuse the cut buffer.
+    // - a child ignoring SIGTERM: the timeout path must escalate and still
+    //   return within the timeout budget.
+    // - a reservation replaced before spawn: the late child must never run
+    //   as the active job (Cancelled, not a stale result).
+    // - cancellation of a running child: terminate_tree must end the sleep
+    //   promptly instead of waiting out its own timeout.
+    use super::*;
+
+    #[test]
+    #[cfg(unix)]
+    fn output_is_capped_and_flagged_truncated() {
+        let dir = std::env::temp_dir().join("conv2-process-util-test");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("large.txt");
+        std::fs::write(&path, vec![b'x'; 100_000]).unwrap();
+        let args = [path.to_string_lossy().to_string()];
+        let mut command = command("/bin/cat", &args, &[], true);
+        let output = run_with_timeout(&mut command, Duration::from_secs(10), 4096, 4096)
+            .expect("cat should spawn");
+        assert_eq!(output.code, Some(0));
+        assert!(output.stdout_truncated);
+        assert_eq!(output.stdout.len(), 4096);
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn output_under_cap_is_kept_whole() {
+        let dir = std::env::temp_dir().join("conv2-process-util-test");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("small.txt");
+        std::fs::write(&path, b"conv2-small-payload").unwrap();
+        let args = [path.to_string_lossy().to_string()];
+        let mut command = command("/bin/cat", &args, &[], true);
+        let output = run_with_timeout(&mut command, Duration::from_secs(10), 4096, 4096)
+            .expect("cat should spawn");
+        assert_eq!(output.code, Some(0));
+        assert!(!output.stdout_truncated);
+        assert_eq!(output.stdout, "conv2-small-payload");
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn child_environment_is_scrubbed() {
+        // edition-2021 set_var; the marker must never reach the child env.
+        std::env::set_var("CONV2_PROCESS_UTIL_SECRET", "leaked");
+        let mut command = command("/usr/bin/env", &[], &[], true);
+        let output = run_with_timeout(&mut command, Duration::from_secs(10), 8192, 8192)
+            .expect("env should spawn");
+        assert_eq!(output.code, Some(0));
+        assert!(!output.stdout.contains("CONV2_PROCESS_UTIL_SECRET"));
+        assert!(output.stdout.contains("PATH="));
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn timeout_kills_the_tree() {
+        let args = ["30".to_string()];
+        let mut command = command("/bin/sleep", &args, &[], true);
+        let started = std::time::Instant::now();
+        let output = run_with_timeout(&mut command, Duration::from_millis(300), 4096, 4096)
+            .expect("sleep should spawn");
+        assert!(output.timed_out);
+        // The kill path must return in roughly the timeout, not 30 seconds.
+        assert!(started.elapsed() < Duration::from_secs(5));
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn replaced_reservation_never_runs() {
+        let slot = TrackedSlot::new();
+        let first = slot.reserve();
+        let _second = slot.reserve();
+        assert!(first.is_cancelled());
+        let args: Vec<String> = Vec::new();
+        let command = command("/usr/bin/true", &args, &[], true);
+        let result = slot.run_reserved_with(
+            first,
+            command,
+            Duration::from_secs(5),
+            4096,
+            4096,
+            |output| output.code,
+        );
+        assert!(matches!(result, Err(TrackedError::Cancelled)));
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn reserved_run_returns_transformed_output() {
+        let slot = TrackedSlot::new();
+        let reservation = slot.reserve();
+        let args = ["conv2".to_string()];
+        let command = command("/bin/echo", &args, &[], true);
+        let result = slot.run_reserved_with(
+            reservation,
+            command,
+            Duration::from_secs(5),
+            4096,
+            4096,
+            |output| output.stdout,
+        );
+        assert_eq!(result.ok().as_deref(), Some("conv2\n"));
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn cancel_terminates_a_running_child() {
+        let slot: &'static TrackedSlot = Box::leak(Box::new(TrackedSlot::new()));
+        let reservation = slot.reserve();
+        let runner = std::thread::spawn(move || {
+            let args = ["30".to_string()];
+            let command = command("/bin/sleep", &args, &[], true);
+            slot.run_reserved_with(
+                reservation,
+                command,
+                Duration::from_secs(60),
+                4096,
+                4096,
+                |output| output.code,
+            )
+        });
+        std::thread::sleep(Duration::from_millis(300));
+        let started = std::time::Instant::now();
+        slot.cancel();
+        let joined = runner.join().expect("runner thread panicked");
+        assert!(matches!(joined, Err(TrackedError::Cancelled)));
+        // The cancel must tear down the sleep, not wait for its 60s timeout.
+        assert!(started.elapsed() < Duration::from_secs(5));
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn enhanced_path_keeps_common_tool_locations() {
+        let path = enhanced_path().to_string_lossy().to_string();
+        assert!(path.contains("/usr/bin"));
+        assert!(path.contains("/opt/homebrew/bin"));
+    }
+
+    #[test]
+    fn watch_channel_reports_replacement() {
+        let (sender, receiver) = watch::channel(false);
+        assert!(!receiver.has_changed());
+        assert!(!receiver.borrow());
+        assert_eq!(sender.send_replace(true), false);
+        assert!(receiver.borrow());
+    }
+}

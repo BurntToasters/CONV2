@@ -1,2 +1,7 @@
 # Owner-maintained; must not be rewritten by tooling.
 AGENTS.md
+# Generated Rust IPC bindings; formatting is owned by the ts_bindings test.
+src/generated
+src-tauri/gen/
+src-tauri/vendor/
+src/generated/

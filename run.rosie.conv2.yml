@@ -1,0 +1,107 @@
+app-id: run.rosie.conv2
+runtime: org.gnome.Platform
+# CONV2 v1 shipped on GNOME 51 (freedesktop 26.08); ROSI uses 50. Keep 51.
+runtime-version: '51'
+sdk: org.gnome.Sdk
+# node24 is a build-time only dependency (node + npm for the Vite build and
+# license generation); nothing Node-based is installed into /app at runtime.
+# The extension entries stay unversioned, like ROSI's manifest, so
+# flatpak-builder resolves the branch matching this runtime.
+sdk-extensions:
+  - org.freedesktop.Sdk.Extension.node24
+  - org.freedesktop.Sdk.Extension.rust-stable
+command: conv2
+separate-locales: false
+
+finish-args:
+  - --share=ipc
+  - --socket=x11
+  - --socket=wayland
+  # GPU acceleration (hardware encoding).
+  - --device=dri
+  # The updater feed check and telemetry-free update notices need network.
+  - --share=network
+  # Least-privilege locations for converting existing files.
+  - --filesystem=home
+  - --filesystem=xdg-videos
+  - --filesystem=xdg-download
+  # Flatpak builds update by reinstalling the bundle; the in-app updater shows
+  # a notice instead of offering downloads (handled by the Rust updater).
+
+modules:
+  - name: conv2
+    buildsystem: simple
+    build-options:
+      # npm and Cargo fetch only integrity-locked dependencies. Application
+      # sources (plus the verified Linux FFmpeg binaries) come from the clean
+      # commit export prepared by scripts/prepare-flatpak-source.js.
+      build-args:
+        - --share=network
+      prepend-path: /run/build/conv2/cargo/bin:/run/build/conv2/npm-global/bin:/usr/lib/sdk/node24/bin:/usr/lib/sdk/rust-stable/bin
+      env:
+        CARGO_HOME: /run/build/conv2/cargo
+        RUSTUP_HOME: /run/build/conv2/rustup
+        npm_config_cache: /run/build/conv2/npm-cache
+        HUSKY: '0'
+    build-commands:
+      # The Flathub rust-stable SDK extension lags the pinned toolchain, so
+      # install rustup and the exact compiler pinned in rust-toolchain.toml.
+      - |
+        set -eu
+        PINNED="$(sed -n 's/^[[:space:]]*channel[[:space:]]*=[[:space:]]*"\([0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\)"[[:space:]]*$/\1/p' rust-toolchain.toml)"
+        test -n "$PINNED"
+        curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain "$PINNED" --profile minimal
+        test "$(rustc --version | cut -d' ' -f2)" = "$PINNED"
+      # The node24 SDK ships an older npm; engines/packageManager need 12.2.1.
+      - npm install --global npm@12.2.1 --ignore-scripts --engine-strict=false --no-audit --no-fund --prefix /run/build/conv2/npm-global
+      - test "$(npm --version)" = "12.2.1"
+      - npm ci --engine-strict=false
+      - npm run sync-version
+      - |
+        case "$FLATPAK_ARCH" in
+          aarch64)
+            node scripts/prepare-sidecars.js --target aarch64-unknown-linux-gnu
+            ;;
+          x86_64)
+            node scripts/prepare-sidecars.js --target x86_64-unknown-linux-gnu
+            ;;
+          *)
+            echo "Unsupported FLATPAK_ARCH=$FLATPAK_ARCH (expected x86_64 or aarch64)" >&2
+            exit 1
+            ;;
+        esac
+      # Regenerate licenses.json so the in-app licenses view ships current data.
+      - npm run licenses
+      - npm run build
+      - npx tauri build --no-bundle -- --locked
+      - install -Dm755 src-tauri/target/release/conv2 /app/bin/conv2
+      - |
+        case "$FLATPAK_ARCH" in
+          aarch64) triple=aarch64-unknown-linux-gnu ;;
+          x86_64) triple=x86_64-unknown-linux-gnu ;;
+          *) echo "Unsupported FLATPAK_ARCH=$FLATPAK_ARCH" >&2; exit 1 ;;
+        esac
+        for sidecar in conv2-ffmpeg conv2-ffprobe; do
+          install -Dm755 "src-tauri/binaries/${sidecar}-${triple}" "/app/bin/${sidecar}"
+        done
+      - install -Dm644 run.rosie.conv2.desktop /app/share/applications/run.rosie.conv2.desktop
+      - install -Dm644 run.rosie.conv2.metainfo.xml /app/share/metainfo/run.rosie.conv2.metainfo.xml
+      - install -Dm644 src-tauri/icons/128x128.png /app/share/icons/hicolor/128x128/apps/run.rosie.conv2.png
+      - install -Dm644 src-tauri/icons/32x32.png /app/share/icons/hicolor/32x32/apps/run.rosie.conv2.png
+      - install -Dm644 src-tauri/icons/icon.png /app/share/icons/hicolor/512x512/apps/run.rosie.conv2.png
+    sources:
+      - type: dir
+        path: .flatpak-source
+        skip:
+          - .git
+          - .github
+          - .env
+          - .env.*
+          - node_modules
+          - src-tauri/target
+          - dist
+          - release
+          - coverage
+          - flatpak-build
+          - flatpak-repo
+          - msstore

@@ -1,0 +1,77 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>run.rosie.conv2</id>
+  <name>CONV2</name>
+  <summary>Cross-platform FFMPEG GUI for quick video conversion</summary>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>MPL-2.0</project_license>
+  <developer id="run.rosie">
+    <name>BurntToasters</name>
+  </developer>
+
+  <description>
+    <p>
+      CONV2 is a modern, user-friendly video converter that harnesses the power of FFmpeg
+      to convert your videos quickly and efficiently. With support for hardware acceleration
+      and a variety of presets, converting videos has never been easier.
+    </p>
+    <p>Features:</p>
+    <ul>
+      <li>Multiple conversion presets: AV1, H.264, H.265/HEVC, Remux, GIF, and Audio extraction</li>
+      <li>Hardware acceleration support: NVIDIA NVENC, AMD AMF, Intel Quick Sync, and Apple VideoToolbox</li>
+      <li>Batch conversion queue with per-file status, CPU fallback, and retry for failed items</li>
+      <li>Drag and drop multi-file selection</li>
+      <li>Real-time progress with ETA, speed, and taskbar/dock integration</li>
+      <li>Skippable first-launch setup tour; replay from Settings</li>
+      <li>Dark, Light, and Custom theme packs; optional completion notifications</li>
+      <li>Native menus on Windows and macOS; custom title bar on Windows and macOS</li>
+      <li>Configurable output directory and in-app updates (stable/beta channels)</li>
+    </ul>
+  </description>
+
+  <launchable type="desktop-id">run.rosie.conv2.desktop</launchable>
+
+  <url type="homepage">https://github.com/BurntToasters/CONV2</url>
+  <url type="bugtracker">https://github.com/BurntToasters/CONV2/issues</url>
+  <url type="vcs-browser">https://github.com/BurntToasters/CONV2</url>
+
+  <categories>
+    <category>AudioVideo</category>
+    <category>Video</category>
+    <category>AudioVideoEditing</category>
+  </categories>
+
+  <keywords>
+    <keyword>video</keyword>
+    <keyword>convert</keyword>
+    <keyword>ffmpeg</keyword>
+    <keyword>transcode</keyword>
+    <keyword>encode</keyword>
+    <keyword>av1</keyword>
+    <keyword>h264</keyword>
+    <keyword>h265</keyword>
+    <keyword>hevc</keyword>
+  </keywords>
+
+  <provides>
+    <binary>conv2</binary>
+  </provides>
+
+  <content_rating type="oars-1.1" />
+
+  <releases>
+    <release version="2.0.0-beta.1" date="2026-11-17" prerelease="true">
+      <description>
+        <p>CONV2 2 is rebuilt on Tauri 2 with a Rust backend and the system webview: installers are much smaller and the app uses far less memory.</p>
+        <p>CONV2 2 is a new application (identifier run.rosie.conv2): CONV2 1 cannot auto-update to it, and the first launch imports your v1 settings automatically.</p>
+      </description>
+    </release>
+
+    <release version="1.7.0" date="2026-11-17"/>
+  </releases>
+
+  <branding>
+    <color type="primary" scheme_preference="light">#7c3aed</color>
+    <color type="primary" scheme_preference="dark">#8b5cf6</color>
+  </branding>
+</component>

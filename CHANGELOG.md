@@ -5,15 +5,28 @@
 > 🅱️ This is a Beta
 -->
 
-| <img height="20" src="https://github.com/user-attachments/assets/340d360e-79b1-4c70-bfab-d944085f75df" /> Windows                                                                                              | <img height="20" src="https://github.com/user-attachments/assets/42d7e887-4616-4e8c-b1d3-e44e01340f8c" /> macOS | <img height="20" src="https://github.com/user-attachments/assets/e0cc4f33-4516-408b-9c5c-be71a3ac316b" /> Linux                                                                                                                |
-| :------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | :-------------------------------------------------------------------------------------------------------------- | :----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Setup:** [x64](https://github.com/BurntToasters/CONV2/releases/download/v1.7.0/CONV2-Win-x64-Setup.exe) / [arm64](https://github.com/BurntToasters/CONV2/releases/download/v1.7.0/CONV2-Win-arm64-Setup.exe) | **[Universal DMG](https://github.com/BurntToasters/CONV2/releases/download/v1.7.0/CONV2-macOS-universal.dmg)**  | **AppImage:** [x64](https://github.com/BurntToasters/CONV2/releases/download/v1.7.0/CONV2-Linux-x86_64.AppImage) / [arm64](https://github.com/BurntToasters/CONV2/releases/download/v1.7.0/CONV2-Linux-arm64.AppImage)         |
-| <div align="center"><!--<a href="#"><img src="https://get.microsoft.com/images/en-us%20light.svg" width="150"/></a>--></div>                                                                                   | **[Universal ZIP](https://github.com/BurntToasters/CONV2/releases/download/v1.7.0/CONV2-macOS-universal.zip)**  | **Flatpak sideload:** [x64](https://github.com/BurntToasters/CONV2/releases/download/v1.7.0/CONV2-Linux-x86_64.flatpak) / [arm64](https://github.com/BurntToasters/CONV2/releases/download/v1.7.0/CONV2-Linux-aarch64.flatpak) |
-| _See MSI note in releases_                                                                                                                                                                                     |                                                                                                                 |                                                                                                                                                                                                                                |
+| <img height="20" src="https://github.com/user-attachments/assets/340d360e-79b1-4c70-bfab-d944085f75df" /> Windows                                                                                                      | <img height="20" src="https://github.com/user-attachments/assets/42d7e887-4616-4e8c-b1d3-e44e01340f8c" /> macOS | <img height="20" src="https://github.com/user-attachments/assets/e0cc4f33-4516-408b-9c5c-be71a3ac316b" /> Linux                                                       |
+| :------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | :-------------------------------------------------------------------------------------------------------------- | :------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Setup:** [x64](https://github.com/BurntToasters/CONV2/releases/download/v2.0.0-beta.1/CONV2-Win-x64-Setup.exe) / [arm64](https://github.com/BurntToasters/CONV2/releases/download/v2.0.0-beta.1/CONV2-Win-arm64-Setup.exe) | **[Universal DMG](https://github.com/BurntToasters/CONV2/releases/download/v2.0.0-beta.1/CONV2-macOS-universal.dmg)**  | **AppImage:** [x64](https://github.com/BurntToasters/CONV2/releases/download/v2.0.0-beta.1/CONV2-Linux-x86_64.AppImage)             |
+| <div align="center"><!--<a href="#"><img src="https://get.microsoft.com/images/en-us%20light.svg" width="150"/></a>--></div>                                                                                         | **[Universal ZIP](https://github.com/BurntToasters/CONV2/releases/download/v2.0.0-beta.1/CONV2-macOS-universal.zip)**  | **Flatpak sideload:** [x64](https://github.com/BurntToasters/CONV2/releases/download/v2.0.0-beta.1/CONV2-Linux-x64.flatpak)         |
 
 ### ℹ️ Enjoying CONV2? Consider [❤️ Supporting Me! ❤️](https://rosie.run/support)
 
 ---
+
+## Changes in `v2.0.0-beta.1:`
+
+- **NEW - Tauri V2:** CONV2 2 is rebuilt on [Tauri 2](https://tauri.app) with a Rust backend and the system webview. Installers are much smaller and the app uses far less memory.
+- **Breaking:** CONV2 2 is a new application with the identifier `run.rosie.conv2`. CONV2 1 cannot auto-update to CONV2 2 through its own updater; the final v1 release offers a guided in-app upgrade, and the first launch of v2 imports your v1 settings automatically.
+- **NEW - v1 Data Import:** On first launch, v2 imports v1 settings from the old profile folder, including window state and the GPU encoder probe cache. v1 files are never modified. An interrupted import retries on the next launch.
+- **NEW - Updater:** Signed Tauri update manifests with separate stable and beta channels, verified with a Minisign key before install. Update downloads on macOS use compact per-architecture archives.
+- **NEW - Sidecars:** The bundled binaries are renamed `conv2-ffmpeg` and `conv2-ffprobe` and are verified against the checksum manifest before every run and at build time.
+- **Windows:** The NSIS installer is now the only installer. MSI and Portable packages are retired, and the Microsoft Store package is an MSIX bundle under the existing Store product.
+- **macOS:** The minimum system version is now macOS 15.
+- **Linux:** Public releases ship the x64 AppImage and the x64 Flatpak sideload. arm64 build wiring remains for the future.
+- **UI:** The licenses view now also lists every Rust crate used by the backend.
+- **Testing:** The end-to-end suite now drives the real app through WebdriverIO against the packaged binaries, including the full preset conversion matrix and accessibility audits.
+- **Codebase:** Rust toolchain pinned to `1.99.1` via `rust-toolchain.toml`.
 
 ## Changes in `v1.7.0:`
 
