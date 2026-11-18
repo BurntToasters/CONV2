@@ -6,9 +6,9 @@ use crate::ipc::{self, FalliblePayload, IpcResult, JsonObject, INTERNAL_ERROR};
 use crate::types::{
     AdvancedFormatSettings, AppSettings, Av1AdvancedSettings, Av1TierSettings, AviAdvancedSettings,
     AviCodec, AviTierSettings, CustomThemeId, GifAdvancedSettings, GifDither, GifLoopMode,
-    GifTierSettings, GpuMode, GpuVendor, H264AdvancedSettings, H264TierSettings, H265AdvancedSettings,
-    H265TierSettings, InterfaceStyle, ThemePreference, UIPanelSettings, UpdateChannel, VideoPreset,
-    WebpAdvancedSettings, WebpTierSettings,
+    GifTierSettings, GpuMode, GpuVendor, H264AdvancedSettings, H264TierSettings,
+    H265AdvancedSettings, H265TierSettings, InterfaceStyle, ThemePreference, UIPanelSettings,
+    UpdateChannel, VideoPreset, WebpAdvancedSettings, WebpTierSettings,
 };
 use serde_json::{json, Map, Value};
 use std::sync::Mutex;
@@ -57,7 +57,12 @@ fn settings_path() -> std::path::PathBuf {
 
 // ── defaults ───────────────────────────────────────────────────────────────
 
-fn default_gif_tier(fps: u32, max_dimension: u32, max_colors: u32, dither: GifDither) -> GifTierSettings {
+fn default_gif_tier(
+    fps: u32,
+    max_dimension: u32,
+    max_colors: u32,
+    dither: GifDither,
+) -> GifTierSettings {
     GifTierSettings {
         fps,
         max_dimension,
@@ -240,7 +245,10 @@ fn object(value: &Value) -> Map<String, Value> {
 }
 
 fn bool_or(incoming: &Map<String, Value>, key: &str, fallback: bool) -> bool {
-    incoming.get(key).and_then(Value::as_bool).unwrap_or(fallback)
+    incoming
+        .get(key)
+        .and_then(Value::as_bool)
+        .unwrap_or(fallback)
 }
 
 /// v1's clampInteger: numeric strings count, finite values round and clamp,
@@ -272,7 +280,12 @@ fn normalize_gif_tier(value: &Value, fallback: GifTierSettings) -> GifTierSettin
     GifTierSettings {
         // GIF delays are whole centiseconds; above 50 fps browsers misplay.
         fps: clamp_integer(incoming.get("fps"), 1, 50, fallback.fps),
-        max_dimension: clamp_integer(incoming.get("maxDimension"), 160, 2160, fallback.max_dimension),
+        max_dimension: clamp_integer(
+            incoming.get("maxDimension"),
+            160,
+            2160,
+            fallback.max_dimension,
+        ),
         // Floor 3: palettegen reserves a transparent slot and rejects 2.
         max_colors: clamp_integer(incoming.get("maxColors"), 3, 256, fallback.max_colors),
         dither: enum_or(incoming.get("dither"), GifDither::parse, fallback.dither),
@@ -283,7 +296,12 @@ fn normalize_webp_tier(value: &Value, fallback: WebpTierSettings) -> WebpTierSet
     let incoming = object(value);
     WebpTierSettings {
         fps: clamp_integer(incoming.get("fps"), 1, 60, fallback.fps),
-        max_dimension: clamp_integer(incoming.get("maxDimension"), 160, 2160, fallback.max_dimension),
+        max_dimension: clamp_integer(
+            incoming.get("maxDimension"),
+            160,
+            2160,
+            fallback.max_dimension,
+        ),
         quality: clamp_integer(incoming.get("quality"), 1, 100, fallback.quality),
     }
 }
@@ -293,7 +311,12 @@ fn normalize_av1_tier(value: &Value, fallback: Av1TierSettings) -> Av1TierSettin
     Av1TierSettings {
         quality: clamp_integer(incoming.get("quality"), 1, 63, fallback.quality),
         cpu_preset: clamp_integer(incoming.get("cpuPreset"), 0, 13, fallback.cpu_preset),
-        audio_bitrate_kbps: clamp_integer(incoming.get("audioBitrateKbps"), 32, 512, fallback.audio_bitrate_kbps),
+        audio_bitrate_kbps: clamp_integer(
+            incoming.get("audioBitrateKbps"),
+            32,
+            512,
+            fallback.audio_bitrate_kbps,
+        ),
     }
 }
 
@@ -302,7 +325,12 @@ fn normalize_h264_tier(value: &Value, fallback: H264TierSettings) -> H264TierSet
     H264TierSettings {
         quality: clamp_integer(incoming.get("quality"), 1, 51, fallback.quality),
         preset: enum_or(incoming.get("preset"), VideoPreset::parse, fallback.preset),
-        audio_bitrate_kbps: clamp_integer(incoming.get("audioBitrateKbps"), 32, 512, fallback.audio_bitrate_kbps),
+        audio_bitrate_kbps: clamp_integer(
+            incoming.get("audioBitrateKbps"),
+            32,
+            512,
+            fallback.audio_bitrate_kbps,
+        ),
     }
 }
 
@@ -311,7 +339,12 @@ fn normalize_h265_tier(value: &Value, fallback: H265TierSettings) -> H265TierSet
     H265TierSettings {
         quality: clamp_integer(incoming.get("quality"), 1, 51, fallback.quality),
         preset: enum_or(incoming.get("preset"), VideoPreset::parse, fallback.preset),
-        audio_bitrate_kbps: clamp_integer(incoming.get("audioBitrateKbps"), 32, 512, fallback.audio_bitrate_kbps),
+        audio_bitrate_kbps: clamp_integer(
+            incoming.get("audioBitrateKbps"),
+            32,
+            512,
+            fallback.audio_bitrate_kbps,
+        ),
         use_advanced_params: bool_or(&incoming, "useAdvancedParams", fallback.use_advanced_params),
     }
 }
@@ -322,7 +355,12 @@ fn normalize_avi_tier(value: &Value, fallback: AviTierSettings) -> AviTierSettin
         codec: enum_or(incoming.get("codec"), AviCodec::parse, fallback.codec),
         quality: clamp_integer(incoming.get("quality"), 1, 51, fallback.quality),
         preset: enum_or(incoming.get("preset"), VideoPreset::parse, fallback.preset),
-        audio_bitrate_kbps: clamp_integer(incoming.get("audioBitrateKbps"), 32, 512, fallback.audio_bitrate_kbps),
+        audio_bitrate_kbps: clamp_integer(
+            incoming.get("audioBitrateKbps"),
+            32,
+            512,
+            fallback.audio_bitrate_kbps,
+        ),
         use_advanced_params: bool_or(&incoming, "useAdvancedParams", fallback.use_advanced_params),
     }
 }
@@ -335,12 +373,30 @@ fn normalize_gif(value: &Value, fallback: GifAdvancedSettings) -> GifAdvancedSet
     let incoming = object(value);
     let incoming_tiers = tiers(value);
     GifAdvancedSettings {
-        loop_mode: enum_or(incoming.get("loopMode"), GifLoopMode::parse, fallback.loop_mode),
+        loop_mode: enum_or(
+            incoming.get("loopMode"),
+            GifLoopMode::parse,
+            fallback.loop_mode,
+        ),
         tiers: crate::types::GifTierCollection {
-            best_quality: normalize_gif_tier(incoming_tiers.get("bestQuality").unwrap_or(&Value::Null), fallback.tiers.best_quality),
-            quality: normalize_gif_tier(incoming_tiers.get("quality").unwrap_or(&Value::Null), fallback.tiers.quality),
-            balanced: normalize_gif_tier(incoming_tiers.get("balanced").unwrap_or(&Value::Null), fallback.tiers.balanced),
-            best_compression: normalize_gif_tier(incoming_tiers.get("bestCompression").unwrap_or(&Value::Null), fallback.tiers.best_compression),
+            best_quality: normalize_gif_tier(
+                incoming_tiers.get("bestQuality").unwrap_or(&Value::Null),
+                fallback.tiers.best_quality,
+            ),
+            quality: normalize_gif_tier(
+                incoming_tiers.get("quality").unwrap_or(&Value::Null),
+                fallback.tiers.quality,
+            ),
+            balanced: normalize_gif_tier(
+                incoming_tiers.get("balanced").unwrap_or(&Value::Null),
+                fallback.tiers.balanced,
+            ),
+            best_compression: normalize_gif_tier(
+                incoming_tiers
+                    .get("bestCompression")
+                    .unwrap_or(&Value::Null),
+                fallback.tiers.best_compression,
+            ),
         },
     }
 }
@@ -349,12 +405,30 @@ fn normalize_webp(value: &Value, fallback: WebpAdvancedSettings) -> WebpAdvanced
     let incoming = object(value);
     let incoming_tiers = tiers(value);
     WebpAdvancedSettings {
-        loop_mode: enum_or(incoming.get("loopMode"), GifLoopMode::parse, fallback.loop_mode),
+        loop_mode: enum_or(
+            incoming.get("loopMode"),
+            GifLoopMode::parse,
+            fallback.loop_mode,
+        ),
         tiers: crate::types::WebpTierCollection {
-            best_quality: normalize_webp_tier(incoming_tiers.get("bestQuality").unwrap_or(&Value::Null), fallback.tiers.best_quality),
-            quality: normalize_webp_tier(incoming_tiers.get("quality").unwrap_or(&Value::Null), fallback.tiers.quality),
-            balanced: normalize_webp_tier(incoming_tiers.get("balanced").unwrap_or(&Value::Null), fallback.tiers.balanced),
-            best_compression: normalize_webp_tier(incoming_tiers.get("bestCompression").unwrap_or(&Value::Null), fallback.tiers.best_compression),
+            best_quality: normalize_webp_tier(
+                incoming_tiers.get("bestQuality").unwrap_or(&Value::Null),
+                fallback.tiers.best_quality,
+            ),
+            quality: normalize_webp_tier(
+                incoming_tiers.get("quality").unwrap_or(&Value::Null),
+                fallback.tiers.quality,
+            ),
+            balanced: normalize_webp_tier(
+                incoming_tiers.get("balanced").unwrap_or(&Value::Null),
+                fallback.tiers.balanced,
+            ),
+            best_compression: normalize_webp_tier(
+                incoming_tiers
+                    .get("bestCompression")
+                    .unwrap_or(&Value::Null),
+                fallback.tiers.best_compression,
+            ),
         },
     }
 }
@@ -363,11 +437,28 @@ fn normalize_av1(value: &Value, fallback: Av1AdvancedSettings) -> Av1AdvancedSet
     let incoming_tiers = tiers(value);
     Av1AdvancedSettings {
         tiers: crate::types::Av1TierCollection {
-            best_quality: normalize_av1_tier(incoming_tiers.get("bestQuality").unwrap_or(&Value::Null), fallback.tiers.best_quality),
-            quality: normalize_av1_tier(incoming_tiers.get("quality").unwrap_or(&Value::Null), fallback.tiers.quality),
-            balanced: normalize_av1_tier(incoming_tiers.get("balanced").unwrap_or(&Value::Null), fallback.tiers.balanced),
-            best_compression: normalize_av1_tier(incoming_tiers.get("bestCompression").unwrap_or(&Value::Null), fallback.tiers.best_compression),
-            compression: normalize_av1_tier(incoming_tiers.get("compression").unwrap_or(&Value::Null), fallback.tiers.compression),
+            best_quality: normalize_av1_tier(
+                incoming_tiers.get("bestQuality").unwrap_or(&Value::Null),
+                fallback.tiers.best_quality,
+            ),
+            quality: normalize_av1_tier(
+                incoming_tiers.get("quality").unwrap_or(&Value::Null),
+                fallback.tiers.quality,
+            ),
+            balanced: normalize_av1_tier(
+                incoming_tiers.get("balanced").unwrap_or(&Value::Null),
+                fallback.tiers.balanced,
+            ),
+            best_compression: normalize_av1_tier(
+                incoming_tiers
+                    .get("bestCompression")
+                    .unwrap_or(&Value::Null),
+                fallback.tiers.best_compression,
+            ),
+            compression: normalize_av1_tier(
+                incoming_tiers.get("compression").unwrap_or(&Value::Null),
+                fallback.tiers.compression,
+            ),
         },
     }
 }
@@ -376,8 +467,14 @@ fn normalize_h264(value: &Value, fallback: H264AdvancedSettings) -> H264Advanced
     let incoming_tiers = tiers(value);
     H264AdvancedSettings {
         tiers: crate::types::H264TierCollection {
-            fast: normalize_h264_tier(incoming_tiers.get("fast").unwrap_or(&Value::Null), fallback.tiers.fast),
-            quality: normalize_h264_tier(incoming_tiers.get("quality").unwrap_or(&Value::Null), fallback.tiers.quality),
+            fast: normalize_h264_tier(
+                incoming_tiers.get("fast").unwrap_or(&Value::Null),
+                fallback.tiers.fast,
+            ),
+            quality: normalize_h264_tier(
+                incoming_tiers.get("quality").unwrap_or(&Value::Null),
+                fallback.tiers.quality,
+            ),
         },
     }
 }
@@ -386,10 +483,24 @@ fn normalize_h265(value: &Value, fallback: H265AdvancedSettings) -> H265Advanced
     let incoming_tiers = tiers(value);
     H265AdvancedSettings {
         tiers: crate::types::H265TierCollection {
-            best_quality: normalize_h265_tier(incoming_tiers.get("bestQuality").unwrap_or(&Value::Null), fallback.tiers.best_quality),
-            quality: normalize_h265_tier(incoming_tiers.get("quality").unwrap_or(&Value::Null), fallback.tiers.quality),
-            balanced: normalize_h265_tier(incoming_tiers.get("balanced").unwrap_or(&Value::Null), fallback.tiers.balanced),
-            best_compression: normalize_h265_tier(incoming_tiers.get("bestCompression").unwrap_or(&Value::Null), fallback.tiers.best_compression),
+            best_quality: normalize_h265_tier(
+                incoming_tiers.get("bestQuality").unwrap_or(&Value::Null),
+                fallback.tiers.best_quality,
+            ),
+            quality: normalize_h265_tier(
+                incoming_tiers.get("quality").unwrap_or(&Value::Null),
+                fallback.tiers.quality,
+            ),
+            balanced: normalize_h265_tier(
+                incoming_tiers.get("balanced").unwrap_or(&Value::Null),
+                fallback.tiers.balanced,
+            ),
+            best_compression: normalize_h265_tier(
+                incoming_tiers
+                    .get("bestCompression")
+                    .unwrap_or(&Value::Null),
+                fallback.tiers.best_compression,
+            ),
         },
     }
 }
@@ -398,9 +509,20 @@ fn normalize_avi(value: &Value, fallback: AviAdvancedSettings) -> AviAdvancedSet
     let incoming_tiers = tiers(value);
     AviAdvancedSettings {
         tiers: crate::types::AviTierCollection {
-            best_quality: normalize_avi_tier(incoming_tiers.get("bestQuality").unwrap_or(&Value::Null), fallback.tiers.best_quality),
-            best_compression: normalize_avi_tier(incoming_tiers.get("bestCompression").unwrap_or(&Value::Null), fallback.tiers.best_compression),
-            balanced: normalize_avi_tier(incoming_tiers.get("balanced").unwrap_or(&Value::Null), fallback.tiers.balanced),
+            best_quality: normalize_avi_tier(
+                incoming_tiers.get("bestQuality").unwrap_or(&Value::Null),
+                fallback.tiers.best_quality,
+            ),
+            best_compression: normalize_avi_tier(
+                incoming_tiers
+                    .get("bestCompression")
+                    .unwrap_or(&Value::Null),
+                fallback.tiers.best_compression,
+            ),
+            balanced: normalize_avi_tier(
+                incoming_tiers.get("balanced").unwrap_or(&Value::Null),
+                fallback.tiers.balanced,
+            ),
         },
     }
 }
@@ -425,7 +547,7 @@ fn normalize_advanced(value: &Value, fallback: &AdvancedFormatSettings) -> Advan
 fn merge_advanced(current: &AdvancedFormatSettings, incoming: &Value) -> AdvancedFormatSettings {
     let incoming = object(incoming);
     if incoming.is_empty() {
-        return current.clone();
+        return *current;
     }
     normalize_advanced(&Value::Object(incoming), current)
 }
@@ -498,9 +620,12 @@ pub fn normalize_settings(value: &Value) -> AppSettings {
         incoming
             .get("gpuManualVendor")
             .or_else(|| incoming.get("gpu"))
-            .or_else(|| Some(&Value::Null)),
+            .or(Some(&Value::Null)),
     );
-    let setup_wizard_completed = match incoming.get("setupWizardCompleted").and_then(Value::as_bool) {
+    let setup_wizard_completed = match incoming
+        .get("setupWizardCompleted")
+        .and_then(Value::as_bool)
+    {
         Some(value) => value,
         // Missing key on an existing file means a legacy user who finished.
         None => !incoming.contains_key("setupWizardCompleted"),
@@ -512,7 +637,11 @@ pub fn normalize_settings(value: &Value) -> AppSettings {
         gpu: manual_vendor,
         gpu_mode: normalize_gpu_mode(incoming.get("gpuMode")),
         gpu_manual_vendor: manual_vendor,
-        theme: enum_or(incoming.get("theme"), ThemePreference::parse, ThemePreference::System),
+        theme: enum_or(
+            incoming.get("theme"),
+            ThemePreference::parse,
+            ThemePreference::System,
+        ),
         custom_theme: enum_or(
             incoming.get("customTheme"),
             CustomThemeId::parse,
@@ -526,7 +655,11 @@ pub fn normalize_settings(value: &Value) -> AppSettings {
         auto_check_updates: bool_or(&incoming, "autoCheckUpdates", true),
         use_system_ffmpeg: bool_or(&incoming, "useSystemFFmpeg", false),
         use_cpu_decoding_when_gpu: bool_or(&incoming, "useCpuDecodingWhenGpu", false),
-        move_original_to_trash_on_success: bool_or(&incoming, "moveOriginalToTrashOnSuccess", false),
+        move_original_to_trash_on_success: bool_or(
+            &incoming,
+            "moveOriginalToTrashOnSuccess",
+            false,
+        ),
         update_channel: normalize_update_channel(incoming.get("updateChannel")),
         show_advanced_presets: bool_or(&incoming, "showAdvancedPresets", false),
         remove_spaces_from_filenames: bool_or(&incoming, "removeSpacesFromFilenames", false),
@@ -540,7 +673,9 @@ pub fn normalize_settings(value: &Value) -> AppSettings {
             defaults.ui_panels,
         ),
         advanced_format_settings: normalize_advanced(
-            incoming.get("advancedFormatSettings").unwrap_or(&Value::Null),
+            incoming
+                .get("advancedFormatSettings")
+                .unwrap_or(&Value::Null),
             &defaults.advanced_format_settings,
         ),
     }
@@ -565,36 +700,74 @@ impl Expected {
     }
 }
 
-const LEGACY_AV1: &[(&str, &[&[(&str, Expected)]])] = &[
+/// Tier name to alternative legacy value sets.
+type LegacyTable = &'static [(&'static str, &'static [&'static [(&'static str, Expected)]])];
+
+const LEGACY_AV1: LegacyTable = &[
     (
         "bestQuality",
         &[
-            &[("quality", Expected::Num(15)), ("cpuPreset", Expected::Num(2)), ("audioBitrateKbps", Expected::Num(256))],
-            &[("quality", Expected::Num(18)), ("cpuPreset", Expected::Num(2)), ("audioBitrateKbps", Expected::Num(256))],
+            &[
+                ("quality", Expected::Num(15)),
+                ("cpuPreset", Expected::Num(2)),
+                ("audioBitrateKbps", Expected::Num(256)),
+            ],
+            &[
+                ("quality", Expected::Num(18)),
+                ("cpuPreset", Expected::Num(2)),
+                ("audioBitrateKbps", Expected::Num(256)),
+            ],
         ],
     ),
     (
         "quality",
         &[
-            &[("quality", Expected::Num(20)), ("cpuPreset", Expected::Num(4)), ("audioBitrateKbps", Expected::Num(192))],
-            &[("quality", Expected::Num(24)), ("cpuPreset", Expected::Num(4)), ("audioBitrateKbps", Expected::Num(192))],
+            &[
+                ("quality", Expected::Num(20)),
+                ("cpuPreset", Expected::Num(4)),
+                ("audioBitrateKbps", Expected::Num(192)),
+            ],
+            &[
+                ("quality", Expected::Num(24)),
+                ("cpuPreset", Expected::Num(4)),
+                ("audioBitrateKbps", Expected::Num(192)),
+            ],
         ],
     ),
-    ("balanced", &[&[("quality", Expected::Num(30)), ("cpuPreset", Expected::Num(6)), ("audioBitrateKbps", Expected::Num(128))]]),
+    (
+        "balanced",
+        &[&[
+            ("quality", Expected::Num(30)),
+            ("cpuPreset", Expected::Num(6)),
+            ("audioBitrateKbps", Expected::Num(128)),
+        ]],
+    ),
     (
         "bestCompression",
-        &[&[("quality", Expected::Num(38)), ("cpuPreset", Expected::Num(2)), ("audioBitrateKbps", Expected::Num(96))]],
+        &[&[
+            ("quality", Expected::Num(38)),
+            ("cpuPreset", Expected::Num(2)),
+            ("audioBitrateKbps", Expected::Num(96)),
+        ]],
     ),
     (
         "compression",
         &[
-            &[("quality", Expected::Num(40)), ("cpuPreset", Expected::Num(6)), ("audioBitrateKbps", Expected::Num(96))],
-            &[("quality", Expected::Num(44)), ("cpuPreset", Expected::Num(6)), ("audioBitrateKbps", Expected::Num(96))],
+            &[
+                ("quality", Expected::Num(40)),
+                ("cpuPreset", Expected::Num(6)),
+                ("audioBitrateKbps", Expected::Num(96)),
+            ],
+            &[
+                ("quality", Expected::Num(44)),
+                ("cpuPreset", Expected::Num(6)),
+                ("audioBitrateKbps", Expected::Num(96)),
+            ],
         ],
     ),
 ];
 
-const LEGACY_H265: &[(&str, &[&[(&str, Expected)]])] = &[
+const LEGACY_H265: LegacyTable = &[
     (
         "bestQuality",
         &[&[
@@ -615,7 +788,7 @@ const LEGACY_H265: &[(&str, &[&[(&str, Expected)]])] = &[
     ),
 ];
 
-const LEGACY_AVI: &[(&str, &[&[(&str, Expected)]])] = &[
+const LEGACY_AVI: LegacyTable = &[
     (
         "bestQuality",
         &[
@@ -677,12 +850,11 @@ fn tier_matches(stored: Option<&Value>, legacy: &[(&str, Expected)]) -> bool {
     })
 }
 
-fn replace_legacy_tiers(
-    raw: &mut Map<String, Value>,
-    format: &str,
-    legacy: &[(&str, &[&[(&str, Expected)]])],
-) {
-    let Some(advanced) = raw.get_mut("advancedFormatSettings").and_then(Value::as_object_mut) else {
+fn replace_legacy_tiers(raw: &mut Map<String, Value>, format: &str, legacy: LegacyTable) {
+    let Some(advanced) = raw
+        .get_mut("advancedFormatSettings")
+        .and_then(Value::as_object_mut)
+    else {
         return;
     };
     let Some(tiers) = advanced
@@ -695,7 +867,10 @@ fn replace_legacy_tiers(
     };
     let defaults = default_advanced_format_settings();
     for (tier, legacy_list) in legacy {
-        if legacy_list.iter().any(|entry| tier_matches(tiers.get(*tier), entry)) {
+        if legacy_list
+            .iter()
+            .any(|entry| tier_matches(tiers.get(*tier), entry))
+        {
             let replacement = serde_json::to_value(match (format, *tier) {
                 ("av1", "bestQuality") => json!(defaults.av1.tiers.best_quality),
                 ("av1", "quality") => json!(defaults.av1.tiers.quality),
@@ -725,7 +900,8 @@ fn migrate_legacy_tier_defaults(mut raw: Map<String, Value>) -> Map<String, Valu
 // ── persistence ────────────────────────────────────────────────────────────
 
 fn back_up_corrupt(settings_path: &std::path::Path) {
-    let backup = settings_path.with_extension(format!("json.corrupt-{}", crate::app_state::now_ms()));
+    let backup =
+        settings_path.with_extension(format!("json.corrupt-{}", crate::app_state::now_ms()));
     if let Err(error) = std::fs::copy(settings_path, &backup) {
         crate::logging::warn(&format!(
             "Could not back up the corrupt settings file {}: {error}",
@@ -770,8 +946,8 @@ fn read_settings_file() -> (AppSettings, bool) {
         .get("settingsSchemaVersion")
         .and_then(Value::as_f64)
         .filter(|version| version.fract() == 0.0 && *version >= 0.0);
-    let predates_tier_migration = stored_version
-        .is_none_or(|version| version < f64::from(TIER_DEFAULTS_MIGRATION_VERSION));
+    let predates_tier_migration =
+        stored_version.is_none_or(|version| version < f64::from(TIER_DEFAULTS_MIGRATION_VERSION));
     if predates_tier_migration {
         incoming = migrate_legacy_tier_defaults(incoming);
     }
@@ -831,7 +1007,9 @@ pub fn import_legacy(raw: Value) -> Result<(), String> {
 fn merge_patch(current: &AppSettings, patch: &Map<String, Value>) -> AppSettings {
     for key in patch.keys() {
         if !ALLOWED_SETTINGS_KEYS.contains(&key.as_str()) {
-            crate::logging::warn(&format!("save-settings: unexpected field \"{key}\" – ignored"));
+            crate::logging::warn(&format!(
+                "save-settings: unexpected field \"{key}\" – ignored"
+            ));
         }
     }
     let mut merged = match serde_json::to_value(current) {
@@ -847,7 +1025,8 @@ fn merge_patch(current: &AppSettings, patch: &Map<String, Value>) -> AppSettings
     if let Some(value) = patch.get("uiPanels") {
         merged.insert(
             "uiPanels".into(),
-            serde_json::to_value(normalize_ui_panels(value, current.ui_panels)).unwrap_or(Value::Null),
+            serde_json::to_value(normalize_ui_panels(value, current.ui_panels))
+                .unwrap_or(Value::Null),
         );
     }
     if let Some(value) = patch.get("advancedFormatSettings") {
@@ -878,7 +1057,10 @@ fn merge_patch(current: &AppSettings, patch: &Map<String, Value>) -> AppSettings
                 .or(Some(&Value::Null)),
         );
         merged.insert("gpu".into(), Value::String(vendor.as_str().to_string()));
-        merged.insert("gpuManualVendor".into(), Value::String(vendor.as_str().to_string()));
+        merged.insert(
+            "gpuManualVendor".into(),
+            Value::String(vendor.as_str().to_string()),
+        );
     }
     normalize_settings(&Value::Object(merged))
 }

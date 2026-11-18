@@ -13,33 +13,7 @@ import {
 import { E2E_SUITE_MANIFEST, scenarioOutcomeProblems } from "./e2e/manifest.js";
 import { reportForRun } from "./e2e/stability.js";
 
-const MAIN_SCENARIOS = [
-  "launch",
-  "settings-sidebar",
-  "settings-persistence",
-  "download-profiles",
-  "url-safety",
-  "manual-download",
-  "unicode-download",
-  "queue",
-  "cancel",
-  "conversion",
-  "audio-extract",
-  "preview",
-  "formats",
-  "merge-download",
-  "queue-management",
-  "queue-cancel",
-  "dock-tabs",
-  "small-window",
-  "browser-choice",
-  "ui-screenshots",
-  "settings-controls",
-  "queue-controls",
-  "download-again-quickly",
-  "activity-clear",
-  "close-flow",
-];
+const MAIN_SCENARIOS = ["startup", "batch-queue", "cancel-conversion"];
 
 test("profile selector accepts only a single known profile", () => {
   assert.equal(parseE2eProfile([], {}), null);
@@ -61,14 +35,14 @@ test("core rejects group and ONLY selectors from arguments or environment", () =
   for (const [argv, env] of [
     [["--profile", "core", "--group", "settings"], {}],
     [["--group=settings", "--profile=core"], {}],
-    [["--profile", "core"], { ROSI_E2E_GROUPS: "settings" }],
-    [["--profile", "core"], { ROSI_E2E_ONLY: "./specs/main.spec.js" }],
-    [["--profile", "core"], { ROSI_E2E_ONLY: "  ./specs/main.spec.js  " }],
+    [["--profile", "core"], { CONV2_E2E_GROUPS: "settings" }],
+    [["--profile", "core"], { CONV2_E2E_ONLY: "./specs/main.spec.js" }],
+    [["--profile", "core"], { CONV2_E2E_ONLY: "  ./specs/main.spec.js  " }],
   ]) {
     assert.throws(() => parseE2eProfile(argv, env), /cannot be combined/i);
   }
   assert.equal(
-    parseE2eProfile(["--profile", "core"], { ROSI_E2E_ONLY: "  " }),
+    parseE2eProfile(["--profile", "core"], { CONV2_E2E_ONLY: "  " }),
     "core",
   );
 });
@@ -79,13 +53,7 @@ test("core plan selects only the approved main scenarios and complete support ow
   assert.equal(plan.profile, "core");
   assert.equal(plan.mainSpecs, "./specs/main.spec.js");
   assert.deepEqual(plan.mainScenarioIds, MAIN_SCENARIOS);
-  assert.deepEqual(plan.enabledOwners, [
-    "main",
-    "state-repairs",
-    "round2-renderer",
-    "offline-queue",
-    "round3-renderer",
-  ]);
+  assert.deepEqual(plan.enabledOwners, ["main", "legacy-import"]);
   assert.deepEqual(
     plan.expectedScenarios,
     E2E_SUITE_MANIFEST.scenarios
@@ -97,15 +65,10 @@ test("core plan selects only the approved main scenarios and complete support ow
       )
       .map((scenario) => scenario.name),
   );
-  assert.equal(plan.expectedScenarios.length, 25 + 14 + 1 + 1 + 1);
-  assert.equal(
-    plan.expectedScenarios.includes("download-process-repairs"),
-    false,
-  );
-  assert.equal(
-    plan.expectedScenarios.some((name) => name.startsWith("v5-fixes/")),
-    false,
-  );
+  assert.equal(plan.expectedScenarios.length, 3 + 4);
+  // The slow preset matrix stays out of the quick profile.
+  assert.equal(plan.expectedScenarios.includes("preset-matrix"), false);
+  assert.deepEqual(plan.requiredTools, ["ffmpeg", "ffprobe"]);
 });
 
 test("core main titles map one-to-one to selected scenario ids", () => {
@@ -116,11 +79,11 @@ test("core main titles map one-to-one to selected scenario ids", () => {
   );
   assert.equal(
     new Set(plan.mainMochaTitles.map((entry) => entry.title)).size,
-    25,
+    3,
   );
   assert.ok(
     plan.mainMochaTitles.every((entry) =>
-      entry.title.startsWith("ROSI main window "),
+      entry.title.startsWith("CONV2 main window "),
     ),
   );
 });
@@ -128,54 +91,54 @@ test("core main titles map one-to-one to selected scenario ids", () => {
 test("Mocha title pattern anchors and escapes every title", () => {
   const pattern = new RegExp(
     exactMochaTitlePattern([
-      "ROSI main window opens [settings] sidebar",
-      "ROSI main window handles a+b",
+      "CONV2 main window opens [settings] dialog",
+      "CONV2 main window handles a+b",
     ]),
   );
-  assert.equal(pattern.test("ROSI main window opens [settings] sidebar"), true);
-  assert.equal(pattern.test("ROSI main window handles a+b"), true);
-  assert.equal(pattern.test("ROSI main window opens settings sidebar"), false);
-  assert.equal(pattern.test("prefix ROSI main window handles a+b"), false);
-  assert.equal(pattern.test("ROSI main window handles aaab"), false);
+  assert.equal(pattern.test("CONV2 main window opens [settings] dialog"), true);
+  assert.equal(pattern.test("CONV2 main window handles a+b"), true);
+  assert.equal(pattern.test("CONV2 main window opens settings dialog"), false);
+  assert.equal(pattern.test("prefix CONV2 main window handles a+b"), false);
+  assert.equal(pattern.test("CONV2 main window handles aaab"), false);
   assert.throws(() => exactMochaTitlePattern([]), /at least one/i);
 });
 
 test("core scenario validation rejects missing, duplicate, failed, and skipped outcomes", () => {
-  const expected = ["launch", "settings-sidebar"];
+  const expected = ["startup", "batch-queue"];
   const passing = expected.map((name) => ({ name, status: "passed" }));
   assert.deepEqual(scenarioOutcomeProblems(passing, "darwin", expected), []);
   assert.match(
     scenarioOutcomeProblems(passing.slice(0, 1), "darwin", expected).join("; "),
-    /settings-sidebar reported 0 times/,
+    /batch-queue reported 0 times/,
   );
   assert.match(
     scenarioOutcomeProblems(
-      [...passing, { name: "launch", status: "passed" }],
+      [...passing, { name: "startup", status: "passed" }],
       "darwin",
       expected,
     ).join("; "),
-    /launch reported 2 times/,
+    /startup reported 2 times/,
   );
   assert.match(
     scenarioOutcomeProblems(
-      [{ name: "launch", status: "failed" }, passing[1]],
+      [{ name: "startup", status: "failed" }, passing[1]],
       "darwin",
       expected,
     ).join("; "),
-    /launch has unacceptable status failed/,
+    /startup has unacceptable status failed/,
   );
   assert.match(
     scenarioOutcomeProblems(
-      [{ name: "launch", status: "skipped" }, passing[1]],
+      [{ name: "startup", status: "skipped" }, passing[1]],
       "darwin",
       expected,
     ).join("; "),
-    /launch has unacceptable status skipped/,
+    /startup has unacceptable status skipped/,
   );
 });
 
 test("core artifact paths isolate timestamped run evidence and screenshots", () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "rosi-core-artifacts-"));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "conv2-core-artifacts-"));
   try {
     const first = coreArtifactPaths({
       root,
@@ -202,7 +165,7 @@ test("core artifact paths isolate timestamped run evidence and screenshots", () 
 });
 
 test("repeat reads only the report written for its current run id", () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "rosi-core-repeat-"));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "conv2-core-repeat-"));
   const file = path.join(root, "report.json");
   try {
     fs.writeFileSync(file, JSON.stringify({ runId: "previous", passed: true }));

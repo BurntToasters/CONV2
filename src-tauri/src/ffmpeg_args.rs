@@ -102,9 +102,8 @@ pub fn ensure_mp4_playback_compatibility_args(
     }
     let output_carries_hevc = preset.category == "h265"
         || (preset.category == "remux"
-            && source_video_codec.is_some_and(|codec| {
-                matches!(codec.to_lowercase().as_str(), "hevc" | "h265")
-            }));
+            && source_video_codec
+                .is_some_and(|codec| matches!(codec.to_lowercase().as_str(), "hevc" | "h265")));
     if output_carries_hevc && !has_hevc_tag(&args) {
         args.extend(["-tag:v".to_string(), "hvc1".to_string()]);
     }
@@ -184,7 +183,9 @@ pub fn with_input_protocol_args(args: &[String], input_path: &str) -> Option<Vec
     let index = args
         .iter()
         .enumerate()
-        .find(|(index, arg)| *arg == "-i" && args.get(index + 1).is_some_and(|next| next == input_path))
+        .find(|(index, arg)| {
+            *arg == "-i" && args.get(index + 1).is_some_and(|next| next == input_path)
+        })
         .map(|(index, _)| index)?;
     let mut next = args[..index].to_vec();
     next.extend([
@@ -224,8 +225,19 @@ mod tests {
     fn splice_skips_flags_the_preset_already_sets() {
         let preset = strings(&["-i", "in", "-pix_fmt", "yuv420p", "out"]);
         assert_eq!(
-            splice_output_args(&preset, &strings(&["-pix_fmt", "nv12", "-colorspace", "bt709"])),
-            strings(&["-i", "in", "-pix_fmt", "yuv420p", "-colorspace", "bt709", "out"])
+            splice_output_args(
+                &preset,
+                &strings(&["-pix_fmt", "nv12", "-colorspace", "bt709"])
+            ),
+            strings(&[
+                "-i",
+                "in",
+                "-pix_fmt",
+                "yuv420p",
+                "-colorspace",
+                "bt709",
+                "out"
+            ])
         );
         assert_eq!(splice_output_args(&preset, &[]), preset);
     }
@@ -233,13 +245,28 @@ mod tests {
     #[test]
     fn mp4_gains_faststart_and_hevc_tag() {
         let h265 = get_preset("h265-balanced").unwrap();
-        let args = strings(&["-i", "in.mkv", "-c:v", "libx265", "-movflags", "+frag", "out.mp4"]);
+        let args = strings(&[
+            "-i",
+            "in.mkv",
+            "-c:v",
+            "libx265",
+            "-movflags",
+            "+frag",
+            "out.mp4",
+        ]);
         let fixed = ensure_mp4_playback_compatibility_args(h265, &args, None);
         assert_eq!(
             fixed,
             strings(&[
-                "-i", "in.mkv", "-c:v", "libx265", "-movflags", "+frag+faststart", "-tag:v",
-                "hvc1", "out.mp4"
+                "-i",
+                "in.mkv",
+                "-c:v",
+                "libx265",
+                "-movflags",
+                "+frag+faststart",
+                "-tag:v",
+                "hvc1",
+                "out.mp4"
             ])
         );
         // A preset that already carries hvc1 keeps a single tag.
@@ -264,7 +291,12 @@ mod tests {
         assert_eq!(
             guarded,
             strings(&[
-                "-i", "a.mp4", "-protocol_whitelist", "file,pipe,crypto,data", "-i", "b.mp4",
+                "-i",
+                "a.mp4",
+                "-protocol_whitelist",
+                "file,pipe,crypto,data",
+                "-i",
+                "b.mp4",
                 "out"
             ])
         );

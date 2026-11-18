@@ -3,9 +3,7 @@
 //! conversionController.ts + conversionQueue.ts + ffmpeg.ts convertVideo).
 
 use crate::app_state;
-use crate::command_builders::{
-    self, get_preset, Preset, PresetContext, SourceStreamInfo,
-};
+use crate::command_builders::{self, get_preset, Preset, PresetContext, SourceStreamInfo};
 use crate::ffmpeg_args;
 use crate::ffmpeg_failure;
 use crate::ffmpeg_progress;
@@ -233,7 +231,12 @@ fn validate_and_claim(payload: &StartConversionQueuePayload) -> Validation {
         ));
     }
     let Some(preset) = get_preset(&payload.preset_id) else {
-        let mut snapshot = reject_all(&input_paths, "invalid", "Invalid preset selected", input_paths.len());
+        let mut snapshot = reject_all(
+            &input_paths,
+            "invalid",
+            "Invalid preset selected",
+            input_paths.len(),
+        );
         snapshot.preset_id = payload.preset_id.clone();
         return Validation::Reject(snapshot);
     };
@@ -257,8 +260,10 @@ fn validate_and_claim(payload: &StartConversionQueuePayload) -> Validation {
 // Queue commands.
 // ---------------------------------------------------------------------------
 
-#[tauri::command(async)]
-pub fn start_conversion_queue(
+/// Resolves when the whole batch ends, as v1's handler did. The batch runs on
+/// the blocking pool so a long queue never occupies an async worker.
+#[tauri::command]
+pub async fn start_conversion_queue(
     payload: FalliblePayload<JsonObject<StartConversionQueuePayload>>,
 ) -> IpcResult<QueueSnapshot> {
     let request = match payload.into_typed(VALIDATION_ERROR, "Invalid conversion queue request.") {
@@ -272,9 +277,7 @@ pub fn start_conversion_queue(
         }
         Validation::Run(request) => {
             let run = lock_state().run;
-            match tauri::async_runtime::block_on(tauri::async_runtime::spawn_blocking(move || {
-                run_queue(run, request)
-            })) {
+            match tauri::async_runtime::spawn_blocking(move || run_queue(run, request)).await {
                 Ok(snapshot) => ipc::ok(snapshot),
                 Err(error) => ipc::err(INTERNAL_ERROR, error.to_string()),
             }
@@ -301,14 +304,20 @@ pub fn cancel_conversion(force: Option<FalliblePayload<bool>>) -> IpcResult<()> 
 
 fn snapshot_of(preset_id: &str, items: &[QueueItemSnapshot]) -> QueueSnapshot {
     QueueSnapshot {
-        active: items
-            .iter()
-            .any(|item| matches!(item.status, QueueItemStatus::Pending | QueueItemStatus::Running)),
+        active: items.iter().any(|item| {
+            matches!(
+                item.status,
+                QueueItemStatus::Pending | QueueItemStatus::Running
+            )
+        }),
         preset_id: preset_id.to_string(),
         current_index: items
             .iter()
             .position(|item| {
-                matches!(item.status, QueueItemStatus::Running | QueueItemStatus::Pending)
+                matches!(
+                    item.status,
+                    QueueItemStatus::Running | QueueItemStatus::Pending
+                )
             })
             .unwrap_or(0),
         total: items.len(),
@@ -336,7 +345,8 @@ fn run_queue(run: u64, request: QueueRequest) -> QueueSnapshot {
         .collect();
 
     let settings = settings::current();
-    let codec = command_builders::preset_gpu_codec(&request.preset, &settings.advanced_format_settings);
+    let codec =
+        command_builders::preset_gpu_codec(request.preset, &settings.advanced_format_settings);
     let show_debug = request
         .show_debug_output
         .unwrap_or(settings.show_debug_output);
@@ -374,11 +384,7 @@ fn run_queue(run: u64, request: QueueRequest) -> QueueSnapshot {
             file_index: index,
             file_count: items.len(),
         }));
-        let reporter = Reporter {
-            index,
-            total: items.len(),
-            show_debug,
-        };
+        let reporter = Reporter { show_debug };
         if show_debug && items.len() > 1 {
             reporter.log(&format!(
                 "\n=== [{}/{}] {} ===\n",
@@ -479,8 +485,6 @@ struct ConvertOptions {
 
 #[derive(Clone, Copy)]
 struct Reporter {
-    index: usize,
-    total: usize,
     show_debug: bool,
 }
 
@@ -525,10 +529,9 @@ fn remove_output(path: &Path) {
     match std::fs::remove_file(path) {
         Ok(()) => {}
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-        Err(error) => crate::logging::warn(&format!(
-            "Failed to delete {}: {error}",
-            path.display()
-        )),
+        Err(error) => {
+            crate::logging::warn(&format!("Failed to delete {}: {error}", path.display()))
+        }
     }
 }
 
@@ -588,8 +591,6 @@ fn convert_one(
     let effective_gpu =
         command_builders::effective_conversion_gpu(requested_gpu, codec, platform, arch);
     let reporter = Reporter {
-        index: 0,
-        total: 1,
         show_debug: options.show_debug,
     };
 
@@ -741,8 +742,6 @@ fn convert_one(
     }
 
     let streams = video_info.as_ref().map(|info| SourceStreamInfo {
-        video_codec: Some(info.codec.clone()),
-        audio_codec: info.audio_codec.clone(),
         subtitle_codecs: info.subtitle_codecs.clone(),
         audio_channels: info.audio_channels.clone(),
     });
@@ -786,7 +785,8 @@ fn convert_one(
 
     let mut active_decode_args = decode_args.clone();
     let needs_video_plan = is_video_preset || matches!(preset.category, "gif" | "webp");
-    if needs_video_plan && (video_info.is_some() || active_gpu == GpuVendor::Qualcomm)
+    if needs_video_plan
+        && (video_info.is_some() || active_gpu == GpuVendor::Qualcomm)
         && !preset_args.is_empty()
     {
         let source = video_info.as_ref().map(|info| video_pipeline::SourceColor {
@@ -941,7 +941,13 @@ fn run_attempts(
     if !decode_args.is_empty() && ffmpeg_failure::should_retry_with_software_decode(&attempt.stderr)
     {
         reporter.log("Hardware decode failed; retrying with software decode.\n");
-        attempt = run_ffmpeg(run, &args_without_decode(&args, decode_args.len()), output_path, total_duration, reporter);
+        attempt = run_ffmpeg(
+            run,
+            &args_without_decode(&args, decode_args.len()),
+            output_path,
+            total_duration,
+            reporter,
+        );
         if attempt.cancelled {
             remove_output(output_path);
             return cancelled_outcome(output_path);
@@ -1180,7 +1186,7 @@ fn run_ffmpeg(
             stderr: String::new(),
         };
     }
-    let mut command = process_util::command(&ffmpeg_status::bundled_ffmpeg(), args, &[], true);
+    let mut command = process_util::command(ffmpeg_status::bundled_ffmpeg(), args, &[], true);
     let child = match process_util::spawn(&mut command) {
         Ok(child) => child,
         Err(error) => {
@@ -1315,7 +1321,12 @@ fn free_bytes(dir: &Path) -> Option<u64> {
             .collect();
         let mut available = 0u64;
         let ok = unsafe {
-            GetDiskFreeSpaceExW(wide.as_ptr(), &mut available, std::ptr::null_mut(), std::ptr::null_mut())
+            GetDiskFreeSpaceExW(
+                wide.as_ptr(),
+                &mut available,
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+            )
         };
         (ok != 0).then_some(available)
     }
@@ -1365,7 +1376,10 @@ mod tests {
         // A second request while the first holds the slot is rejected as busy.
         match validate_and_claim(&payload) {
             Validation::Reject(snapshot) => {
-                assert_eq!(snapshot.items[0].error.as_deref(), Some("Another conversion is already in progress"));
+                assert_eq!(
+                    snapshot.items[0].error.as_deref(),
+                    Some("Another conversion is already in progress")
+                );
             }
             Validation::Run(_) => panic!("expected busy rejection"),
         }
@@ -1377,7 +1391,10 @@ mod tests {
         match validate_and_claim(&payload) {
             Validation::Reject(snapshot) => {
                 assert_eq!(snapshot.preset_id, "nope");
-                assert_eq!(snapshot.items[0].error.as_deref(), Some("Invalid preset selected"));
+                assert_eq!(
+                    snapshot.items[0].error.as_deref(),
+                    Some("Invalid preset selected")
+                );
             }
             Validation::Run(_) => panic!("expected preset rejection"),
         }
@@ -1412,14 +1429,32 @@ mod tests {
 
     #[test]
     fn decode_args_are_spliced_out_for_the_retry() {
-        let args: Vec<String> = ["-hide_banner", "-y", "-progress", "pipe:1", "-hwaccel", "cuda", "-i", "in", "out"]
-            .map(str::to_string)
-            .to_vec();
+        let args: Vec<String> = [
+            "-hide_banner",
+            "-y",
+            "-progress",
+            "pipe:1",
+            "-hwaccel",
+            "cuda",
+            "-i",
+            "in",
+            "out",
+        ]
+        .map(str::to_string)
+        .to_vec();
         assert_eq!(
             args_without_decode(&args, 2),
-            ["-hide_banner", "-y", "-progress", "pipe:1", "-i", "in", "out"]
-                .map(str::to_string)
-                .to_vec()
+            [
+                "-hide_banner",
+                "-y",
+                "-progress",
+                "pipe:1",
+                "-i",
+                "in",
+                "out"
+            ]
+            .map(str::to_string)
+            .to_vec()
         );
     }
 }

@@ -15,12 +15,11 @@ static CLOSE_IN_PROGRESS: AtomicBool = AtomicBool::new(false);
 static CLOSE_CONFIRMING: AtomicBool = AtomicBool::new(false);
 pub static APP_QUITTING: AtomicBool = AtomicBool::new(false);
 /// The renderer's last reported menu enablement (v1's conversion-menu-state).
-static CONVERSION_MENU_STATE: Mutex<ConversionMenuStatePayload> = Mutex::new(
-    ConversionMenuStatePayload {
+static CONVERSION_MENU_STATE: Mutex<ConversionMenuStatePayload> =
+    Mutex::new(ConversionMenuStatePayload {
         converting: false,
         has_output: false,
-    },
-);
+    });
 
 /// Only the bundled frontend (and the Vite dev server in debug builds) may
 /// load in the main webview.
@@ -96,10 +95,11 @@ fn build_main(app: &AppHandle) -> Result<WebviewWindow, String> {
         })
         .build()
         .map_err(|error| error.to_string())
-        .inspect(|_window| {
+        .inspect(|window| {
+            crate::window_state::restore(window.app_handle(), window);
             #[cfg(all(feature = "e2e", target_os = "macos"))]
             if e2e_background() {
-                e2e_occlusion::keep_rendering(_window);
+                e2e_occlusion::keep_rendering(window);
             }
         })
 }
@@ -302,9 +302,15 @@ pub fn mark_main_window_ready(app: AppHandle, window: WebviewWindow) {
     });
 }
 
+pub fn conversion_menu_state() -> ConversionMenuStatePayload {
+    CONVERSION_MENU_STATE
+        .lock()
+        .map(|slot| *slot)
+        .unwrap_or_default()
+}
+
 /// v1's `conversion-menu-state` IPC: the renderer reports whether a batch is
 /// running and whether any output exists, so menu items can enable/disable.
-/// The menu refresh is a no-op until the menu controller lands.
 #[tauri::command(async)]
 pub fn set_conversion_menu_state(
     window: WebviewWindow,
@@ -337,6 +343,7 @@ fn destroy_main(app: &AppHandle) -> Result<(), String> {
 /// lands with the settings port.
 pub fn on_main_close_requested(app: &AppHandle, api: &tauri::CloseRequestApi) {
     api.prevent_close();
+    crate::window_state::save(app);
     if CLOSE_IN_PROGRESS.load(Ordering::SeqCst) || CLOSE_CONFIRMING.swap(true, Ordering::SeqCst) {
         return;
     }

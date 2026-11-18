@@ -11,10 +11,10 @@ Before adding the profile, protect these failure cases:
 3. **An invalid or duplicated profile is silently accepted.** Unknown names,
    repeated flags, and conflicting `--profile` forms fail clearly.
 4. **Core combines with owner groups or an ad-hoc spec.** Reject both CLI
-   `--group` and `ROSI_E2E_GROUPS`, plus any nonblank `ROSI_E2E_ONLY`.
+   `--group` and `CONV2_E2E_GROUPS`, plus any nonblank `CONV2_E2E_ONLY`.
 5. **The selection drifts from the approved inventory.** Core expects exactly
-   the 25 named main scenarios plus every scenario from state repairs, offline
-   queue, round2 renderer, and round3 renderer; full mode keeps its old list.
+   the 3 named main scenarios (startup, batch-queue, cancel-conversion) plus
+   every legacy-import scenario; full mode keeps its own list.
 6. **A title selector accidentally matches adjacent tests.** Every selected
    scenario must map to one complete Mocha full title; regex metacharacters are
    escaped and alternatives are anchored, so only listed tests run.
@@ -43,7 +43,7 @@ Before adding the profile, protect these failure cases:
     binary hash path remain authoritative; full report location and full
     expected scenario inventory stay unchanged.
 14. **Specialized runners accidentally enter core.** Only the listed main
-    selection and four complete supporting suites run; no other owner runner
-    or dynamic v5-fixes area is enabled.
+    selection and the complete legacy-import suite run; the slow preset matrix
+    and every other main scenario stay out.
 15. **The warm-time goal is presented as measured evidence.** Documentation
     labels under ten minutes as a target until a manager records actual runs.

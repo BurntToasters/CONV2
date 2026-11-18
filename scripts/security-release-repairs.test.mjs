@@ -20,7 +20,7 @@ import {
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const now = Date.parse("2026-10-03T12:00:00Z");
 const expected = {
-  version: "5.0.0-beta.2",
+  version: "2.0.0-beta.1",
   commit: "a".repeat(40),
   sourceTree: "b".repeat(40),
   platform: "darwin",
@@ -38,28 +38,27 @@ function successfulScenarios(overrides = {}) {
   }));
 }
 
-test("canonical outcomes allow the Linux-only XDG skip only off Linux", () => {
-  for (const platform of ["darwin", "win32"]) {
-    assert.deepEqual(
-      scenarioOutcomeProblems(
-        successfulScenarios({ "xdg-download-dir": "skipped" }),
-        platform,
+test("canonical outcomes allow no skips and reject failed, missing or unexpected scenarios", () => {
+  assert.deepEqual(
+    scenarioOutcomeProblems(successfulScenarios(), "darwin"),
+    [],
+  );
+  // CONV2 has no platform-only scenario, so a skip fails everywhere.
+  for (const platform of ["darwin", "win32", "linux"]) {
+    const skipped = scenarioOutcomeProblems(
+      successfulScenarios({ "preset-matrix": "skipped" }),
+      platform,
+    );
+    assert.ok(
+      skipped.some((problem) =>
+        problem.includes("preset-matrix has unacceptable status skipped"),
       ),
-      [],
+      JSON.stringify(skipped),
     );
   }
 
-  const linuxSkipProblems = scenarioOutcomeProblems(
-    successfulScenarios({ "xdg-download-dir": "skipped" }),
-    "linux",
-  );
-  assert.ok(
-    linuxSkipProblems.some((problem) => problem.includes("xdg-download-dir")),
-    JSON.stringify(linuxSkipProblems),
-  );
-
   const failedProblems = scenarioOutcomeProblems(
-    successfulScenarios({ "xdg-download-dir": "failed" }),
+    successfulScenarios({ startup: "failed" }),
     "darwin",
   );
   assert.ok(
@@ -70,14 +69,12 @@ test("canonical outcomes allow the Linux-only XDG skip only off Linux", () => {
   );
 
   const missingProblems = scenarioOutcomeProblems(
-    successfulScenarios().filter(
-      (scenario) => scenario.name !== "xdg-download-dir",
-    ),
+    successfulScenarios().filter((scenario) => scenario.name !== "startup"),
     "darwin",
   );
   assert.ok(
     missingProblems.some((problem) =>
-      problem.includes("xdg-download-dir reported 0 times"),
+      problem.includes("startup reported 0 times"),
     ),
     JSON.stringify(missingProblems),
   );
@@ -250,7 +247,7 @@ function hash(value) {
 }
 
 // The verifier resolves the debug binary by the host OS, not the report's platform.
-const hostBinaryName = process.platform === "win32" ? "rosi.exe" : "rosi";
+const hostBinaryName = process.platform === "win32" ? "conv2.exe" : "conv2";
 
 function writeFullE2eFixture(directory, mutate = () => {}) {
   const binaryPath = path.join(
@@ -293,7 +290,7 @@ function writeFullE2eFixture(directory, mutate = () => {}) {
     cargoLockSha256: expected.cargoLockSha256,
   };
   const reportBody = {
-    app: "ROSI",
+    app: "CONV2",
     fullSuite: true,
     ...identity,
     startedAt,
@@ -360,7 +357,7 @@ function writeFullE2eFixture(directory, mutate = () => {}) {
 
 test("full E2E proof checks the canonical suite, successful outcomes, and exact binary", () => {
   const directory = fs.mkdtempSync(
-    path.join(os.tmpdir(), "rosi-full-e2e-proof-"),
+    path.join(os.tmpdir(), "conv2-full-e2e-proof-"),
   );
   try {
     const fixture = writeFullE2eFixture(directory);
@@ -378,7 +375,7 @@ test("full E2E proof checks the canonical suite, successful outcomes, and exact 
         report.scenarios[0].status = "skipped";
       },
       (report) => {
-        report.missingScenarios = ["launch"];
+        report.missingScenarios = ["startup"];
       },
       (report) => {
         report.uncoveredLegacyImportFailureModes = ["missing-case"];

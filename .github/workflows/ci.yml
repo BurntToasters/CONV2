@@ -2,28 +2,37 @@ name: CI
 
 # Pull requests prove candidate changes. Pushes prove the exact post-merge tips
 # of the protected release branches without duplicating every PR branch update.
-# Jobs run tests, not signed release artifacts (never npm run release:*).
+# Jobs run tests and smoke builds, not signed release artifacts (never
+# npm run release:*).
+#
+# The weekly schedule runs only the security and live-feed jobs. Heavy jobs are
+# skipped on schedule, and ci-gate expects exactly that.
+#
+# Real FFmpeg payloads download from FFMPEG_DL_SERVER (repo secret). Without
+# the secret, scripts/ci-ffmpeg.cjs skips the download loudly and the E2E
+# suite runs against the runner's system FFmpeg instead.
 
 on:
   push:
-    branches: [main, beta, "next-*"]
+    branches: [main, beta]
   pull_request:
-    branches: [main, beta, "next-*"]
+    branches: [main, beta]
+  schedule:
+    # Mondays 07:23 UTC.
+    - cron: "23 7 * * 1"
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
 
-# A newer push supersedes the running check, except on main.
-concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
-
 env:
   NODE_VERSION: "26.13.0"
   NPM_VERSION: "12.2.1"
-  # Real FFmpeg payloads download from FFMPEG_DL_SERVER (repo secret). When the
-  # secret is absent, scripts/ci-ffmpeg.cjs skips the download loudly and the
-  # payload checks skip with it; trusted pushes fail hard instead.
+  CARGO_AUDIT_VERSION: "0.22.2"
 
 jobs:
   commit-message-policy:
@@ -37,6 +46,8 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: ${{ env.NODE_VERSION }}
+      - name: Install latest npm 12
+        run: npm install --global npm@${{ env.NPM_VERSION }} --ignore-scripts --min-release-age=3
       - name: Enforce Co-authored-by email policy
         run: node scripts/strip-coauthor-trailers.js --check-range ${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }}
       - name: Enforce stable metadata-only main PR
@@ -51,21 +62,18 @@ jobs:
           ${{ github.event.pull_request.head.sha }}
 
   quality-gate:
+    if: github.event_name != 'schedule'
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-
-      - name: Setup Node.js
-        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: ${{ env.NODE_VERSION }}
-          cache: "npm"
-
-      - name: Upgrade npm
-        run: npm install -g npm@${{ env.NPM_VERSION }}
-
+          cache: npm
+      - name: Install latest npm 12
+        run: npm install --global npm@${{ env.NPM_VERSION }} --ignore-scripts --min-release-age=3
       - name: Read pinned Rust toolchain
         id: rust-toolchain
         shell: bash
@@ -74,61 +82,102 @@ jobs:
           channel="$(node scripts/rust-toolchain.mjs)"
           test -n "$channel"
           echo "channel=$channel" >> "$GITHUB_OUTPUT"
-
       - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
         with:
           toolchain: ${{ steps.rust-toolchain.outputs.channel }}
           components: rustfmt, clippy
-
       - name: Install Linux dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y \
+            appstream \
+            desktop-file-utils \
+            ffmpeg \
             libwebkit2gtk-4.1-dev \
-            libayatana-appindicator3-dev \
+            libappindicator3-dev \
             librsvg2-dev \
-            patchelf
-
-      - name: Install dependencies
-        run: npm ci --ignore-scripts
-
+            patchelf \
+            xvfb
+      - run: npm ci --ignore-scripts
       - name: Validate the bundled FFmpeg payload
         env:
           FFMPEG_DL_SERVER: ${{ secrets.FFMPEG_DL_SERVER }}
         run: node scripts/ci-ffmpeg.cjs
+      - name: Strict Cargo license notices
+        run: npm run licenses:cargo:strict
+      - name: Quality gate
+        env:
+          WEBKIT_DISABLE_COMPOSITING_MODE: "1"
+        run: npm run test:all
+      - name: Upload E2E evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: e2e-ubuntu-24.04
+          path: e2e/artifacts
+          if-no-files-found: warn
+          retention-days: 30
 
-      - name: Prepare Rust test sidecars
-        run: npm run prepare:rust-tests
-
-      - name: Run TypeScript compiler
-        run: npm run typecheck
-
-      - name: Comment lint
-        run: npm run lint
-
-      - name: Check formatting
-        run: npm run format:check
-
-      - name: Run vitest
-        run: npm run test
-
-      - name: Check Rust formatting
-        run: cargo fmt --manifest-path src-tauri/Cargo.toml --check
-
-      - name: Clippy
-        run: cargo clippy --locked --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
-
-      - name: Run Rust tests
-        run: cargo test --locked --manifest-path src-tauri/Cargo.toml --all-targets
-
-      - name: Validate changelog version
-        run: npm run validate:changelog
-
-      - name: Validate no em-dash
-        run: npm run validate:no-em-dash
-
-      - name: Cargo/npm safe-update acceptance
-        run: npm run test:cargo-safe-update
+  rust-check:
+    needs: quality-gate
+    if: ${{ success() && github.event_name != 'schedule' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-26]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - name: Install latest npm 12
+        run: npm install --global npm@${{ env.NPM_VERSION }} --ignore-scripts --min-release-age=3
+      - name: Read pinned Rust toolchain
+        id: rust-toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          channel="$(node scripts/rust-toolchain.mjs)"
+          test -n "$channel"
+          echo "channel=$channel" >> "$GITHUB_OUTPUT"
+      - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
+        with:
+          toolchain: ${{ steps.rust-toolchain.outputs.channel }}
+          components: clippy
+      - run: npm ci --ignore-scripts
+      - run: node scripts/npm-audit-signatures.cjs
+      - run: npm run test:cov
+      - name: Validate the bundled FFmpeg payload
+        env:
+          FFMPEG_DL_SERVER: ${{ secrets.FFMPEG_DL_SERVER }}
+        run: node scripts/ci-ffmpeg.cjs
+      - run: npm run prepare:rust-tests
+      - run: cargo clippy --locked --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
+      - run: cargo test --locked --manifest-path src-tauri/Cargo.toml --all-targets
+      # test:all runs the vendored updater tests on Ubuntu only. Its install
+      # paths differ per OS, so they run here on each host.
+      - name: Vendored updater tests
+        run: cargo test --locked --manifest-path src-tauri/vendor/tauri-plugin-updater/Cargo.toml --lib
+      - name: Install FFmpeg for E2E conversion scenarios
+        shell: bash
+        run: |
+          case "$RUNNER_OS" in
+            Windows) choco install ffmpeg --no-progress -y ;;
+            macOS) brew install ffmpeg ;;
+          esac
+      - run: npm run test:e2e
+      - name: Upload E2E evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: e2e-${{ matrix.os }}
+          path: e2e/artifacts
+          if-no-files-found: warn
+          retention-days: 30
 
   updater-manifest:
     runs-on: ubuntu-24.04
@@ -139,22 +188,145 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: ${{ env.NODE_VERSION }}
-      - name: Upgrade npm
-        run: npm install -g npm@${{ env.NPM_VERSION }}
-      - name: Validate updater manifests
-        run: npm run validate:updater
+      - name: Install latest npm 12
+        run: npm install --global npm@${{ env.NPM_VERSION }} --ignore-scripts --min-release-age=3
+      - run: npm run validate:updater
       # Read-only shape smoke. Exact candidate version is checked after publish
       # by release:verify:published; requiring it here makes version bumps
       # circular because build VMs cannot publish until this CI passes.
       - name: Published updater feed sanity
         run: npm run validate:updater:live
 
+  # Unsigned compile smoke only: not a release. Signed NSIS/DMG/AppImage stay on
+  # build VMs. FFmpeg is not public, so CI compiles against development stubs.
+  smoke-build:
+    needs: quality-gate
+    if: ${{ success() && github.event_name != 'schedule' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            triple: x86_64-unknown-linux-gnu
+            binary: conv2
+          - os: ubuntu-24.04-arm
+            triple: aarch64-unknown-linux-gnu
+            binary: conv2
+          - os: macos-26
+            triple: aarch64-apple-darwin
+            binary: conv2
+          - os: macos-26-intel
+            triple: x86_64-apple-darwin
+            binary: conv2
+          - os: windows-latest
+            triple: x86_64-pc-windows-msvc
+            binary: conv2.exe
+          - os: windows-11-arm
+            triple: aarch64-pc-windows-msvc
+            binary: conv2.exe
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - name: Install latest npm 12
+        run: npm install --global npm@${{ env.NPM_VERSION }} --ignore-scripts --min-release-age=3
+      - name: Read pinned Rust toolchain
+        id: rust-toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          channel="$(node scripts/rust-toolchain.mjs)"
+          test -n "$channel"
+          echo "channel=$channel" >> "$GITHUB_OUTPUT"
+      - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
+        with:
+          toolchain: ${{ steps.rust-toolchain.outputs.channel }}
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libappindicator3-dev \
+            librsvg2-dev \
+            patchelf
+      - run: npm ci --ignore-scripts
+      - run: node scripts/npm-audit-signatures.cjs
+      - run: npm run sync-version
+      - name: Verify synchronized version files are committed
+        run: git diff --exit-code
+      - run: node scripts/prepare-sidecars.js --allow-stub-ffmpeg --target ${{ matrix.triple }}
+      - run: npm run licenses
+      - name: Unsigned tauri build (no bundle)
+        env:
+          CONV2_ALLOW_STUB_SIDECARS: "1"
+        run: npx tauri build --no-bundle
+      - name: Verify host sidecars and smoke binary
+        shell: bash
+        run: |
+          ext=""
+          case "${{ matrix.triple }}" in *windows*) ext=".exe" ;; esac
+          for sidecar in conv2-ffmpeg conv2-ffprobe; do
+            test -e "src-tauri/binaries/${sidecar}-${{ matrix.triple }}${ext}"
+          done
+          test -e "src-tauri/target/release/${{ matrix.binary }}"
+
+  security-audit:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - name: Install latest npm 12
+        run: npm install --global npm@${{ env.NPM_VERSION }} --ignore-scripts --min-release-age=3
+      - name: Read pinned Rust toolchain
+        id: rust-toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          channel="$(node scripts/rust-toolchain.mjs)"
+          test -n "$channel"
+          echo "channel=$channel" >> "$GITHUB_OUTPUT"
+      - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
+        with:
+          toolchain: ${{ steps.rust-toolchain.outputs.channel }}
+      - run: npm ci --ignore-scripts
+      - run: node scripts/npm-audit-signatures.cjs
+      - name: npm audit - production
+        run: npm audit --omit=dev --audit-level=high
+      - name: npm audit - reviewed dev toolchain
+        # Fail only when a moderate-or-higher advisory reaches a non-dev
+        # install node. Proven development-toolchain findings are warnings.
+        run: npm run audit:dev-reviewed
+      - name: RustSec ignore review policy
+        run: npm run check:rustsec-ignore-policy
+      - name: Install cargo-audit
+        run: cargo install cargo-audit --version ${{ env.CARGO_AUDIT_VERSION }} --locked
+      - name: cargo audit
+        working-directory: src-tauri
+        run: cargo audit
+      - name: Vendored tauri-plugin-updater version and advisory check
+        run: node scripts/check-vendored-updater.mjs
+
   ci-gate:
     if: ${{ always() }}
     needs:
       - commit-message-policy
       - quality-gate
+      - rust-check
       - updater-manifest
+      - smoke-build
+      - security-audit
     runs-on: ubuntu-24.04
     steps:
       - name: Require every release check
@@ -162,11 +334,30 @@ jobs:
           EVENT_NAME: ${{ github.event_name }}
           COMMIT_MESSAGE_POLICY: ${{ needs.commit-message-policy.result }}
           QUALITY_GATE: ${{ needs.quality-gate.result }}
+          RUST_CHECK: ${{ needs.rust-check.result }}
           UPDATER_MANIFEST: ${{ needs.updater-manifest.result }}
+          SMOKE_BUILD: ${{ needs.smoke-build.result }}
+          SECURITY_AUDIT: ${{ needs.security-audit.result }}
+          PR_BASE_REF: ${{ github.event.pull_request.base.ref }}
+          RELEASE_PROMOTION_PR: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'main' && startsWith(github.head_ref, 'next-') }}
+          STABLE_METADATA_PR: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'main' && startsWith(github.head_ref, 'release/') }}
         run: |
           set -euo pipefail
-          test "$QUALITY_GATE" = success
           test "$UPDATER_MANIFEST" = success
+          test "$SECURITY_AUDIT" = success
+          if [ "$EVENT_NAME" = schedule ]; then
+            # Scheduled runs cover security and the live feed only.
+            test "$QUALITY_GATE" = skipped
+            test "$RUST_CHECK" = skipped
+            test "$SMOKE_BUILD" = skipped
+            test "$COMMIT_MESSAGE_POLICY" = skipped
+            exit 0
+          fi
+          test "$QUALITY_GATE" = success
+          test "$RUST_CHECK" = success
+          test "$SMOKE_BUILD" = success
+          # Main accepts next-* promotion or tightly scoped stable metadata.
+          test "$PR_BASE_REF" != "main" || test "$RELEASE_PROMOTION_PR" = "true" || test "$STABLE_METADATA_PR" = "true"
           if [ "$EVENT_NAME" = pull_request ]; then
             test "$COMMIT_MESSAGE_POLICY" = success
           else

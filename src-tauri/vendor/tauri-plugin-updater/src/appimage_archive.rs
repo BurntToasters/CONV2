@@ -253,7 +253,7 @@ mod tests {
     fn truncated_candidate_archive(payload: &[u8]) -> Vec<u8> {
         let declared_size = payload.len() as u64 + 512;
         let mut header = Header::new_gnu();
-        header.set_path("ROSI.AppImage").unwrap();
+        header.set_path("CONV2.AppImage").unwrap();
         header.set_entry_type(EntryType::Regular);
         header.set_mode(0o755);
         header.set_size(declared_size);
@@ -267,7 +267,7 @@ mod tests {
 
     fn truncated_tar_end_archive(payload: &[u8]) -> Vec<u8> {
         let mut header = Header::new_gnu();
-        header.set_path("ROSI.AppImage").unwrap();
+        header.set_path("CONV2.AppImage").unwrap();
         header.set_entry_type(EntryType::Regular);
         header.set_mode(0o755);
         header.set_size(payload.len() as u64);
@@ -298,7 +298,7 @@ mod tests {
         let payload =
             super::super::appimage_install::test_fixtures::valid_appimage(2, host_machine(), b'a');
         let valid = archive(&[ArchiveEntry {
-            name: "ROSI.AppImage",
+            name: "CONV2.AppImage",
             kind: EntryType::Regular,
             payload: &payload,
         }]);
@@ -309,7 +309,7 @@ mod tests {
 
         for kind in [EntryType::Directory, EntryType::Symlink, EntryType::Link] {
             let invalid = archive(&[ArchiveEntry {
-                name: "ROSI.AppImage",
+                name: "CONV2.AppImage",
                 kind,
                 payload: &[],
             }]);
@@ -347,7 +347,7 @@ mod tests {
         assert!(extract_with_limits(&truncated, 1 << 20, 2 << 20, 128).is_err());
 
         let mut truncated_gzip = archive(&[ArchiveEntry {
-            name: "ROSI.AppImage",
+            name: "CONV2.AppImage",
             kind: EntryType::Regular,
             payload: &payload,
         }]);

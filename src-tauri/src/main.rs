@@ -25,6 +25,7 @@ mod updater;
 mod validation;
 mod video_pipeline;
 mod window;
+mod window_state;
 
 #[cfg(target_os = "macos")]
 use tauri::Manager;
@@ -76,10 +77,7 @@ fn e2e_emit_stale_conversion_events(
             speed: "1x".to_string(),
         },
     );
-    app_state::emit(
-        "conversion-log",
-        "[e2e] stale conversion event".to_string(),
-    );
+    app_state::emit("conversion-log", "[e2e] stale conversion event".to_string());
     Ok(())
 }
 
@@ -206,6 +204,7 @@ fn main() {
             legacy::import_on_first_launch(app.handle());
             settings::init();
             conversion::init();
+            os_integration::init(app.handle());
             if let Err(error) = app_menu::install(app.handle()) {
                 logging::warn(&format!("Failed to install macOS app menu: {error}"));
             }
@@ -223,6 +222,15 @@ fn main() {
             event: tauri::WindowEvent::CloseRequested { api, .. },
             ..
         } if label == app_state::MAIN_WINDOW => window::on_main_close_requested(app_handle, &api),
+        tauri::RunEvent::WindowEvent {
+            label,
+            event: tauri::WindowEvent::Moved(_) | tauri::WindowEvent::Resized(_),
+            ..
+        } if label == app_state::MAIN_WINDOW => {
+            if let Some(window) = app_state::main_window() {
+                window_state::track(&window);
+            }
+        }
         tauri::RunEvent::WindowEvent {
             label,
             event: tauri::WindowEvent::Destroyed,

@@ -12,10 +12,10 @@
 use crate::fs_util::{self, Sha256Stream};
 use crate::ipc::{self, IpcResult, INTERNAL_ERROR};
 use crate::process_util;
-use crate::types::{FFmpegStatus, FFmpegStatusReason, AppSettings};
+use crate::types::{AppSettings, FFmpegStatus, FFmpegStatusReason};
 use crate::types_ffmpeg::{node_arch, node_platform, ChecksumsManifest};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Condvar, Mutex};
+use std::sync::{Condvar, Mutex};
 use std::time::{Duration, Instant};
 
 pub const FFMPEG_SIDECAR: &str = "conv2-ffmpeg";
@@ -350,11 +350,15 @@ struct AuthenticodeLayout {
 }
 
 fn read_u16_le(bytes: &[u8], at: usize) -> Option<u16> {
-    Some(u16::from_le_bytes(bytes.get(at..at + 2)?.try_into().unwrap()))
+    Some(u16::from_le_bytes(
+        bytes.get(at..at + 2)?.try_into().unwrap(),
+    ))
 }
 
 fn read_u32_le(bytes: &[u8], at: usize) -> Option<u32> {
-    Some(u32::from_le_bytes(bytes.get(at..at + 4)?.try_into().unwrap()))
+    Some(u32::from_le_bytes(
+        bytes.get(at..at + 4)?.try_into().unwrap(),
+    ))
 }
 
 fn pe_data_directories_offset(magic: u16) -> Option<usize> {
@@ -408,10 +412,8 @@ fn read_authenticode_layout(head: &[u8], file_size: u64) -> Option<AuthenticodeL
 /// set to `checksum`.
 fn patched_header(head: &[u8], layout: &AuthenticodeLayout, checksum: u32) -> Vec<u8> {
     let mut patched = head[..layout.patch_end].to_vec();
-    patched[layout.security_entry_at..layout.security_entry_at + PE_DIRECTORY_ENTRY_BYTES]
-        .fill(0);
-    patched[layout.checksum_at..layout.checksum_at + 4]
-        .copy_from_slice(&checksum.to_le_bytes());
+    patched[layout.security_entry_at..layout.security_entry_at + PE_DIRECTORY_ENTRY_BYTES].fill(0);
+    patched[layout.checksum_at..layout.checksum_at + 4].copy_from_slice(&checksum.to_le_bytes());
     patched
 }
 
@@ -713,7 +715,11 @@ fn fail(plan: &StatusPlan, reason: FFmpegStatusReason) -> FFmpegStatus {
 }
 
 fn compute_status(plan: &StatusPlan) -> FFmpegStatus {
-    if plan.binaries.iter().any(|binary| is_missing_binary(plan, binary)) {
+    if plan
+        .binaries
+        .iter()
+        .any(|binary| is_missing_binary(plan, binary))
+    {
         return fail(plan, FFmpegStatusReason::Missing);
     }
     if plan.using_bundled {
@@ -725,7 +731,9 @@ fn compute_status(plan: &StatusPlan) -> FFmpegStatus {
             .map(|binary| {
                 let binary = binary.clone();
                 let manifest = manifest.clone();
-                std::thread::spawn(move || verify_bundled_binary(&binary, manifest.as_deref(), packaged))
+                std::thread::spawn(move || {
+                    verify_bundled_binary(&binary, manifest.as_deref(), packaged)
+                })
             })
             .collect();
         let verified = probes
@@ -743,7 +751,10 @@ fn compute_status(plan: &StatusPlan) -> FFmpegStatus {
             std::thread::spawn(move || run_version_check(&effective))
         })
         .collect();
-    let states: Vec<_> = probes.into_iter().filter_map(|probe| probe.join().ok()).collect();
+    let states: Vec<_> = probes
+        .into_iter()
+        .filter_map(|probe| probe.join().ok())
+        .collect();
     if states.contains(&BinaryRunState::Missing) {
         return fail(plan, FFmpegStatusReason::Missing);
     }
@@ -802,14 +813,12 @@ pub fn current_status() -> FFmpegStatus {
     drop(guard);
 
     // A panic while hashing or spawning must not leave the gate Busy forever.
-    let status = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        compute_status(&plan)
-    }))
-    .unwrap_or_else(|_| FFmpegStatus {
-        ok: false,
-        reason: FFmpegStatusReason::NotRunnable,
-        using_bundled: plan.using_bundled,
-    });
+    let status = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| compute_status(&plan)))
+        .unwrap_or(FFmpegStatus {
+            ok: false,
+            reason: FFmpegStatusReason::NotRunnable,
+            using_bundled: plan.using_bundled,
+        });
 
     let mut guard = STATUS_GATE
         .lock()
@@ -848,7 +857,9 @@ mod tests {
     use crate::types_ffmpeg::test_support;
 
     fn temp_dir(name: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join("conv2-ffmpeg-status-test").join(name);
+        let dir = std::env::temp_dir()
+            .join("conv2-ffmpeg-status-test")
+            .join(name);
         std::fs::create_dir_all(&dir).unwrap();
         dir
     }
@@ -894,7 +905,10 @@ mod tests {
             expected_checksum(&parsed, "win:x64", BinaryName::Ffprobe).as_deref(),
             Some("def456")
         );
-        assert_eq!(expected_checksum(&parsed, "mac:x64", BinaryName::Ffmpeg), None);
+        assert_eq!(
+            expected_checksum(&parsed, "mac:x64", BinaryName::Ffmpeg),
+            None
+        );
     }
 
     #[test]
@@ -942,7 +956,10 @@ mod tests {
     #[test]
     #[cfg(unix)]
     fn version_check_classifies_spawn_results() {
-        assert_eq!(run_version_check(Path::new("/usr/bin/true")), BinaryRunState::Ok);
+        assert_eq!(
+            run_version_check(Path::new("/usr/bin/true")),
+            BinaryRunState::Ok
+        );
         assert_eq!(
             run_version_check(Path::new("/usr/bin/false")),
             BinaryRunState::NotRunnable
@@ -1084,7 +1101,9 @@ mod tests {
         let arm64_digest = fs_util::sha256_file(&standalone).unwrap();
         let manifest = write_manifest(
             &dir,
-            &format!(r#"{{"mac:arm64":{{"binaries":{{"ffmpeg":{{"sha256":"{arm64_digest}"}}}}}}}}"#),
+            &format!(
+                r#"{{"mac:arm64":{{"binaries":{{"ffmpeg":{{"sha256":"{arm64_digest}"}}}}}}}}"#
+            ),
         );
         assert!(verify_bundled_binary_checksum(
             &path,
@@ -1116,10 +1135,8 @@ mod tests {
         head[pe_at..pe_at + 4].copy_from_slice(&0x0000_4550u32.to_le_bytes());
         let optional_at = pe_at + 24;
         head[optional_at..optional_at + 2].copy_from_slice(&0x10b_u16.to_le_bytes());
-        head[optional_at + 92..optional_at + 96]
-            .copy_from_slice(&5u32.to_le_bytes()); // NumberOfRvaAndSizes > 4
-        head[optional_at + 60..optional_at + 64]
-            .copy_from_slice(&0x80u32.to_le_bytes()); // SizeOfHeaders
+        head[optional_at + 92..optional_at + 96].copy_from_slice(&5u32.to_le_bytes()); // NumberOfRvaAndSizes > 4
+        head[optional_at + 60..optional_at + 64].copy_from_slice(&0x80u32.to_le_bytes()); // SizeOfHeaders
         let data_dirs_at = optional_at + 96;
         let security_at = data_dirs_at + PE_SECURITY_DIRECTORY_INDEX * PE_DIRECTORY_ENTRY_BYTES;
         let cert_offset = 512 + 64 + pad_bytes;
@@ -1128,9 +1145,9 @@ mod tests {
         head[security_at + 4..security_at + 8].copy_from_slice(&cert_size.to_le_bytes());
 
         let mut file = head;
-        file.extend(std::iter::repeat(0x41u8).take(64)); // body after patch_end
-        file.extend(std::iter::repeat(0u8).take(pad_bytes)); // signtool zero pad
-        file.extend(std::iter::repeat(0xCCu8).take(cert_size as usize)); // cert blob
+        file.extend(std::iter::repeat_n(0x41u8, 64)); // body after patch_end
+        file.extend(std::iter::repeat_n(0u8, pad_bytes)); // signtool zero pad
+        file.extend(std::iter::repeat_n(0xCCu8, cert_size as usize)); // cert blob
         let path = dir.join("signed.exe");
         std::fs::write(&path, file).unwrap();
         path
@@ -1141,7 +1158,9 @@ mod tests {
         let dir = temp_dir("authenticode");
         let path = synthetic_signed_pe(&dir, 4);
         let mut reader = RangeReader::open(&path).unwrap();
-        let head = reader.read_at(0, reader.size.min(PE_HEADER_READ_BYTES)).unwrap();
+        let head = reader
+            .read_at(0, reader.size.min(PE_HEADER_READ_BYTES))
+            .unwrap();
         let layout = read_authenticode_layout(&head, reader.size).unwrap();
         assert_eq!(layout.cert_offset, 512 + 64 + 4);
         assert_eq!(layout.cert_offset + 48, reader.size);
@@ -1152,7 +1171,9 @@ mod tests {
         bytes.push(0);
         std::fs::write(&appended, bytes).unwrap();
         let mut reader = RangeReader::open(&appended).unwrap();
-        let head = reader.read_at(0, reader.size.min(PE_HEADER_READ_BYTES)).unwrap();
+        let head = reader
+            .read_at(0, reader.size.min(PE_HEADER_READ_BYTES))
+            .unwrap();
         assert!(read_authenticode_layout(&head, reader.size).is_none());
     }
 
@@ -1197,10 +1218,7 @@ mod tests {
                 source: None,
             }],
         };
-        assert_eq!(
-            compute_status(&plan).reason,
-            FFmpegStatusReason::Missing
-        );
+        assert_eq!(compute_status(&plan).reason, FFmpegStatusReason::Missing);
 
         // System binaries that run: ok without verification.
         let plan = StatusPlan {

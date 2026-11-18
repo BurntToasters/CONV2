@@ -6,7 +6,7 @@
 
 use crate::constants::MAX_ERROR_BUFFER;
 use crate::ffmpeg_status;
-use crate::ipc::{self, FalliblePayload, IpcResult, INVALID_PATH, INTERNAL_ERROR};
+use crate::ipc::{self, FalliblePayload, IpcResult, INTERNAL_ERROR, INVALID_PATH};
 use crate::process_util::{TrackedError, TrackedReservation, TrackedSlot};
 use crate::types::VideoInfo;
 use serde_json::{Map, Value};
@@ -83,8 +83,7 @@ fn parse_float_leading(value: &Value) -> f64 {
     let trimmed = text.trim_start();
     let end = trimmed
         .find(|character: char| {
-            !(character.is_ascii_digit()
-                || matches!(character, '.' | 'e' | 'E' | '+' | '-'))
+            !(character.is_ascii_digit() || matches!(character, '.' | 'e' | 'E' | '+' | '-'))
         })
         .unwrap_or(trimmed.len());
     let candidate = &trimmed[..end];
@@ -123,13 +122,22 @@ pub fn parse_video_info(json: &str) -> Option<VideoInfo> {
         Some(Value::Array(streams)) => streams.as_slice(),
         Some(_) => return None,
     };
-    let video_stream = streams.iter().find(|stream| stream_codec_type(stream) == Some("video"));
-    let audio_stream = streams.iter().find(|stream| stream_codec_type(stream) == Some("audio"));
+    let video_stream = streams
+        .iter()
+        .find(|stream| stream_codec_type(stream) == Some("video"));
+    let audio_stream = streams
+        .iter()
+        .find(|stream| stream_codec_type(stream) == Some("audio"));
     let video = video_stream.and_then(Value::as_object);
     let duration = data
         .get("format")
         .and_then(Value::as_object)
-        .map(|object| object.get("duration").map(parse_float_leading).unwrap_or(0.0))
+        .map(|object| {
+            object
+                .get("duration")
+                .map(parse_float_leading)
+                .unwrap_or(0.0)
+        })
         .unwrap_or(0.0);
     let format_name = data
         .get("format")
@@ -287,7 +295,7 @@ pub(crate) fn probe_duration_for_conversion(path: &str) -> Result<f64, ProbeErro
     ]
     .map(str::to_string)
     .to_vec();
-    let command = crate::process_util::command(&ffmpeg_status::bundled_ffprobe(), &args, &[], true);
+    let command = crate::process_util::command(ffmpeg_status::bundled_ffprobe(), &args, &[], true);
     match CONVERSION_PROBE.run_reserved_with(
         reservation,
         command,
@@ -459,10 +467,9 @@ mod tests {
     #[test]
     fn parse_handles_js_number_semantics() {
         // parseInt stops at the first non-digit; parseFloat reads the prefix.
-        let info = parse_video_info(
-            r#"{"format":{"duration":"2.5e1 seconds","size":"8044 bytes"}}"#,
-        )
-        .unwrap();
+        let info =
+            parse_video_info(r#"{"format":{"duration":"2.5e1 seconds","size":"8044 bytes"}}"#)
+                .unwrap();
         assert_eq!(info.duration, 25.0);
         assert_eq!(info.size, 8044);
         let info = parse_video_info(r#"{"format":{"size":"bad"}}"#).unwrap();
@@ -499,7 +506,7 @@ mod tests {
         file.extend_from_slice(&8u16.to_le_bytes());
         file.extend_from_slice(b"data");
         file.extend_from_slice(&samples.to_le_bytes());
-        file.extend(std::iter::repeat(0u8).take(samples as usize));
+        file.extend(std::iter::repeat_n(0u8, samples as usize));
         std::fs::write(path, file).unwrap();
     }
 

@@ -8,10 +8,10 @@ import { ARTIFACT_DIR, gitCommit } from "./common.js";
 import { buildCoreRunPlan, coreArtifactPaths, createE2eRunId } from "./core.js";
 import { EXPECTED_SCENARIOS } from "./manifest.js";
 
-/** `--repeat N` (or ROSI_E2E_REPEAT=N) reruns the whole suite N times. */
+/** `--repeat N` (or CONV2_E2E_REPEAT=N) reruns the whole suite N times. */
 export function parseRepeat(argv, env = process.env) {
   const index = argv.indexOf("--repeat");
-  const raw = index >= 0 ? argv[index + 1] : env.ROSI_E2E_REPEAT;
+  const raw = index >= 0 ? argv[index + 1] : env.CONV2_E2E_REPEAT;
   if (raw === undefined) return 1;
   const times = Number(raw);
   if (!Number.isInteger(times) || times < 1 || times > 100) {
@@ -93,15 +93,15 @@ export async function runStability(times, runGate, { profile = null } = {}) {
   if (!corePaths) fs.rmSync(runDir, { recursive: true, force: true });
   fs.mkdirSync(runDir, { recursive: true });
   const runs = [];
-  const previousRunId = process.env.ROSI_E2E_RUN_ID;
-  const previousReuse = process.env.ROSI_E2E_REUSE;
+  const previousRunId = process.env.CONV2_E2E_RUN_ID;
+  const previousReuse = process.env.CONV2_E2E_REUSE;
   for (let run = 1; run <= times; run += 1) {
     console.log(`\n=== E2E stability run ${run}/${times} ===`);
     // Later runs request reuse, but the build policy honors it only for an
-    // explicit fresh ROSI_E2E_ONLY spec; full and core runs rebuild incrementally.
-    if (run > 1) process.env.ROSI_E2E_REUSE = "1";
+    // explicit fresh CONV2_E2E_ONLY spec; full and core runs rebuild incrementally.
+    if (run > 1) process.env.CONV2_E2E_REUSE = "1";
     const runId = createE2eRunId();
-    process.env.ROSI_E2E_RUN_ID = runId;
+    process.env.CONV2_E2E_RUN_ID = runId;
     let error = null;
     try {
       await runGate();
@@ -143,12 +143,12 @@ export async function runStability(times, runGate, { profile = null } = {}) {
           : EXPECTED_SCENARIOS),
     });
   }
-  if (previousRunId === undefined) delete process.env.ROSI_E2E_RUN_ID;
-  else process.env.ROSI_E2E_RUN_ID = previousRunId;
-  if (previousReuse === undefined) delete process.env.ROSI_E2E_REUSE;
-  else process.env.ROSI_E2E_REUSE = previousReuse;
+  if (previousRunId === undefined) delete process.env.CONV2_E2E_RUN_ID;
+  else process.env.CONV2_E2E_RUN_ID = previousRunId;
+  if (previousReuse === undefined) delete process.env.CONV2_E2E_REUSE;
+  else process.env.CONV2_E2E_REUSE = previousReuse;
   const summary = {
-    app: "ROSI",
+    app: "CONV2",
     ...(profile ? { profile } : {}),
     platform: process.platform,
     arch: process.arch,

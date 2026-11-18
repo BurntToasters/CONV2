@@ -1,11 +1,10 @@
 #!/usr/bin/env node
 // End-to-end check of the compact macOS updater path, failure modes in
-// e2e/updater-zst.failure-modes.md. It runs the real packer, Tauri signer,
-// manifest generator and validator, the vendored plugin's extractor, and the
-// 5.0.2 renderer's updater.ts (from git) against real release archives, then writes
-// e2e/artifacts/updater-zst-report.json.
+// scripts/e2e-updater-zst.failure-modes.md. It runs the real packer, Tauri signer,
+// manifest generator and validator, the vendored plugin's extractor against the
+// archives it produces, then writes e2e/artifacts/updater-zst-report.json.
 //
-// Inputs: per-arch `ROSI.app.tar.gz` from `tauri build --target
+// Inputs: per-arch `CONV2.app.tar.gz` from `tauri build --target
 // {aarch64,x86_64}-apple-darwin --bundles app` when present. Otherwise they are
 // derived from the universal archive and the prepared per-arch sidecars (the
 // bundle signature is then invalid, which this check does not depend on).
@@ -15,9 +14,7 @@ import assert from "assert/strict";
 import fs from "fs";
 import os from "os";
 import path from "path";
-import vm from "vm";
 import { spawnSync } from "child_process";
-import { createRequire } from "module";
 import { fileURLToPath } from "url";
 import {
   ARCHES,
@@ -31,7 +28,6 @@ import {
 } from "./gpg-sign.js";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const require = createRequire(import.meta.url);
 const reportPath = path.join(
   root,
   "e2e",
@@ -40,7 +36,7 @@ const reportPath = path.join(
 );
 const universalArchive = path.join(
   root,
-  "src-tauri/target/universal-apple-darwin/release/bundle/macos/ROSI.app.tar.gz",
+  "src-tauri/target/universal-apple-darwin/release/bundle/macos/CONV2.app.tar.gz",
 );
 const version = JSON.parse(
   fs.readFileSync(path.join(root, "package.json"), "utf8"),
@@ -90,7 +86,7 @@ async function scenario(id, title, body) {
 
 /**
  * Per-arch input archive: the real Tauri build when present. Otherwise the
- * universal bundle with `rosi` thinned and the per-arch sidecars Tauri would
+ * universal bundle with `conv2` thinned and the per-arch sidecars Tauri would
  * bundle (src-tauri/binaries) swapped in.
  */
 function perArchInput(arch, scratch) {
@@ -100,8 +96,8 @@ function perArchInput(arch, scratch) {
   const extractRoot = path.join(scratch, `per-arch-${arch}`);
   fs.mkdirSync(extractRoot, { recursive: true });
   run("tar", ["-xzf", universalArchive, "-C", extractRoot]);
-  const macos = path.join(extractRoot, "ROSI.app/Contents/MacOS");
-  const main = path.join(macos, "rosi");
+  const macos = path.join(extractRoot, "CONV2.app/Contents/MacOS");
+  const main = path.join(macos, "conv2");
   run("lipo", [
     main,
     "-thin",
@@ -110,7 +106,7 @@ function perArchInput(arch, scratch) {
     `${main}.thin`,
   ]);
   fs.renameSync(`${main}.thin`, main);
-  for (const sidecar of ["rosi-yt-dlp", "rosi-ffmpeg", "rosi-ffprobe"]) {
+  for (const sidecar of ["conv2-ffmpeg", "conv2-ffprobe"]) {
     fs.copyFileSync(
       path.join(
         root,
@@ -120,7 +116,7 @@ function perArchInput(arch, scratch) {
       path.join(macos, sidecar),
     );
   }
-  const output = path.join(scratch, `ROSI-${arch}-input.app.tar.gz`);
+  const output = path.join(scratch, `CONV2-${arch}-input.app.tar.gz`);
   run(
     "tar",
     [
@@ -130,7 +126,7 @@ function perArchInput(arch, scratch) {
       output,
       "-C",
       extractRoot,
-      "ROSI.app",
+      "CONV2.app",
     ],
     {
       env: { ...process.env, COPYFILE_DISABLE: "1" },
@@ -172,97 +168,6 @@ function resolveFeed(manifests, target) {
   return null;
 }
 
-/**
- * Runs an old renderer's updater.ts (from git) against a scripted feed; returns
- * the targets it checked and the warnings it logged. Since 5.1 the current
- * target selection is Rust and is covered by the updater-engine E2E area.
- */
-async function runRendererCheck({
-  channel,
-  compactTarget,
-  betaTarget = "darwin-beta-aarch64-app",
-  feed,
-  installedVersion = "5.1.0",
-  sourceText,
-}) {
-  const ts = require(path.join(root, "node_modules/typescript"));
-  const source = sourceText.replaceAll("import.meta.env.VITE_ROSI_E2E", "'1'");
-  const js = ts.transpileModule(source, {
-    compilerOptions: {
-      target: ts.ScriptTarget.ES2020,
-      module: ts.ModuleKind.CommonJS,
-    },
-  }).outputText;
-  const checks = [];
-  const compactArgs = [];
-  const warnings = [];
-  const statuses = [];
-  const window = {
-    __ROSI_E2E__: {
-      updaterAdapter: {
-        invoke: async (command, args) => {
-          if (command === "get_compact_updater_target") {
-            compactArgs.push(args ?? null);
-            return typeof compactTarget === "function"
-              ? compactTarget(args)
-              : compactTarget;
-          }
-          return {
-            is_packaged: true,
-            is_flatpak: false,
-            get_settings: { updateChannel: channel },
-            get_beta_updater_target: betaTarget,
-          }[command];
-        },
-        check: async (target) => {
-          checks.push(target ?? null);
-          const result = feed(target ?? null);
-          if (result instanceof Error) throw result;
-          if (!result) return null;
-          return {
-            version: result,
-            body: "",
-            rawJson: {},
-            download: async () => {},
-            install: async () => {},
-            close: async () => {},
-          };
-        },
-      },
-    },
-  };
-  const exports = {};
-  vm.runInNewContext(js, {
-    exports,
-    require: (id) =>
-      id.includes("/app")
-        ? { getVersion: async () => installedVersion }
-        : { invoke: () => {}, check: () => {} },
-    window,
-    console: {
-      error: console.error,
-      warn: (...args) => warnings.push(args.join(" ")),
-    },
-    Date,
-    Set,
-    Object,
-    Error,
-    Promise,
-    setTimeout,
-    clearTimeout,
-  });
-  exports.onUpdaterStatus((event) => statuses.push(event));
-  const error = await exports.checkForUpdates();
-  return {
-    checks,
-    compactArgs,
-    warnings,
-    error,
-    available:
-      statuses.find((event) => event.status === "available")?.version ?? null,
-  };
-}
-
 async function main() {
   if (process.platform !== "darwin")
     throw new Error("e2e-updater-zst runs on macOS only.");
@@ -272,7 +177,7 @@ async function main() {
     );
   }
   const scratch = fs.mkdtempSync(
-    path.join(os.tmpdir(), "rosi-e2e-updater-zst-"),
+    path.join(os.tmpdir(), "conv2-e2e-updater-zst-"),
   );
   const releaseDir = path.join(scratch, "release");
   fs.mkdirSync(releaseDir);
@@ -363,10 +268,10 @@ async function main() {
         tauriCli(["signer", "generate", "--ci", "-p", "", "-w", keyPath]);
         fs.copyFileSync(
           universalArchive,
-          path.join(releaseDir, "ROSI.app.tar.gz"),
+          path.join(releaseDir, "CONV2.app.tar.gz"),
         );
         for (const name of [
-          "ROSI.app.tar.gz",
+          "CONV2.app.tar.gz",
           ...Object.keys(ARCHES).map((arch) =>
             path.basename(packed[arch].output),
           ),
@@ -413,7 +318,7 @@ async function main() {
             assert.deepEqual(Object.keys(manifest.platforms), [key]);
             assert.match(
               manifest.platforms[key].url,
-              new RegExp(`/ROSI-${arch}\\.app\\.tar\\.zst$`),
+              new RegExp(`/CONV2-${arch}\\.app\\.tar\\.zst$`),
             );
           }
         }
@@ -428,7 +333,7 @@ async function main() {
         for (const arch of Object.keys(ARCHES)) {
           const generic = manifests[`latest-darwin-${arch}.json`].platforms;
           for (const key of [`darwin-${arch}`, `darwin-${arch}-app`]) {
-            assert.match(generic[key].url, /\/ROSI\.app\.tar\.gz$/, key);
+            assert.match(generic[key].url, /\/CONV2\.app\.tar\.gz$/, key);
           }
           for (const betaKey of [
             `darwin-beta-${arch}`,
@@ -437,7 +342,7 @@ async function main() {
             const betaPlatforms = manifests[`latest-${betaKey}.json`].platforms;
             assert.match(
               betaPlatforms[betaKey].url,
-              /\/ROSI\.app\.tar\.gz$/,
+              /\/CONV2\.app\.tar\.gz$/,
               betaKey,
             );
           }
@@ -447,7 +352,7 @@ async function main() {
 
     await scenario(
       "Z04.1",
-      "per-arch arch-less ROSI.app.tar.gz is never collected",
+      "per-arch arch-less CONV2.app.tar.gz is never collected",
       () => {
         const target = path.join(root, "src-tauri/target");
         for (const arch of Object.keys(ARCHES)) {
@@ -456,16 +361,16 @@ async function main() {
             `${ARCHES[arch].rustTarget}/release/bundle/macos`,
           );
           assert.equal(
-            isPerArchTauriAppArchive(path.join(dir, "ROSI.app.tar.gz")),
+            isPerArchTauriAppArchive(path.join(dir, "CONV2.app.tar.gz")),
             true,
           );
           assert.equal(
-            isPerArchTauriAppArchive(path.join(dir, "ROSI.app.tar.gz.sig")),
+            isPerArchTauriAppArchive(path.join(dir, "CONV2.app.tar.gz.sig")),
             true,
           );
           assert.equal(
             isPerArchTauriAppArchive(
-              path.join(dir, `ROSI-${arch}.app.tar.zst`),
+              path.join(dir, `CONV2-${arch}.app.tar.zst`),
             ),
             false,
           );
@@ -500,13 +405,13 @@ async function main() {
             cwd: root,
             env: {
               ...process.env,
-              ROSI_UPDATER_ZST_E2E_ARCHIVES: archives.join(":"),
+              CONV2_UPDATER_ZST_E2E_ARCHIVES: archives.join(":"),
             },
           },
         );
         const matches = [
           ...output.matchAll(
-            /ROSI_UPDATER_ZST_E2E (\S+) extract_ms=(\d+) aarch64=(true|false) x86_64=(true|false) rosetta=(true|false)/g,
+            /CONV2_UPDATER_ZST_E2E (\S+) extract_ms=(\d+) aarch64=(true|false) x86_64=(true|false) rosetta=(true|false)/g,
           ),
         ];
         const extractMs = Object.fromEntries(
@@ -533,17 +438,17 @@ async function main() {
       "Z02.4",
       "vendored updater rejects staged wrong-arch bundles and accepts host/Rosetta bundles",
       () => {
-        assert.deepEqual(archMatrix["ROSI.app.tar.gz"], {
+        assert.deepEqual(archMatrix["CONV2.app.tar.gz"], {
           aarch64: true,
           x86_64: true,
           rosetta: true,
         });
-        assert.deepEqual(archMatrix["ROSI-aarch64.app.tar.zst"], {
+        assert.deepEqual(archMatrix["CONV2-aarch64.app.tar.zst"], {
           aarch64: true,
           x86_64: false,
           rosetta: true,
         });
-        assert.deepEqual(archMatrix["ROSI-x86_64.app.tar.zst"], {
+        assert.deepEqual(archMatrix["CONV2-x86_64.app.tar.zst"], {
           aarch64: false,
           x86_64: true,
           rosetta: true,
@@ -559,7 +464,7 @@ async function main() {
         // Target routing moved to the Rust engine and is covered by the
         // updater-engine E2E area (updater-engine-compact-routing). This keeps
         // the parts that need real archives and hardware.
-        assert.equal(archMatrix["ROSI-aarch64.app.tar.zst"]?.rosetta, true);
+        assert.equal(archMatrix["CONV2-aarch64.app.tar.zst"]?.rosetta, true);
         let rosettaSysctl = "skipped";
         if (os.arch() === "arm64") {
           const probe = spawnSync(
@@ -573,56 +478,9 @@ async function main() {
           }
         }
         return {
-          rosettaMachOAccepted: archMatrix["ROSI-aarch64.app.tar.zst"]?.rosetta,
+          rosettaMachOAccepted:
+            archMatrix["CONV2-aarch64.app.tar.zst"]?.rosetta,
           rosettaSysctl,
-        };
-      },
-    );
-
-    await scenario(
-      "Z03.5",
-      "clients on 5.0.x never request the compact key",
-      async () => {
-        // The real 5.0.2 renderer. Its command would answer with a compact key,
-        // and the 5.0.2 renderer must still never ask for one.
-        const sourceText = run("git", ["show", "v5.0.2:src/updater.ts"], {
-          cwd: root,
-        });
-        const stable = await runRendererCheck({
-          channel: "auto",
-          compactTarget: "darwin-aarch64-app-zst",
-          installedVersion: "5.0.2",
-          sourceText,
-          feed: (target) => (resolveFeed(manifests, target) ? "9.0.0" : null),
-        });
-        assert.deepEqual(stable.compactArgs, []);
-        assert.ok(stable.checks.every((target) => target === null));
-        assert.equal(stable.available, "9.0.0");
-        const stableFeed = resolveFeed(manifests, null);
-        assert.equal(stableFeed?.manifest, "latest-darwin-aarch64.json");
-        assert.equal(stableFeed?.key, "darwin-aarch64-app");
-        assert.match(stableFeed?.url ?? "", /\/ROSI\.app\.tar\.gz$/);
-
-        const beta = await runRendererCheck({
-          channel: "auto",
-          compactTarget: "darwin-beta-aarch64-app-zst",
-          installedVersion: "5.0.2-beta.1",
-          sourceText,
-          feed: (target) =>
-            resolveFeed(manifests, target) ? "9.0.0-beta.1" : null,
-        });
-        assert.deepEqual(beta.compactArgs, []);
-        assert.ok(
-          beta.checks.every((target) => target === "darwin-beta-aarch64-app"),
-        );
-        assert.equal(beta.available, "9.0.0-beta.1");
-        const betaFeed = resolveFeed(manifests, "darwin-beta-aarch64-app");
-        assert.equal(betaFeed?.manifest, "latest-darwin-beta-aarch64-app.json");
-        assert.equal(betaFeed?.key, "darwin-beta-aarch64-app");
-        assert.match(betaFeed?.url ?? "", /\/ROSI\.app\.tar\.gz$/);
-        return {
-          stable: { checks: stable.checks, feed: stableFeed },
-          beta: { checks: beta.checks, feed: betaFeed },
         };
       },
     );

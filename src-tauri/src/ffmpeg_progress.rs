@@ -128,7 +128,12 @@ pub fn parse_progress(line: &str, total_duration: f64) -> Option<ConversionProgr
 /// `HH:MM:SS`, as v1's formatTime produced for `-progress` updates.
 pub fn format_time(seconds: f64) -> String {
     let total = seconds.max(0.0) as u64;
-    format!("{:02}:{:02}:{:02}", total / 3600, (total % 3600) / 60, total % 60)
+    format!(
+        "{:02}:{:02}:{:02}",
+        total / 3600,
+        (total % 3600) / 60,
+        total % 60
+    )
 }
 
 #[cfg(test)]
@@ -137,7 +142,10 @@ mod tests {
 
     #[test]
     fn out_time_uses_microseconds_and_clamps() {
-        assert_eq!(parse_out_time_ms("out_time_ms=5000000", 10.0), Some((50.0, 5.0)));
+        assert_eq!(
+            parse_out_time_ms("out_time_ms=5000000", 10.0),
+            Some((50.0, 5.0))
+        );
         assert_eq!(
             parse_out_time_ms("out_time_ms=99999999", 10.0),
             Some((100.0, 99.999999))
@@ -145,7 +153,10 @@ mod tests {
         assert_eq!(parse_out_time_ms("out_time_us=1", 10.0), None);
         assert_eq!(parse_out_time_ms("out_time_ms=-1", 10.0), None);
         assert_eq!(parse_out_time_ms("out_time_ms=abc", 10.0), None);
-        assert_eq!(parse_out_time_ms("out_time_ms=1000000", 0.0), Some((0.0, 1.0)));
+        assert_eq!(
+            parse_out_time_ms("out_time_ms=1000000", 0.0),
+            Some((0.0, 1.0))
+        );
     }
 
     #[test]

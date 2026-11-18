@@ -113,6 +113,8 @@ pub struct IpcError {
 
 pub const VALIDATION_ERROR: &str = "VALIDATION_ERROR";
 pub const INVALID_PATH: &str = "INVALID_PATH";
+/// Part of the IPC error-code contract in the generated TypeScript union.
+#[allow(dead_code)]
 pub const NOT_AVAILABLE: &str = "NOT_AVAILABLE";
 /// Reserved for the real command implementations (spawn and IO failures).
 #[allow(dead_code)]

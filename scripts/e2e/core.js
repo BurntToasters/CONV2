@@ -45,11 +45,11 @@ export function parseE2eProfile(
   const hasGroupArgument = argv.some(
     (argument) => argument === "--group" || argument.startsWith("--group="),
   );
-  const hasGroupEnvironment = (env.ROSI_E2E_GROUPS ?? "").trim() !== "";
-  const hasOnlySpec = (env.ROSI_E2E_ONLY ?? "").trim() !== "";
+  const hasGroupEnvironment = (env.CONV2_E2E_GROUPS ?? "").trim() !== "";
+  const hasOnlySpec = (env.CONV2_E2E_ONLY ?? "").trim() !== "";
   if (hasGroupArgument || hasGroupEnvironment || hasOnlySpec) {
     throw new Error(
-      `E2E profile ${profile} cannot be combined with --group, ROSI_E2E_GROUPS, or ROSI_E2E_ONLY`,
+      `E2E profile ${profile} cannot be combined with --group, CONV2_E2E_GROUPS, or CONV2_E2E_ONLY`,
     );
   }
   return profile;
@@ -139,7 +139,7 @@ export function buildCoreRunPlan(manifest = E2E_SUITE_MANIFEST) {
     mainScenarioIds,
     mainMochaTitles: mainScenarioIds.map((scenario) => ({
       scenario,
-      title: `ROSI main window ${profile.mainMochaTitles[scenario]}`,
+      title: `CONV2 main window ${profile.mainMochaTitles[scenario]}`,
     })),
     expectedScenarios,
     enabledOwners,

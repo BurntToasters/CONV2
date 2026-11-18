@@ -4,14 +4,6 @@
 
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
-use std::path::PathBuf;
-
-// Shared file-service helpers (SHA-256 digests, crash-safe writes) live in
-// fs_util.rs, whose crate-root `mod fs_util;` declaration belongs to the
-// conversion port's main.rs edits. This path alias makes the same file
-// reachable now; a later root declaration compiles it again harmlessly.
-#[path = "fs_util.rs"]
-pub(crate) mod fs_util;
 
 /// `resources/ffmpeg/checksums.json`: per-target digests of the bundled
 /// FFmpeg tools, keyed `"<os>:<arch>"` (v1 ffmpegIntegrity.ts). Binary names
@@ -73,8 +65,8 @@ pub fn node_arch() -> &'static str {
 /// FFmpeg must skip when `stub` is true (build.rs enforces the same rule).
 #[cfg(test)]
 pub(crate) mod test_support {
-    use super::*;
     use serde_json::Value;
+    use std::path::PathBuf;
 
     /// Host target triple as scripts/prepare-sidecars.js names sidecars.
     pub fn host_triple() -> Option<String> {
@@ -141,7 +133,9 @@ mod tests {
             Some("abc")
         );
         assert_eq!(
-            manifest.0["mac:arm64"].binaries["ffprobe"].sha256.as_deref(),
+            manifest.0["mac:arm64"].binaries["ffprobe"]
+                .sha256
+                .as_deref(),
             Some("def")
         );
         // Unknown keys elsewhere are ignored.

@@ -1167,8 +1167,8 @@ const setGifControlValues = (gif: GifAdvancedSettings): void => {
     const tierInputs = gifTierInputs[tier];
     const tierSettings = gif.tiers[tier];
     tierInputs.fps.value = String(tierSettings.fps);
-    tierInputs.maxDimension.value = String(tierSettings.max_dimension);
-    tierInputs.maxColors.value = String(tierSettings.max_colors);
+    tierInputs.maxDimension.value = String(tierSettings.maxDimension);
+    tierInputs.maxColors.value = String(tierSettings.maxColors);
     tierInputs.dither.value = tierSettings.dither;
   });
 };
@@ -1179,7 +1179,7 @@ const setWebpControlValues = (webp: WebpAdvancedSettings): void => {
     const tierInputs = webpTierInputs[tier];
     const tierSettings = webp.tiers[tier];
     tierInputs.fps.value = String(tierSettings.fps);
-    tierInputs.maxDimension.value = String(tierSettings.max_dimension);
+    tierInputs.maxDimension.value = String(tierSettings.maxDimension);
     tierInputs.quality.value = String(tierSettings.quality);
   });
 };
@@ -1189,8 +1189,8 @@ const setAv1ControlValues = (av1: Av1AdvancedSettings): void => {
     const tierInputs = av1TierInputs[tier];
     const tierSettings = av1.tiers[tier];
     tierInputs.quality.value = String(tierSettings.quality);
-    tierInputs.cpuPreset.value = String(tierSettings.cpu_preset);
-    tierInputs.audioBitrateKbps.value = String(tierSettings.audio_bitrate_kbps);
+    tierInputs.cpuPreset.value = String(tierSettings.cpuPreset);
+    tierInputs.audioBitrateKbps.value = String(tierSettings.audioBitrateKbps);
   });
 };
 
@@ -1200,7 +1200,7 @@ const setH264ControlValues = (h264: H264AdvancedSettings): void => {
     const tierSettings = h264.tiers[tier];
     tierInputs.quality.value = String(tierSettings.quality);
     tierInputs.preset.value = tierSettings.preset;
-    tierInputs.audioBitrateKbps.value = String(tierSettings.audio_bitrate_kbps);
+    tierInputs.audioBitrateKbps.value = String(tierSettings.audioBitrateKbps);
   });
 };
 
@@ -1247,26 +1247,26 @@ const readGifControls = (): GifAdvancedSettings => {
     tiers: {
       bestQuality: {
         fps: parseNumericInput(elements.gifBestQualityFps.value),
-        max_dimension: parseNumericInput(elements.gifBestQualityMaxDimension.value),
-        max_colors: parseNumericInput(elements.gifBestQualityMaxColors.value),
+        maxDimension: parseNumericInput(elements.gifBestQualityMaxDimension.value),
+        maxColors: parseNumericInput(elements.gifBestQualityMaxColors.value),
         dither: elements.gifBestQualityDither.value as GifDither,
       },
       quality: {
         fps: parseNumericInput(elements.gifQualityFps.value),
-        max_dimension: parseNumericInput(elements.gifQualityMaxDimension.value),
-        max_colors: parseNumericInput(elements.gifQualityMaxColors.value),
+        maxDimension: parseNumericInput(elements.gifQualityMaxDimension.value),
+        maxColors: parseNumericInput(elements.gifQualityMaxColors.value),
         dither: elements.gifQualityDither.value as GifDither,
       },
       balanced: {
         fps: parseNumericInput(elements.gifBalancedFps.value),
-        max_dimension: parseNumericInput(elements.gifBalancedMaxDimension.value),
-        max_colors: parseNumericInput(elements.gifBalancedMaxColors.value),
+        maxDimension: parseNumericInput(elements.gifBalancedMaxDimension.value),
+        maxColors: parseNumericInput(elements.gifBalancedMaxColors.value),
         dither: elements.gifBalancedDither.value as GifDither,
       },
       bestCompression: {
         fps: parseNumericInput(elements.gifBestCompressionFps.value),
-        max_dimension: parseNumericInput(elements.gifBestCompressionMaxDimension.value),
-        max_colors: parseNumericInput(elements.gifBestCompressionMaxColors.value),
+        maxDimension: parseNumericInput(elements.gifBestCompressionMaxDimension.value),
+        maxColors: parseNumericInput(elements.gifBestCompressionMaxColors.value),
         dither: elements.gifBestCompressionDither.value as GifDither,
       },
     },
@@ -1279,22 +1279,22 @@ const readWebpControls = (): WebpAdvancedSettings => {
     tiers: {
       bestQuality: {
         fps: parseNumericInput(elements.webpBestQualityFps.value),
-        max_dimension: parseNumericInput(elements.webpBestQualityMaxDimension.value),
+        maxDimension: parseNumericInput(elements.webpBestQualityMaxDimension.value),
         quality: parseNumericInput(elements.webpBestQualityQuality.value),
       },
       quality: {
         fps: parseNumericInput(elements.webpQualityFps.value),
-        max_dimension: parseNumericInput(elements.webpQualityMaxDimension.value),
+        maxDimension: parseNumericInput(elements.webpQualityMaxDimension.value),
         quality: parseNumericInput(elements.webpQualityQuality.value),
       },
       balanced: {
         fps: parseNumericInput(elements.webpBalancedFps.value),
-        max_dimension: parseNumericInput(elements.webpBalancedMaxDimension.value),
+        maxDimension: parseNumericInput(elements.webpBalancedMaxDimension.value),
         quality: parseNumericInput(elements.webpBalancedQuality.value),
       },
       bestCompression: {
         fps: parseNumericInput(elements.webpBestCompressionFps.value),
-        max_dimension: parseNumericInput(elements.webpBestCompressionMaxDimension.value),
+        maxDimension: parseNumericInput(elements.webpBestCompressionMaxDimension.value),
         quality: parseNumericInput(elements.webpBestCompressionQuality.value),
       },
     },
@@ -1306,28 +1306,28 @@ const readAv1Controls = (): Av1AdvancedSettings => {
     tiers: {
       bestQuality: {
         quality: parseNumericInput(av1TierInputs.bestQuality.quality.value),
-        cpu_preset: parseNumericInput(av1TierInputs.bestQuality.cpuPreset.value),
-        audio_bitrate_kbps: parseNumericInput(av1TierInputs.bestQuality.audioBitrateKbps.value),
+        cpuPreset: parseNumericInput(av1TierInputs.bestQuality.cpuPreset.value),
+        audioBitrateKbps: parseNumericInput(av1TierInputs.bestQuality.audioBitrateKbps.value),
       },
       quality: {
         quality: parseNumericInput(av1TierInputs.quality.quality.value),
-        cpu_preset: parseNumericInput(av1TierInputs.quality.cpuPreset.value),
-        audio_bitrate_kbps: parseNumericInput(av1TierInputs.quality.audioBitrateKbps.value),
+        cpuPreset: parseNumericInput(av1TierInputs.quality.cpuPreset.value),
+        audioBitrateKbps: parseNumericInput(av1TierInputs.quality.audioBitrateKbps.value),
       },
       balanced: {
         quality: parseNumericInput(av1TierInputs.balanced.quality.value),
-        cpu_preset: parseNumericInput(av1TierInputs.balanced.cpuPreset.value),
-        audio_bitrate_kbps: parseNumericInput(av1TierInputs.balanced.audioBitrateKbps.value),
+        cpuPreset: parseNumericInput(av1TierInputs.balanced.cpuPreset.value),
+        audioBitrateKbps: parseNumericInput(av1TierInputs.balanced.audioBitrateKbps.value),
       },
       bestCompression: {
         quality: parseNumericInput(av1TierInputs.bestCompression.quality.value),
-        cpu_preset: parseNumericInput(av1TierInputs.bestCompression.cpuPreset.value),
-        audio_bitrate_kbps: parseNumericInput(av1TierInputs.bestCompression.audioBitrateKbps.value),
+        cpuPreset: parseNumericInput(av1TierInputs.bestCompression.cpuPreset.value),
+        audioBitrateKbps: parseNumericInput(av1TierInputs.bestCompression.audioBitrateKbps.value),
       },
       compression: {
         quality: parseNumericInput(av1TierInputs.compression.quality.value),
-        cpu_preset: parseNumericInput(av1TierInputs.compression.cpuPreset.value),
-        audio_bitrate_kbps: parseNumericInput(av1TierInputs.compression.audioBitrateKbps.value),
+        cpuPreset: parseNumericInput(av1TierInputs.compression.cpuPreset.value),
+        audioBitrateKbps: parseNumericInput(av1TierInputs.compression.audioBitrateKbps.value),
       },
     },
   };
@@ -1339,12 +1339,12 @@ const readH264Controls = (): H264AdvancedSettings => {
       fast: {
         quality: parseNumericInput(h264TierInputs.fast.quality.value),
         preset: h264TierInputs.fast.preset.value as VideoPreset,
-        audio_bitrate_kbps: parseNumericInput(h264TierInputs.fast.audioBitrateKbps.value),
+        audioBitrateKbps: parseNumericInput(h264TierInputs.fast.audioBitrateKbps.value),
       },
       quality: {
         quality: parseNumericInput(h264TierInputs.quality.quality.value),
         preset: h264TierInputs.quality.preset.value as VideoPreset,
-        audio_bitrate_kbps: parseNumericInput(h264TierInputs.quality.audioBitrateKbps.value),
+        audioBitrateKbps: parseNumericInput(h264TierInputs.quality.audioBitrateKbps.value),
       },
     },
   };

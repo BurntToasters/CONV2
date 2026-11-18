@@ -37,10 +37,7 @@ const ffmpegChecksumPath = path.join(
   "checksums.json",
 );
 
-export const SIDECAR_NAMES = Object.freeze([
-  "conv2-ffmpeg",
-  "conv2-ffprobe",
-]);
+export const SIDECAR_NAMES = Object.freeze(["conv2-ffmpeg", "conv2-ffprobe"]);
 export const STUB_MARKER = "CONV2-SIDECAR-STUB";
 
 export const TARGETS = Object.freeze({

@@ -33,6 +33,7 @@ pub struct PipelinePlan {
     pub decode_args: Vec<String>,
     pub output_args: Vec<String>,
     pub filter: Option<String>,
+    #[cfg_attr(not(test), allow(dead_code))]
     pub tonemapped: bool,
     pub warning: Option<String>,
 }
@@ -60,11 +61,20 @@ fn is_high_bit_depth(pix_fmt: Option<&str>) -> bool {
 /// Drops `-hwaccel_output_format` so decoded frames are downloaded to system
 /// memory.
 fn with_software_frames(decode_args: &[String]) -> Vec<String> {
-    let Some(index) = decode_args.iter().position(|arg| arg == "-hwaccel_output_format") else {
+    let Some(index) = decode_args
+        .iter()
+        .position(|arg| arg == "-hwaccel_output_format")
+    else {
         return decode_args.to_vec();
     };
     let mut next = decode_args[..index].to_vec();
-    next.extend(decode_args.get(index + 2..).unwrap_or_default().iter().cloned());
+    next.extend(
+        decode_args
+            .get(index + 2..)
+            .unwrap_or_default()
+            .iter()
+            .cloned(),
+    );
     next
 }
 
@@ -104,8 +114,8 @@ pub fn plan_video_pipeline(input: PipelineInput<'_>) -> PipelinePlan {
     };
     let is_hdr = usable_color(source.color_transfer)
         .is_some_and(|transfer| HDR_TRANSFERS.contains(&transfer));
-    let eight_bit_target = EIGHT_BIT_CATEGORIES.contains(&input.category)
-        || is_media_foundation(input.encode_vendor);
+    let eight_bit_target =
+        EIGHT_BIT_CATEGORIES.contains(&input.category) || is_media_foundation(input.encode_vendor);
     let high_bit_depth = is_high_bit_depth(source.pix_fmt);
 
     if is_hdr && eight_bit_target && input.can_tonemap {
@@ -131,7 +141,7 @@ pub fn plan_video_pipeline(input: PipelineInput<'_>) -> PipelinePlan {
         };
     }
 
-    let mut output_args = color_tag_args(source);
+    let output_args = color_tag_args(source);
     let mut plan = PipelinePlan {
         decode_args: input.decode_args.clone(),
         output_args,
@@ -177,7 +187,11 @@ pub fn plan_video_pipeline(input: PipelineInput<'_>) -> PipelinePlan {
 
 /// Upload chain for VAAPI: p010 needs a 10-bit source, H.265/AV1, and a
 /// category outside the 8-bit set; everything else is nv12.
-pub fn vaapi_upload_filter(category: &str, codec: GpuCodec, source_pix_fmt: Option<&str>) -> String {
+pub fn vaapi_upload_filter(
+    category: &str,
+    codec: GpuCodec,
+    source_pix_fmt: Option<&str>,
+) -> String {
     let ten_bit = matches!(codec, GpuCodec::H265 | GpuCodec::Av1)
         && is_high_bit_depth(source_pix_fmt)
         && !EIGHT_BIT_CATEGORIES.contains(&category);
@@ -194,8 +208,8 @@ pub fn apply_video_filter(args: &[String], filter: &str) -> Vec<String> {
     let mut next = args.to_vec();
     if let Some(index) = next.iter().position(|arg| arg == "-filter_complex") {
         if let Some(graph) = next.get(index + 1) {
-            if graph.starts_with("[0:v]") {
-                next[index + 1] = format!("[0:v]{filter},{}", &graph["[0:v]".len()..]);
+            if let Some(rest) = graph.strip_prefix("[0:v]") {
+                next[index + 1] = format!("[0:v]{filter},{rest}");
                 return next;
             }
         }
@@ -269,7 +283,10 @@ mod tests {
             can_tonemap: true,
         });
         assert_eq!(plan.decode_args, ["-hwaccel", "qsv"]);
-        assert!(plan.output_args.windows(2).any(|pair| pair == ["-pix_fmt", "yuv420p"]));
+        assert!(plan
+            .output_args
+            .windows(2)
+            .any(|pair| pair == ["-pix_fmt", "yuv420p"]));
     }
 
     #[test]

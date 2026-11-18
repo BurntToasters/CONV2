@@ -33,7 +33,9 @@ fn noise_line() -> &'static Regex {
 
 fn hex_prefix() -> &'static Regex {
     static REGEX: OnceLock<Regex> = OnceLock::new();
-    REGEX.get_or_init(|| Regex::new(r"(?i)^\s*(?:\[[^\]]*@\s*0x[0-9a-f]+\]\s*)+").expect("valid regex"))
+    REGEX.get_or_init(|| {
+        Regex::new(r"(?i)^\s*(?:\[[^\]]*@\s*0x[0-9a-f]+\]\s*)+").expect("valid regex")
+    })
 }
 
 fn pointer_hex() -> &'static Regex {
@@ -151,7 +153,10 @@ pub fn describe(stderr: Option<&str>) -> String {
         .into_iter()
         .filter(|line| !noise_line().is_match(line))
         .collect();
-    let last = candidates.last().map(|line| clean_line(line)).unwrap_or_default();
+    let last = candidates
+        .last()
+        .map(|line| clean_line(line))
+        .unwrap_or_default();
     if last.is_empty() {
         return "FFmpeg stopped without an error message. Open Logs for details.".to_string();
     }
@@ -314,7 +319,10 @@ mod tests {
     #[test]
     fn fallback_uses_last_meaningful_line() {
         let text = "ffmpeg version 8.0 Copyright\n  configuration: --x\n[in#0 @ 0x12345678] /Users/someone/file.mp4: weird failure\nConversion failed!";
-        assert_eq!(describe(Some(text)), "FFmpeg error: file.mp4: weird failure");
+        assert_eq!(
+            describe(Some(text)),
+            "FFmpeg error: file.mp4: weird failure"
+        );
         assert_eq!(
             describe(Some("")),
             "FFmpeg stopped without an error message. Open Logs for details."

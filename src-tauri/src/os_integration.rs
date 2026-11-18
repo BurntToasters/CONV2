@@ -40,9 +40,7 @@ pub fn init(app: &tauri::AppHandle) {
             reveal_output(&path);
         }
     }) {
-        crate::logging::warn(&format!(
-            "Notification actions are unavailable: {error}"
-        ));
+        crate::logging::warn(&format!("Notification actions are unavailable: {error}"));
     }
 }
 
@@ -51,10 +49,7 @@ fn reveal_output(path: &str) {
         return;
     };
     use tauri_plugin_opener::OpenerExt;
-    if let Err(error) = app
-        .opener()
-        .reveal_item_in_dir(std::path::Path::new(path))
-    {
+    if let Err(error) = app.opener().reveal_item_in_dir(std::path::Path::new(path)) {
         crate::logging::warn(&format!("Could not reveal {path}: {error}"));
     }
 }
@@ -249,7 +244,10 @@ pub fn summarize_queue(total: usize, items: &[QueueItemSnapshot]) -> QueueSummar
         );
     }
     if counts.done == 0 {
-        return fixed("Batch failed", format!("None of the {total} videos converted."));
+        return fixed(
+            "Batch failed",
+            format!("None of the {total} videos converted."),
+        );
     }
     let fallback_note = if counts.cpu_fallback > 0 {
         format!(", {} CPU fallback", counts.cpu_fallback)
@@ -326,7 +324,6 @@ mod power {
 
         #[link(name = "IOKit", kind = "framework")]
         extern "C" {
-            static kIOPMAssertionTypeNoIdleSleep: CFTypeRef;
             fn IOPMAssertionCreateWithName(
                 assertion_type: CFTypeRef,
                 level: u32,
@@ -348,22 +345,29 @@ mod power {
 
         pub struct Blocker(u32);
 
+        /// `kIOPMAssertionTypeNoIdleSleep` is a header macro, not a linkable
+        /// symbol, so the CFString is built from its documented value.
+        const ASSERTION_TYPE: &str = "NoIdleSleepAssertion";
+
+        /// Caller releases the returned string.
+        unsafe fn cf_string(value: &str) -> Option<CFTypeRef> {
+            let value = CString::new(value).ok()?;
+            let string = CFStringCreateWithCString(std::ptr::null(), value.as_ptr(), UTF8);
+            (!string.is_null()).then_some(string)
+        }
+
         pub fn acquire() -> Option<Blocker> {
-            let name = CString::new("CONV2 is converting video").ok()?;
             unsafe {
-                let string =
-                    CFStringCreateWithCString(std::ptr::null(), name.as_ptr(), UTF8);
-                if string.is_null() {
+                let assertion_type = cf_string(ASSERTION_TYPE)?;
+                let Some(name) = cf_string("CONV2 is converting video") else {
+                    CFRelease(assertion_type);
                     return None;
-                }
+                };
                 let mut id = 0u32;
-                let result = IOPMAssertionCreateWithName(
-                    kIOPMAssertionTypeNoIdleSleep,
-                    ASSERTION_LEVEL_ON,
-                    string,
-                    &mut id,
-                );
-                CFRelease(string);
+                let result =
+                    IOPMAssertionCreateWithName(assertion_type, ASSERTION_LEVEL_ON, name, &mut id);
+                CFRelease(name);
+                CFRelease(assertion_type);
                 (result == 0).then_some(Blocker(id))
             }
         }

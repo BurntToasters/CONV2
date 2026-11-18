@@ -9,12 +9,12 @@ use crate::fs_util;
 use crate::ipc::{self, FalliblePayload, IpcResult, INTERNAL_ERROR, VALIDATION_ERROR};
 use crate::process_util;
 use crate::types::{
-    GpuCodec, GpuVendor, GPUCapabilitiesPayload, GPUCapabilityStatus, GPUEncoderError,
+    GPUCapabilitiesPayload, GPUCapabilityStatus, GPUEncoderError, GpuCodec, GpuVendor,
 };
 use crate::types_ffmpeg::{node_arch, node_platform, HwProbeCacheFile, HW_PROBE_CACHE_VERSION};
+use regex::Regex;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
-use regex::Regex;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
@@ -170,7 +170,11 @@ fn qualcomm_probe_options(encoder: &str) -> HwProbeOptions {
 
 /// v1's buildHwProbeArgs (ffmpeg.ts): a one-frame black lavfi encode.
 fn build_hw_probe_args(encoder: &str, options: &HwProbeOptions, platform: &str) -> Vec<String> {
-    let sink = if platform == "win32" { "NUL" } else { "/dev/null" };
+    let sink = if platform == "win32" {
+        "NUL"
+    } else {
+        "/dev/null"
+    };
     let mut args: Vec<&str> = vec!["-hide_banner", "-loglevel", "error"];
     args.extend(options.input_args.iter().map(String::as_str));
     args.extend([
@@ -350,7 +354,11 @@ fn with_disk_cache<R>(operation: impl FnOnce(&mut HwDiskCache) -> R) -> R {
             &crate::ffmpeg_status::bundled_ffmpeg(),
             env!("CARGO_PKG_VERSION"),
         );
-        *guard = Some(HwDiskCache::load(path, fingerprint, crate::app_state::now_ms()));
+        *guard = Some(HwDiskCache::load(
+            path,
+            fingerprint,
+            crate::app_state::now_ms(),
+        ));
     }
     operation(guard.as_mut().expect("the cache was just initialized"))
 }
@@ -360,10 +368,7 @@ fn parse_encoder_line(line: &str) -> Option<String> {
     let trimmed = line.trim_start();
     let mut flags_end = 0;
     for (index, character) in trimmed.char_indices() {
-        if matches!(
-            character,
-            'V' | 'A' | 'S' | 'F' | 'X' | 'B' | 'D' | '.'
-        ) {
+        if matches!(character, 'V' | 'A' | 'S' | 'F' | 'X' | 'B' | 'D' | '.') {
             flags_end = index + character.len_utf8();
         } else {
             break;
@@ -394,12 +399,7 @@ fn list_encoders(ffmpeg: &Path) -> Option<Arc<BTreeSet<String>>> {
     }
     let args = ["-encoders".to_string(), "-hide_banner".to_string()];
     let mut command = process_util::command(ffmpeg, &args, &[], true);
-    match process_util::run_with_timeout(
-        &mut command,
-        ENCODER_LIST_TIMEOUT,
-        512 * 1024,
-        4096,
-    ) {
+    match process_util::run_with_timeout(&mut command, ENCODER_LIST_TIMEOUT, 512 * 1024, 4096) {
         Ok(output) if !output.timed_out => {
             let encoders: BTreeSet<String> = output
                 .stdout
@@ -424,11 +424,7 @@ struct ProbeContext {
 /// v1's probeHwEncoderAvailable: memory cache, disk store, listing check,
 /// then a one-frame synthetic encode with an 8s timeout. Exit codes persist
 /// (true and false); timeouts and spawn errors stay session-only.
-fn probe_hw_encoder_available(
-    ctx: &ProbeContext,
-    encoder: &str,
-    options: &HwProbeOptions,
-) -> bool {
+fn probe_hw_encoder_available(ctx: &ProbeContext, encoder: &str, options: &HwProbeOptions) -> bool {
     // Failure mode: a probe that fails because the binary is not ok must not
     // be cached as "absent".
     if !ctx.status_ok {
@@ -616,7 +612,10 @@ fn recommend_gpu_vendor_from_availability(
                     "No compatible GPU encoder found. Using CPU.".to_string(),
                 );
             }
-            return (*vendor, format!("Best available path: {}.", vendor.as_str()));
+            return (
+                *vendor,
+                format!("Best available path: {}.", vendor.as_str()),
+            );
         }
     }
     (
@@ -656,9 +655,8 @@ fn build_payload_with(
     probe: &ProbeFn,
     render_node: &RenderNodeFn,
 ) -> GPUCapabilitiesPayload {
-    let codecs_to_check: Vec<GpuCodec> = requested_codec
-        .map(|codec| vec![codec])
-        .unwrap_or_else(|| {
+    let codecs_to_check: Vec<GpuCodec> =
+        requested_codec.map(|codec| vec![codec]).unwrap_or_else(|| {
             GpuCodec::NAMES
                 .iter()
                 .copied()
@@ -676,8 +674,7 @@ fn build_payload_with(
         let mut row: BTreeMap<String, GPUCapabilityStatus> = BTreeMap::new();
         // v1 ran every vendor check concurrently; only the probe-backed
         // vendors need a thread here.
-        let mut probes: Vec<(GpuVendor, std::thread::JoinHandle<GPUCapabilityStatus>)> =
-            Vec::new();
+        let mut probes: Vec<(GpuVendor, std::thread::JoinHandle<GPUCapabilityStatus>)> = Vec::new();
         for vendor in &vendors {
             let vendor = *vendor;
             if let Some(status) = cheap_vendor_status(codec, vendor, platform, arch) {
@@ -687,18 +684,19 @@ fn build_payload_with(
             let probe = Arc::clone(probe);
             let render_node = Arc::clone(render_node);
             let platform = platform.to_string();
-            probes.push((vendor, std::thread::spawn(move || {
-                probe_vendor_status(codec, vendor, &platform, &probe, &render_node)
-            })));
+            probes.push((
+                vendor,
+                std::thread::spawn(move || {
+                    probe_vendor_status(codec, vendor, &platform, &probe, &render_node)
+                }),
+            ));
         }
         for (vendor, probe) in probes {
-            let status = probe
-                .join()
-                .unwrap_or_else(|_| GPUCapabilityStatus {
-                    available: false,
-                    reason: "Probe thread panicked.".to_string(),
-                    encoder: resolve_encoder(codec, vendor, platform),
-                });
+            let status = probe.join().unwrap_or_else(|_| GPUCapabilityStatus {
+                available: false,
+                reason: "Probe thread panicked.".to_string(),
+                encoder: resolve_encoder(codec, vendor, platform),
+            });
             row.insert(vendor.as_str().to_string(), status);
         }
         matrix.insert(codec.as_str().to_string(), row);
@@ -735,7 +733,7 @@ fn build_gpu_capabilities_payload(requested_codec: Option<GpuCodec>) -> GPUCapab
     let probe: ProbeFn = Arc::new(move |_codec, _vendor, encoder, options| {
         probe_hw_encoder_available(&ctx, encoder, options)
     });
-    let render_node: RenderNodeFn = Arc::new(|vendor| find_vaapi_render_node(vendor));
+    let render_node: RenderNodeFn = Arc::new(find_vaapi_render_node);
     build_payload_with(
         requested_codec,
         node_platform(),
@@ -758,8 +756,7 @@ pub async fn get_gpu_capabilities(
         },
         None => None,
     };
-    match tauri::async_runtime::spawn_blocking(move || build_gpu_capabilities_payload(codec))
-        .await
+    match tauri::async_runtime::spawn_blocking(move || build_gpu_capabilities_payload(codec)).await
     {
         Ok(payload) => ipc::ok(payload),
         Err(error) => ipc::err(INTERNAL_ERROR, error.to_string()),
@@ -772,7 +769,6 @@ pub fn refresh_gpu_capabilities() -> IpcResult<()> {
     clear_hw_probe_results();
     ipc::ok(())
 }
-
 
 // ---------------------------------------------------------------------------
 // Conversion-facing checks: encoder gate, hardware decode, tone-map support,
@@ -883,7 +879,8 @@ pub(crate) fn check_encoder_support(
             gpu,
         );
     }
-    if !cancelled.load(Ordering::SeqCst) && probe_hw_encoder_available(&probe_context(), &encoder, &options)
+    if !cancelled.load(Ordering::SeqCst)
+        && probe_hw_encoder_available(&probe_context(), &encoder, &options)
     {
         return EncoderSupport {
             available: true,
@@ -1003,7 +1000,11 @@ pub(crate) fn hardware_decode_args(gpu: GpuVendor, codec: Option<&str>) -> Vec<S
     let Some(codec) = codec.map(str::to_lowercase) else {
         return Vec::new();
     };
-    let codec = if codec == "h265" { "hevc".to_string() } else { codec };
+    let codec = if codec == "h265" {
+        "hevc".to_string()
+    } else {
+        codec
+    };
     let Some(decoder) = decoder_for(gpu, &codec) else {
         return Vec::new();
     };
@@ -1014,8 +1015,22 @@ pub(crate) fn hardware_decode_args(gpu: GpuVendor, codec: Option<&str>) -> Vec<S
         &["-hwaccel", "videotoolbox", "-c:v", decoder]
     } else if platform == "win32" {
         match gpu {
-            GpuVendor::Nvidia => &["-hwaccel", "cuda", "-hwaccel_output_format", "cuda", "-c:v", decoder],
-            GpuVendor::Intel => &["-hwaccel", "qsv", "-hwaccel_output_format", "qsv", "-c:v", decoder],
+            GpuVendor::Nvidia => &[
+                "-hwaccel",
+                "cuda",
+                "-hwaccel_output_format",
+                "cuda",
+                "-c:v",
+                decoder,
+            ],
+            GpuVendor::Intel => &[
+                "-hwaccel",
+                "qsv",
+                "-hwaccel_output_format",
+                "qsv",
+                "-c:v",
+                decoder,
+            ],
             GpuVendor::Amd => &[
                 "-hwaccel",
                 "d3d11va",
@@ -1027,7 +1042,14 @@ pub(crate) fn hardware_decode_args(gpu: GpuVendor, codec: Option<&str>) -> Vec<S
             _ => return Vec::new(),
         }
     } else if platform == "linux" && gpu == GpuVendor::Nvidia {
-        &["-hwaccel", "cuda", "-hwaccel_output_format", "cuda", "-c:v", decoder]
+        &[
+            "-hwaccel",
+            "cuda",
+            "-hwaccel_output_format",
+            "cuda",
+            "-c:v",
+            decoder,
+        ]
     } else {
         return Vec::new();
     };
@@ -1053,20 +1075,23 @@ fn list_filters(ffmpeg: &Path) -> Arc<BTreeSet<String>> {
     }
     let args = ["-hide_banner".to_string(), "-filters".to_string()];
     let mut command = process_util::command(ffmpeg, &args, &[], true);
-    let filters = match process_util::run_with_timeout(&mut command, ENCODER_LIST_TIMEOUT, 1024 * 1024, 4096) {
-        Ok(output) if !output.timed_out => {
-            let regex = Regex::new(r"^\s*[TSC.|]{2,3}\s+(\S+)\s+\S+->\S+").expect("valid regex");
-            let names: BTreeSet<String> = output
-                .stdout
-                .lines()
-                .filter_map(|line| regex.captures(line))
-                .filter_map(|captures| captures.get(1))
-                .map(|value| value.as_str().to_string())
-                .collect();
-            Arc::new(names)
-        }
-        _ => Arc::new(BTreeSet::new()),
-    };
+    let filters =
+        match process_util::run_with_timeout(&mut command, ENCODER_LIST_TIMEOUT, 1024 * 1024, 4096)
+        {
+            Ok(output) if !output.timed_out => {
+                let regex =
+                    Regex::new(r"^\s*[TSC.|]{2,3}\s+(\S+)\s+\S+->\S+").expect("valid regex");
+                let names: BTreeSet<String> = output
+                    .stdout
+                    .lines()
+                    .filter_map(|line| regex.captures(line))
+                    .filter_map(|captures| captures.get(1))
+                    .map(|value| value.as_str().to_string())
+                    .collect();
+                Arc::new(names)
+            }
+            _ => Arc::new(BTreeSet::new()),
+        };
     if !filters.is_empty() {
         *FILTER_CACHE
             .lock()
@@ -1165,7 +1190,8 @@ pub(crate) fn parse_gpu_error(
                     format!("Your GPU model doesn't support hardware {codec_label} encoding.")
                 },
                 if codec == Some(GpuCodec::Av1) {
-                    "Use H.264 or H.265 for hardware encoding, or switch to CPU for AV1.".to_string()
+                    "Use H.264 or H.265 for hardware encoding, or switch to CPU for AV1."
+                        .to_string()
                 } else {
                     "Try using CPU encoding instead.".to_string()
                 },
@@ -1231,7 +1257,8 @@ pub(crate) fn parse_gpu_error(
                     format!("Your GPU model doesn't support hardware {codec_label} encoding.")
                 },
                 if codec == Some(GpuCodec::Av1) {
-                    "Use H.264 or H.265 for hardware encoding, or switch to CPU for AV1.".to_string()
+                    "Use H.264 or H.265 for hardware encoding, or switch to CPU for AV1."
+                        .to_string()
                 } else {
                     "Try using CPU encoding instead.".to_string()
                 },
@@ -1306,19 +1333,13 @@ pub(crate) fn parse_gpu_error(
 mod tests {
     // Failure modes:
     // - wrong encoder name per vendor/platform: the table must match v1's
-    //   GPU_ENCODERS exactly (probe and conversion must agree).
-    // - a Linux Intel/AMD probe on a machine without a render node: the row
-    //   says why (no render node), not a generic failure.
-    // - stale disk cache from another binary or version: fingerprint or TTL
-    //   mismatch discards it.
-    // - a negative result persisted as positive (or vice versa): unavailable
-    //   entries are session-only and drop persisted positives.
-    // - a software MFT result answering for Qualcomm hardware: the @hw cache
-    //   key keeps them apart.
-    // - a probe that hangs or the binary being absent: status-gated to false
-    //   without touching the caches.
-    // - a recommendation claiming a vendor the matrix rejected: it only picks
-    //   from available rows, CPU last.
+    //   GPU_ENCODERS exactly.
+    // - Linux Intel/AMD probe without a render node: the row says why.
+    // - stale disk cache from another binary or version: discarded.
+    // - negative result persisted as positive: unavailable entries are
+    //   session-only; a software MFT never answers for Qualcomm hardware.
+    // - a hung probe or absent binary: status-gated to false, caches intact.
+    // - a recommendation of a rejected vendor: only available rows, CPU last.
     use super::*;
 
     fn temp_dir(name: &str) -> PathBuf {
@@ -1484,10 +1505,18 @@ mod tests {
         // renderD128 has no readable vendor file; D129 is Intel; D130 is AMD.
         std::fs::create_dir_all(dir.join("renderD128").join("device")).unwrap();
         std::fs::create_dir_all(dir.join("renderD129").join("device")).unwrap();
-        std::fs::write(dir.join("renderD129").join("device").join("vendor"), "0X8086\n").unwrap();
+        std::fs::write(
+            dir.join("renderD129").join("device").join("vendor"),
+            "0X8086\n",
+        )
+        .unwrap();
         std::fs::create_dir_all(dir.join("card0")).unwrap();
         std::fs::create_dir_all(dir.join("renderD130").join("device")).unwrap();
-        std::fs::write(dir.join("renderD130").join("device").join("vendor"), "0x1002\n").unwrap();
+        std::fs::write(
+            dir.join("renderD130").join("device").join("vendor"),
+            "0x1002\n",
+        )
+        .unwrap();
 
         assert_eq!(
             find_vaapi_render_node_in(&dir, GpuVendor::Intel).as_deref(),
@@ -1518,8 +1547,7 @@ mod tests {
         assert_eq!(reloaded.get("h264_nvenc"), Some(true));
         // A different fingerprint discards everything.
         assert_eq!(
-            HwDiskCache::load(path.clone(), "other".to_string(), now + 1000)
-                .get("h264_nvenc"),
+            HwDiskCache::load(path.clone(), "other".to_string(), now + 1000).get("h264_nvenc"),
             None
         );
         // A TTL expiry discards everything.
@@ -1531,10 +1559,8 @@ mod tests {
         // Unavailable drops any persisted known-good entry.
         reloaded.set("h264_nvenc", false, now + 2000);
         assert_eq!(reloaded.get("h264_nvenc"), None);
-        let after_negative: HwProbeCacheFile = serde_json::from_str(
-            &std::fs::read_to_string(&path).unwrap(),
-        )
-        .unwrap();
+        let after_negative: HwProbeCacheFile =
+            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
         assert!(after_negative.results.is_empty());
         // Clear removes the file entirely.
         reloaded.clear(now + 3000);
@@ -1556,7 +1582,15 @@ mod tests {
         std::fs::write(&binary, b"1234567890").unwrap();
         assert_ne!(fingerprint, binary_fingerprint(&binary, "9.9.9"));
         let missing = binary_fingerprint(&dir.join("absent"), "9.9.9");
-        assert_eq!(missing, format!("{}-{}|9.9.9|{}", node_platform(), node_arch(), dir.join("absent").display()));
+        assert_eq!(
+            missing,
+            format!(
+                "{}-{}|9.9.9|{}",
+                node_platform(),
+                node_arch(),
+                dir.join("absent").display()
+            )
+        );
     }
 
     #[test]
@@ -1574,7 +1608,12 @@ mod tests {
         assert_eq!(parse_encoder_line(""), None);
     }
 
-    fn no_probe(_codec: GpuCodec, _vendor: GpuVendor, _encoder: &str, _options: &HwProbeOptions) -> bool {
+    fn no_probe(
+        _codec: GpuCodec,
+        _vendor: GpuVendor,
+        _encoder: &str,
+        _options: &HwProbeOptions,
+    ) -> bool {
         false
     }
 
@@ -1594,16 +1633,16 @@ mod tests {
         assert_eq!(apple.reason, "Apple VideoToolbox available only on macOS.");
         assert_eq!(apple.encoder, "h264_videotoolbox");
 
-        let qualcomm = cheap_vendor_status(GpuCodec::H265, GpuVendor::Qualcomm, "darwin", "arm64")
-            .unwrap();
+        let qualcomm =
+            cheap_vendor_status(GpuCodec::H265, GpuVendor::Qualcomm, "darwin", "arm64").unwrap();
         assert!(!qualcomm.available);
         assert_eq!(
             qualcomm.reason,
             "Qualcomm Media Foundation available only on Windows on Arm."
         );
 
-        let apple_av1 = cheap_vendor_status(GpuCodec::Av1, GpuVendor::Apple, "darwin", "arm64")
-            .unwrap();
+        let apple_av1 =
+            cheap_vendor_status(GpuCodec::Av1, GpuVendor::Apple, "darwin", "arm64").unwrap();
         assert!(!apple_av1.available);
         assert_eq!(
             apple_av1.reason,
@@ -1629,8 +1668,13 @@ mod tests {
         assert_eq!(status.reason, "No Intel render node found");
         assert_eq!(status.encoder, "h264_vaapi");
 
-        let status =
-            probe_vendor_status(GpuCodec::H264, GpuVendor::Nvidia, "win32", &probe, &render_node);
+        let status = probe_vendor_status(
+            GpuCodec::H264,
+            GpuVendor::Nvidia,
+            "win32",
+            &probe,
+            &render_node,
+        );
         assert!(!status.available);
         assert_eq!(status.reason, "NVIDIA H.264 encoder not available");
         assert_eq!(status.encoder, "h264_nvenc");
@@ -1656,7 +1700,8 @@ mod tests {
             GpuVendor::Apple
         );
         assert_eq!(
-            recommend_gpu_vendor_from_availability("darwin", |vendor| vendor == GpuVendor::Nvidia).0,
+            recommend_gpu_vendor_from_availability("darwin", |vendor| vendor == GpuVendor::Nvidia)
+                .0,
             GpuVendor::Nvidia
         );
         // NVIDIA outranks Intel on Windows even when both are available.
@@ -1692,10 +1737,7 @@ mod tests {
         assert_eq!(payload.requested_codec, None);
         assert_eq!(payload.checked_codecs.len(), 3);
         for codec in GpuCodec::NAMES {
-            let row = payload
-                .matrix
-                .get(*codec)
-                .expect("every codec is checked");
+            let row = payload.matrix.get(*codec).expect("every codec is checked");
             let cpu = row.get("cpu").unwrap();
             assert!(cpu.available);
             assert_eq!(cpu.reason, "Software encoding fallback.");
@@ -1718,9 +1760,8 @@ mod tests {
 
     #[test]
     fn payload_probes_only_the_requested_codec() {
-        let probe: ProbeFn = Arc::new(|codec, vendor, _, _| {
-            codec == GpuCodec::H264 && vendor == GpuVendor::Nvidia
-        });
+        let probe: ProbeFn =
+            Arc::new(|codec, vendor, _, _| codec == GpuCodec::H264 && vendor == GpuVendor::Nvidia);
         let payload = payload_with(Some(GpuCodec::H264), "win32", "x64", probe);
         assert_eq!(payload.checked_codecs, vec![GpuCodec::H264]);
         assert_eq!(payload.matrix.len(), 1);
@@ -1757,7 +1798,10 @@ mod tests {
         let payload = payload_with(Some(GpuCodec::H264), "win32", "x64", Arc::clone(&probe));
         let qualcomm = payload.matrix["h264"]["qualcomm"].clone();
         assert!(!qualcomm.available);
-        assert_eq!(qualcomm.reason, "Qualcomm Media Foundation available only on Windows on Arm.");
+        assert_eq!(
+            qualcomm.reason,
+            "Qualcomm Media Foundation available only on Windows on Arm."
+        );
         // On Windows on Arm the probe runs with the hardware-only options.
         let payload = payload_with(Some(GpuCodec::H264), "win32", "arm64", probe);
         let qualcomm = payload.matrix["h264"]["qualcomm"].clone();
@@ -1771,13 +1815,8 @@ mod tests {
         let render_node: RenderNodeFn = Arc::new(|vendor| {
             (vendor == GpuVendor::Amd).then(|| "/dev/dri/renderD128".to_string())
         });
-        let payload = build_payload_with(
-            Some(GpuCodec::H265),
-            "linux",
-            "x64",
-            &probe,
-            &render_node,
-        );
+        let payload =
+            build_payload_with(Some(GpuCodec::H265), "linux", "x64", &probe, &render_node);
         let intel = payload.matrix["h265"]["intel"].clone();
         assert!(!intel.available);
         assert_eq!(intel.reason, "No Intel render node found");
@@ -1795,7 +1834,8 @@ mod tests {
             reason,
             "Preset does not use GPU-accelerated video encoding."
         );
-        let (vendor, reason) = get_recommended_vendor("win32", Some(GpuCodec::H264), &BTreeMap::new());
+        let (vendor, reason) =
+            get_recommended_vendor("win32", Some(GpuCodec::H264), &BTreeMap::new());
         assert_eq!(vendor, GpuVendor::Cpu);
         assert_eq!(reason, "Capability data unavailable. Falling back to CPU.");
     }

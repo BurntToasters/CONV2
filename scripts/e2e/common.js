@@ -4,7 +4,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { spawn, spawnSync } from "node:child_process";
 import { REPO_ROOT } from "../../e2e/helpers/profile.js";
-import { sha256 } from "../../e2e/helpers/media-server.js";
+import { sha256 } from "../../e2e/helpers/hash.js";
 import { usesWindowsCmdShell } from "../npm-safe-update.mjs";
 
 export const ARTIFACT_DIR = path.join(REPO_ROOT, "e2e", "artifacts");
@@ -82,15 +82,15 @@ export function which(bin) {
 const BACKGROUND_PLATFORMS = new Set(["darwin", "win32"]);
 
 /**
- * `ROSI_E2E_BACKGROUND` for the app launches of this run. Local macOS and
- * Windows runs default to "1" so ROSI never takes focus or covers other apps.
- * CI and `ROSI_E2E_FOREGROUND=1` keep the foreground behavior; an explicit
+ * `CONV2_E2E_BACKGROUND` for the app launches of this run. Local macOS and
+ * Windows runs default to "1" so CONV2 never takes focus or covers other apps.
+ * CI and `CONV2_E2E_FOREGROUND=1` keep the foreground behavior; an explicit
  * value wins. Failure modes: scripts/test-e2e-background.failure-modes.md.
  */
 export function e2eBackgroundValue({ env, platform }) {
-  if (env.ROSI_E2E_BACKGROUND !== undefined) return env.ROSI_E2E_BACKGROUND;
+  if (env.CONV2_E2E_BACKGROUND !== undefined) return env.CONV2_E2E_BACKGROUND;
   if (!BACKGROUND_PLATFORMS.has(platform)) return null;
-  if (env.ROSI_E2E_FOREGROUND === "1") return null;
+  if (env.CONV2_E2E_FOREGROUND === "1") return null;
   const ci = (env.CI ?? "").trim().toLowerCase();
   if (ci !== "" && ci !== "false" && ci !== "0") return null;
   return "1";

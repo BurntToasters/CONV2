@@ -16,7 +16,7 @@ vendored updater install entry point and platform-safe cleanup ordering.
 4. macOS/Linux install and normal restart paths must not invoke the Windows
    direct-exit cleanup callback.
 5. A macOS bundle is missing, symlinked, empty, or non-executable for any of
-   `rosi`, `rosi-yt-dlp`, `rosi-ffmpeg`, or `rosi-ffprobe`. Rust recovery and
+   `conv2`, `conv2-ffmpeg`, or `conv2-ffprobe`. Rust recovery and
    the privileged shell validator must both reject it before deleting a
    recovery backup.
 6. A streamed package omits Content-Length, lies with a smaller length, or
@@ -50,11 +50,11 @@ vendored updater install entry point and platform-safe cleanup ordering.
 
 ## Bundled third-party notices
 
-16. The notice source is missing or does not identify the exact yt-dlp version
-    of the shipped binaries. Fail the bundled-license step.
-17. The matching upstream third-party notice is not copied into the frontend,
-    shown in the licenses view, or included as a Tauri resource. Reject the
-    release packaging configuration.
+16. A bundled FFmpeg notice source (notice, license, or source offer) is
+    missing. Fail the bundled-license step instead of shipping without it.
+17. A bundled notice is not copied into the frontend, shown in the licenses
+    view, or included as a Tauri resource. Reject the release packaging
+    configuration.
 18. Strict Cargo 3.9 notice generation is removed or weakened from the release
     license gate. Keep it mandatory.
 19. A stable metainfo PR inserts the expected release but also changes a

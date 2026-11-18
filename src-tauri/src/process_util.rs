@@ -12,7 +12,7 @@ use std::ffi::OsStr;
 use std::io::Read;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
-use std::sync::{mpsc, Arc, Condvar, Mutex};
+use std::sync::{mpsc, Arc, Mutex};
 use std::time::Duration;
 
 const ENV_ALLOWLIST: &[&str] = &[
@@ -427,7 +427,7 @@ pub fn kill_tree(child: &Arc<ManagedChild>) {
     let pid = child.id();
     #[cfg(windows)]
     child.job.terminate();
-    let mut state = child.state();
+    let state = child.state();
     if state.status.is_some() && !state.owned_group_survivors {
         return;
     }
@@ -563,6 +563,8 @@ fn receive_drain(
 pub struct Output {
     pub code: Option<i32>,
     pub stdout: String,
+    /// Drained to keep the pipe from filling; callers read stdout only.
+    #[allow(dead_code)]
     pub stderr: String,
     pub timed_out: bool,
     /// True when stdout was longer than its capture limit; `stdout` then holds
@@ -700,6 +702,7 @@ pub mod watch {
 
     impl<T: Clone> Receiver<T> {
         /// The current value.
+        #[cfg_attr(not(test), allow(dead_code))]
         pub fn borrow(&self) -> T {
             self.shared
                 .state
@@ -1114,7 +1117,7 @@ mod tests {
         let (sender, receiver) = watch::channel(false);
         assert!(!receiver.has_changed());
         assert!(!receiver.borrow());
-        assert_eq!(sender.send_replace(true), false);
+        assert!(!sender.send_replace(true));
         assert!(receiver.borrow());
     }
 }

@@ -12,12 +12,12 @@ fixes:
   `quoted form of` before `do shell script`.
 - macOS must not `rm -rf` the live `.app` before the replacement is in place.
   The live bundle is renamed to a same-volume sibling backup
-  (`.zinnia-update-backup`), the new bundle is moved in, then the backup is
+  (`.conv2-update-backup`), the new bundle is moved in, then the backup is
   deleted. Failure restores the backup. Staging lives next to the `.app`, not
   under `/tmp`, so a dropped `TempDir` cannot erase the installed app. `EXDEV`
   copies onto the app's volume before the swap.
 - macOS live, staged, and recovery bundles must each contain executable,
-  non-symlink `rosi-yt-dlp`, `rosi-ffmpeg`, and `rosi-ffprobe` sidecars as well
+  non-symlink `conv2-ffmpeg` and `conv2-ffprobe` sidecars as well
   as the host executable and Resources directory. Rust and the privileged
   AppleScript path enforce the same bundle-completeness contract.
 - Tar extraction must reject `Prefix` / `RootDir` / `ParentDir`, hard links,

@@ -8,7 +8,7 @@ use url::Url;
 const MAX_URL_LENGTH: usize = 2048;
 
 /// v1's path.resolve over an absolute path: collapse `.` and `..` lexically.
-fn resolve_absolute(value: &str) -> Option<PathBuf> {
+pub fn resolve_absolute(value: &str) -> Option<PathBuf> {
     let trimmed = value.trim();
     if trimmed.is_empty() {
         return None;
@@ -104,10 +104,7 @@ pub fn safe_external_url(value: &str) -> Option<String> {
         return None;
     }
     let parsed = Url::parse(value).ok()?;
-    if parsed.scheme() != "https"
-        || !parsed.username().is_empty()
-        || parsed.password().is_some()
-    {
+    if parsed.scheme() != "https" || !parsed.username().is_empty() || parsed.password().is_some() {
         return None;
     }
     let host = parsed.host_str()?;

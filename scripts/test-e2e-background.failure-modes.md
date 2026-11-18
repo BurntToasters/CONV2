@@ -1,6 +1,6 @@
 # E2E background mode: failure modes
 
-`scripts/test-e2e.js` sets `ROSI_E2E_BACKGROUND=1` for local macOS and Windows
+`scripts/test-e2e.js` sets `CONV2_E2E_BACKGROUND=1` for local macOS and Windows
 runs so the E2E app never takes focus and its window stays below other apps
 (`src-tauri/src/window.rs` `e2e_background` and `reveal`, `main.rs` activation
 policy on macOS).
@@ -8,15 +8,15 @@ policy on macOS).
 1. CI runs in background mode. CI must keep the normal foreground behavior,
    because hosted runners have no user to disturb and evidence must match the
    shipped window behavior.
-2. A maintainer cannot opt out. `ROSI_E2E_FOREGROUND=1` must disable background
+2. A maintainer cannot opt out. `CONV2_E2E_FOREGROUND=1` must disable background
    mode even on a local Mac.
-3. An explicit `ROSI_E2E_BACKGROUND` value is overwritten. A value the caller
+3. An explicit `CONV2_E2E_BACKGROUND` value is overwritten. A value the caller
    set (`1` or `0`) must win over the default.
 4. Linux runs do not get the flag; macOS and Windows local runs do. Linux keeps
    its Xvfb path and has no background implementation, so `e2eBackgroundValue`
    returns null there. macOS hides the window through its window level and
    WebKit. Windows reveals the window without activation (rows 17 to 27 and 35).
-   A Windows or macOS run with CI or `ROSI_E2E_FOREGROUND=1` keeps the old
+   A Windows or macOS run with CI or `CONV2_E2E_FOREGROUND=1` keeps the old
    foreground path.
 5. `CI` set to an empty string is treated as CI. An empty `CI` means not CI.
 6. `CI=false` or `CI=0` is treated as CI. Those values mean not CI.
@@ -73,7 +73,7 @@ in `window.rs`. tao references are to tao 0.37.1 under the Cargo registry.
     taken for a window created hidden. The reveal calls
     `ShowWindow(SW_SHOWNOACTIVATE)` and never calls `set_focus`, tao `show`, or
     `unminimize`. Probe: the foreground window handle is the same before and
-    after the launch, and the focus monitor records no ROSI activation.
+    after the launch, and the focus monitor records no CONV2 activation.
 18. The window appears above other windows. `ShowWindow` can place a newly shown
     window at the top of the z-order. The reveal moves the window to
     `HWND_BOTTOM` while it is still hidden, shows it without activation, and
@@ -145,18 +145,18 @@ in `window.rs`. tao references are to tao 0.37.1 under the Cargo registry.
     `Win32_UI_WindowsAndMessaging` is enabled for every build, but only code
     behind `feature = "e2e"` uses it, so the release binary is unchanged.
 29. CI or foreground runs change behavior. With CI set to a non-empty value other
-    than `false` or `0`, or with `ROSI_E2E_FOREGROUND=1`, `e2eBackgroundValue`
+    than `false` or `0`, or with `CONV2_E2E_FOREGROUND=1`, `e2eBackgroundValue`
     returns null. The variable is then unset, `e2e_background()` returns false,
     and `reveal` runs the original `unminimize`, `show`, and `set_focus` path.
     Probe: the Node tests cover the value; the Rust path is unchanged when the
     variable is absent.
 30. The variable does not reach Windows child processes. The gate sets
-    `process.env.ROSI_E2E_BACKGROUND` before any launch (`scripts/test-e2e.js`
+    `process.env.CONV2_E2E_BACKGROUND` before any launch (`scripts/test-e2e.js`
     256). `e2eChildEnv` copies the environment to every spawn, and the Windows
     `cmd` wrapper (`usesWindowsCmdShell`) inherits it. Probe: the WebdriverIO
     and runner logs show the value; the gate report does not record it.
 31. The taskbar button appears. A window shown without activation still gets a
-    ROSI taskbar button, and the button does not flash. This is not focus.
+    CONV2 taskbar button, and the button does not flash. This is not focus.
     Documented, not fixed.
 32. The `.focused(!e2e_background())` builder argument has no effect on Windows.
     tao removes its no-activate marker after creation, so a hidden window ignores

@@ -20,7 +20,7 @@ use std::path::{Component, Path, PathBuf};
 /// verified and a complete replacement is live.
 pub const MACOS_PRIVILEGED_INSTALL_SCRIPT: &str = r#"
 on installUpdate(srcPath, newPath, backupPath, bundleIdentifier, executableName)
-  do shell script "NEW=" & quoted form of newPath & "; SRC=" & quoted form of srcPath & "; BAK=" & quoted form of backupPath & "; BID=" & quoted form of bundleIdentifier & "; EXE=" & quoted form of executableName & "; set -e; valid_bundle() { B=\"$1\"; /bin/test ! -L \"$B\" && /bin/test -d \"$B\" && /bin/test ! -L \"$B/Contents\" && /bin/test -d \"$B/Contents\" && /bin/test ! -L \"$B/Contents/Info.plist\" && /bin/test -f \"$B/Contents/Info.plist\" && /bin/test ! -L \"$B/Contents/Resources\" && /bin/test -d \"$B/Contents/Resources\" && /bin/test ! -L \"$B/Contents/MacOS\" && /bin/test -d \"$B/Contents/MacOS\" && /usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' \"$B/Contents/Info.plist\" 2>/dev/null | /usr/bin/grep -Fqx -- \"$BID\" && /usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' \"$B/Contents/Info.plist\" 2>/dev/null | /usr/bin/grep -Fqx -- \"$EXE\" && /bin/test ! -L \"$B/Contents/MacOS/$EXE\" && /bin/test -f \"$B/Contents/MacOS/$EXE\" && /bin/test -s \"$B/Contents/MacOS/$EXE\" && /bin/test -x \"$B/Contents/MacOS/$EXE\" && /bin/test ! -L \"$B/Contents/MacOS/rosi-yt-dlp\" && /bin/test -f \"$B/Contents/MacOS/rosi-yt-dlp\" && /bin/test -s \"$B/Contents/MacOS/rosi-yt-dlp\" && /bin/test -x \"$B/Contents/MacOS/rosi-yt-dlp\" && /bin/test ! -L \"$B/Contents/MacOS/rosi-ffmpeg\" && /bin/test -f \"$B/Contents/MacOS/rosi-ffmpeg\" && /bin/test -s \"$B/Contents/MacOS/rosi-ffmpeg\" && /bin/test -x \"$B/Contents/MacOS/rosi-ffmpeg\" && /bin/test ! -L \"$B/Contents/MacOS/rosi-ffprobe\" && /bin/test -f \"$B/Contents/MacOS/rosi-ffprobe\" && /bin/test -s \"$B/Contents/MacOS/rosi-ffprobe\" && /bin/test -x \"$B/Contents/MacOS/rosi-ffprobe\"; }; /bin/test -d \"$NEW/Contents\" || exit 1; valid_bundle \"$NEW\" || exit 1; if ! valid_bundle \"$SRC\"; then if valid_bundle \"$BAK\"; then if /bin/test -L \"$SRC\" || { /bin/test -e \"$SRC\" && /bin/test ! -d \"$SRC\"; }; then /bin/rm -f \"$SRC\" || exit 1; fi; /bin/mkdir -p \"$SRC\" || exit 1; if /bin/test -e \"$SRC/Contents\" || /bin/test -L \"$SRC/Contents\"; then /bin/rm -rf \"$SRC/Contents\" || exit 1; fi; /bin/mv -f \"$BAK/Contents\" \"$SRC/Contents\" || exit 1; valid_bundle \"$SRC\" || exit 1; /bin/rm -rf \"$BAK\" || exit 1; else exit 1; fi; fi; /bin/test -d \"$SRC/Contents\" || exit 1; if /bin/test -e \"$BAK\" && ! valid_bundle \"$BAK\"; then /bin/rmdir \"$BAK\" 2>/dev/null || exit 1; fi; if /bin/test -e \"$BAK\"; then /bin/rm -rf \"$BAK\"; fi; /bin/mkdir \"$BAK\" || exit 1; /bin/mv -f \"$SRC/Contents\" \"$BAK/Contents\" || { /bin/rmdir \"$BAK\"; exit 1; }; valid_bundle \"$BAK\" || { /bin/mv -f \"$BAK/Contents\" \"$SRC/Contents\"; /bin/rmdir \"$BAK\"; exit 1; }; if /bin/mv -f \"$NEW/Contents\" \"$SRC/Contents\" && valid_bundle \"$SRC\"; then if ! /bin/rm -rf \"$BAK\"; then :; fi; exit 0; fi; if /bin/test -e \"$SRC/Contents\" || /bin/test -L \"$SRC/Contents\"; then /bin/rm -rf \"$SRC/Contents\"; fi; /bin/mv -f \"$BAK/Contents\" \"$SRC/Contents\" && /bin/rmdir \"$BAK\"; exit 1" with administrator privileges
+  do shell script "NEW=" & quoted form of newPath & "; SRC=" & quoted form of srcPath & "; BAK=" & quoted form of backupPath & "; BID=" & quoted form of bundleIdentifier & "; EXE=" & quoted form of executableName & "; set -e; valid_bundle() { B=\"$1\"; /bin/test ! -L \"$B\" && /bin/test -d \"$B\" && /bin/test ! -L \"$B/Contents\" && /bin/test -d \"$B/Contents\" && /bin/test ! -L \"$B/Contents/Info.plist\" && /bin/test -f \"$B/Contents/Info.plist\" && /bin/test ! -L \"$B/Contents/Resources\" && /bin/test -d \"$B/Contents/Resources\" && /bin/test ! -L \"$B/Contents/MacOS\" && /bin/test -d \"$B/Contents/MacOS\" && /usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' \"$B/Contents/Info.plist\" 2>/dev/null | /usr/bin/grep -Fqx -- \"$BID\" && /usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' \"$B/Contents/Info.plist\" 2>/dev/null | /usr/bin/grep -Fqx -- \"$EXE\" && /bin/test ! -L \"$B/Contents/MacOS/$EXE\" && /bin/test -f \"$B/Contents/MacOS/$EXE\" && /bin/test -s \"$B/Contents/MacOS/$EXE\" && /bin/test -x \"$B/Contents/MacOS/$EXE\" && /bin/test ! -L \"$B/Contents/MacOS/conv2-ffmpeg\" && /bin/test -f \"$B/Contents/MacOS/conv2-ffmpeg\" && /bin/test -s \"$B/Contents/MacOS/conv2-ffmpeg\" && /bin/test -x \"$B/Contents/MacOS/conv2-ffmpeg\" && /bin/test ! -L \"$B/Contents/MacOS/conv2-ffprobe\" && /bin/test -f \"$B/Contents/MacOS/conv2-ffprobe\" && /bin/test -s \"$B/Contents/MacOS/conv2-ffprobe\" && /bin/test -x \"$B/Contents/MacOS/conv2-ffprobe\"; }; /bin/test -d \"$NEW/Contents\" || exit 1; valid_bundle \"$NEW\" || exit 1; if ! valid_bundle \"$SRC\"; then if valid_bundle \"$BAK\"; then if /bin/test -L \"$SRC\" || { /bin/test -e \"$SRC\" && /bin/test ! -d \"$SRC\"; }; then /bin/rm -f \"$SRC\" || exit 1; fi; /bin/mkdir -p \"$SRC\" || exit 1; if /bin/test -e \"$SRC/Contents\" || /bin/test -L \"$SRC/Contents\"; then /bin/rm -rf \"$SRC/Contents\" || exit 1; fi; /bin/mv -f \"$BAK/Contents\" \"$SRC/Contents\" || exit 1; valid_bundle \"$SRC\" || exit 1; /bin/rm -rf \"$BAK\" || exit 1; else exit 1; fi; fi; /bin/test -d \"$SRC/Contents\" || exit 1; if /bin/test -e \"$BAK\" && ! valid_bundle \"$BAK\"; then /bin/rmdir \"$BAK\" 2>/dev/null || exit 1; fi; if /bin/test -e \"$BAK\"; then /bin/rm -rf \"$BAK\"; fi; /bin/mkdir \"$BAK\" || exit 1; /bin/mv -f \"$SRC/Contents\" \"$BAK/Contents\" || { /bin/rmdir \"$BAK\"; exit 1; }; valid_bundle \"$BAK\" || { /bin/mv -f \"$BAK/Contents\" \"$SRC/Contents\"; /bin/rmdir \"$BAK\"; exit 1; }; if /bin/mv -f \"$NEW/Contents\" \"$SRC/Contents\" && valid_bundle \"$SRC\"; then if ! /bin/rm -rf \"$BAK\"; then :; fi; exit 0; fi; if /bin/test -e \"$SRC/Contents\" || /bin/test -L \"$SRC/Contents\"; then /bin/rm -rf \"$SRC/Contents\"; fi; /bin/mv -f \"$BAK/Contents\" \"$SRC/Contents\" && /bin/rmdir \"$BAK\"; exit 1" with administrator privileges
 end installUpdate
 "#;
 
@@ -142,7 +142,7 @@ pub fn macos_app_bundle_complete(path: &Path) -> bool {
     {
         return false;
     }
-    ["rosi-yt-dlp", "rosi-ffmpeg", "rosi-ffprobe"]
+    ["conv2-ffmpeg", "conv2-ffprobe"]
         .iter()
         .all(|name| macos_bundle_executable_complete(&macos_path.join(name)))
 }
@@ -222,7 +222,7 @@ pub fn macos_bundle_supports_runtime_host(
     if !macos_executable_supports_runtime_host(&executable, compile_arch, rosetta_translated) {
         return false;
     }
-    ["rosi-yt-dlp", "rosi-ffmpeg", "rosi-ffprobe"]
+    ["conv2-ffmpeg", "conv2-ffprobe"]
         .iter()
         .all(|sidecar| {
             macos_executable_supports_runtime_host(
@@ -373,7 +373,7 @@ pub fn macos_update_backup_path(extract_path: &Path) -> Option<PathBuf> {
         .fold(0xcbf29ce484222325_u64, |hash, byte| {
             (hash ^ u64::from(byte)).wrapping_mul(0x100000001b3)
         });
-    Some(parent.join(format!(".{app_name}.rosi-update-backup-{hash:016x}")))
+    Some(parent.join(format!(".{app_name}.conv2-update-backup-{hash:016x}")))
 }
 
 /// Serialize all in-process macOS bundle swaps and their recovery steps.
@@ -662,7 +662,7 @@ pub fn move_dir_replacing(src: &Path, dst: &Path) -> std::io::Result<()> {
         Err(err) if is_cross_device(&err) => {
             if let Some(parent) = dst.parent() {
                 let staging = tempfile::Builder::new()
-                    .prefix(".rosi-update-staging-")
+                    .prefix(".conv2-update-staging-")
                     .tempdir_in(parent)?;
                 copy_dir_all(src, staging.path())?;
                 std::fs::rename(staging.path(), dst)?;
@@ -690,10 +690,10 @@ mod tests {
         std::fs::create_dir_all(&macos).unwrap();
         std::fs::write(
             path.join("Contents/Info.plist"),
-            "<plist><dict><key>CFBundleIdentifier</key><string>run.rosie.rosi</string><key>CFBundleExecutable</key><string>rosi</string></dict></plist>",
+            "<plist><dict><key>CFBundleIdentifier</key><string>run.rosie.conv2</string><key>CFBundleExecutable</key><string>conv2</string></dict></plist>",
         )
         .unwrap();
-        for name in ["rosi", "rosi-yt-dlp", "rosi-ffmpeg", "rosi-ffprobe"] {
+        for name in ["conv2", "conv2-ffmpeg", "conv2-ffprobe"] {
             let binary = macos.join(name);
             std::fs::write(&binary, b"round2 sidecar fixture").unwrap();
             std::fs::set_permissions(&binary, std::fs::Permissions::from_mode(0o755)).unwrap();
@@ -706,11 +706,11 @@ mod tests {
         use std::os::unix::fs::PermissionsExt;
 
         let temp = tempfile::tempdir().unwrap();
-        let bundle = temp.path().join("ROSI.app");
+        let bundle = temp.path().join("CONV2.app");
         write_round2_complete_app_bundle(&bundle);
         assert!(macos_app_bundle_complete(&bundle));
 
-        for name in ["rosi-yt-dlp", "rosi-ffmpeg", "rosi-ffprobe"] {
+        for name in ["conv2-ffmpeg", "conv2-ffprobe"] {
             let sidecar = bundle.join("Contents/MacOS").join(name);
             std::fs::remove_file(&sidecar).unwrap();
             assert!(
@@ -721,7 +721,7 @@ mod tests {
             std::fs::set_permissions(&sidecar, std::fs::Permissions::from_mode(0o755)).unwrap();
         }
 
-        let ffprobe = bundle.join("Contents/MacOS/rosi-ffprobe");
+        let ffprobe = bundle.join("Contents/MacOS/conv2-ffprobe");
         std::fs::set_permissions(&ffprobe, std::fs::Permissions::from_mode(0o644)).unwrap();
         assert!(
             !macos_app_bundle_complete(&bundle),
@@ -731,7 +731,7 @@ mod tests {
 
     #[test]
     fn round2_privileged_validator_checks_all_critical_sidecars() {
-        for name in ["rosi-yt-dlp", "rosi-ffmpeg", "rosi-ffprobe"] {
+        for name in ["conv2-ffmpeg", "conv2-ffprobe"] {
             for condition in ["! -L", "-f", "-s", "-x"] {
                 assert!(
                     MACOS_PRIVILEGED_INSTALL_SCRIPT.contains(&format!(
@@ -812,9 +812,9 @@ mod tests {
 
     #[test]
     fn backup_path_is_scoped_to_the_app_and_installation() {
-        let first_app = Path::new("/Applications/ROSI.app");
+        let first_app = Path::new("/Applications/CONV2.app");
         let other_app = Path::new("/Applications/Helper.app");
-        let second_install = Path::new("/Volumes/Applications/ROSI.app");
+        let second_install = Path::new("/Volumes/Applications/CONV2.app");
         let first_backup = macos_update_backup_path(first_app).unwrap();
 
         assert_eq!(first_backup.parent(), first_app.parent());
@@ -827,7 +827,7 @@ mod tests {
             .file_name()
             .unwrap()
             .to_string_lossy()
-            .contains("ROSI"));
+            .contains("CONV2"));
     }
 
     struct TestDirectory(PathBuf);
@@ -875,7 +875,7 @@ mod tests {
             std::fs::set_permissions(&executable_path, std::fs::Permissions::from_mode(0o755))
                 .expect("mark bundle executable");
         }
-        for name in ["rosi-yt-dlp", "rosi-ffmpeg", "rosi-ffprobe"] {
+        for name in ["conv2-ffmpeg", "conv2-ffprobe"] {
             let sidecar = macos.join(name);
             std::fs::write(&sidecar, b"test sidecar").expect("write required bundle sidecar");
             #[cfg(unix)]
@@ -890,14 +890,14 @@ mod tests {
     #[test]
     fn complete_bundle_requires_identity_executable_and_resources() {
         let directory = TestDirectory::new();
-        let complete = directory.0.join("ROSI.app");
-        write_test_bundle(&complete, "run.rosie.rosi", "ROSI");
+        let complete = directory.0.join("CONV2.app");
+        write_test_bundle(&complete, "run.rosie.conv2", "CONV2");
         assert!(macos_app_bundle_complete(&complete));
         assert_eq!(
             macos_app_bundle_identity(&complete),
             Some(MacosBundleIdentity {
-                bundle_identifier: "run.rosie.rosi".into(),
-                executable: "ROSI".into(),
+                bundle_identifier: "run.rosie.conv2".into(),
+                executable: "CONV2".into(),
             })
         );
 
@@ -906,26 +906,26 @@ mod tests {
         assert!(!macos_app_bundle_complete(&partial));
 
         let missing_executable = directory.0.join("MissingExecutable.app");
-        write_test_bundle(&missing_executable, "run.rosie.rosi", "ROSI");
-        std::fs::remove_file(missing_executable.join("Contents/MacOS/ROSI"))
+        write_test_bundle(&missing_executable, "run.rosie.conv2", "CONV2");
+        std::fs::remove_file(missing_executable.join("Contents/MacOS/CONV2"))
             .expect("remove expected executable");
         assert!(!macos_app_bundle_complete(&missing_executable));
 
         let empty_executable = directory.0.join("EmptyExecutable.app");
-        write_test_bundle(&empty_executable, "run.rosie.rosi", "ROSI");
-        std::fs::write(empty_executable.join("Contents/MacOS/ROSI"), b"")
+        write_test_bundle(&empty_executable, "run.rosie.conv2", "CONV2");
+        std::fs::write(empty_executable.join("Contents/MacOS/CONV2"), b"")
             .expect("truncate expected executable");
         assert!(!macos_app_bundle_complete(&empty_executable));
 
         #[cfg(unix)]
         {
             let symlinked_macos = directory.0.join("SymlinkedMacos.app");
-            write_test_bundle(&symlinked_macos, "run.rosie.rosi", "ROSI");
+            write_test_bundle(&symlinked_macos, "run.rosie.conv2", "CONV2");
             let external_macos = directory.0.join("external-macos");
             std::fs::create_dir(&external_macos).expect("create external MacOS directory");
             std::fs::copy(
-                symlinked_macos.join("Contents/MacOS/ROSI"),
-                external_macos.join("ROSI"),
+                symlinked_macos.join("Contents/MacOS/CONV2"),
+                external_macos.join("CONV2"),
             )
             .expect("copy external executable");
             std::fs::remove_dir_all(symlinked_macos.join("Contents/MacOS"))

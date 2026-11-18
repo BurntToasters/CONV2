@@ -1,40 +1,22 @@
 //! Update engine: channel resolution, feed checks, downloads, installs, and
-//! the `update-state` events the renderer renders. v1 semantics (updater.ts,
-//! updateMachine.ts, updaterPolicy.ts) on the ROSI single-writer
-//! architecture: one state thread owns every decision and emit; worker
-//! threads only ask (`request`) and report (`submit`), and never wait on the
-//! network or the settings file inside the state thread.
+//! the `update-state` events the renderer renders (v1 updater.ts semantics).
+//! One state thread owns every decision and emit; workers only ask
+//! (`request`) and report (`submit`), and never block it on I/O.
 //!
 //! Failure modes, written before the code:
-//! 1. A feed answer lands after a channel switch: the check is discarded, a
-//!    silent recheck is queued (v1 `discard` + `recheckQueued`), and stale
-//!    reports are dropped by check generation.
-//! 2. Downloaded bytes race a channel switch: the download epoch fence drops
-//!    them and clears the offer (v1 epoch mismatch in the `downloaded`
-//!    event).
-//! 3. Two checks at once: single-flight in `begin_check`; manual re-entry
-//!    reports `already-checking`, silent re-entry stays quiet.
-//! 4. Two downloads at once: refused while one runs. The plugin cannot abort
-//!    a transfer, so cancel marks it, swallows the result, and holds new
-//!    downloads until the transfer ends.
-//! 5. The beta feed has nothing newer while the running version is a
-//!    prerelease: one fallback tick rechecks the stable feed (v1
-//!    `fallback-tick`), so a stable release still upgrades a beta install.
-//! 6. settings.json is missing, partial, or unparseable: channel and
-//!    autoCheckUpdates fall back to v1 defaults (auto, true). A failed
-//!    channel save refuses revalidation until a save succeeds, so the file
-//!    never disagrees with what was revalidated.
-//! 7. Store builds, CONV2_DISABLE_UPDATES, or unpackaged dev builds never hit
-//!    the feed. Flatpak builds see the feed but every download or install
-//!    refuses with a manual-reinstall notice (v1 disabled them entirely).
-//! 8. Conversions still run at install: refuse with INTERNAL_ERROR so the UI
-//!    can offer restart-after through `api.restartApp` once the queue drains
-//!    (v1 stopped the queue itself; the stop helper belongs to conversion.rs).
-//! 9. Install or restart fails: the error is reported and the downloaded
-//!    update is kept; the installed marker makes the retry restart without
-//!    reinstalling.
-//! 10. A feed or download error must not clobber a downloaded update: the
-//!     downloaded payload stays the visible state (v1 `reportError`).
+//! 1. A feed answer after a channel switch: discard it, queue a silent recheck.
+//! 2. Download bytes race a channel switch: the epoch fence drops them.
+//! 3. Two checks at once: single-flight; manual re-entry reports
+//!    `already-checking`, silent re-entry stays quiet.
+//! 4. Two downloads: refused while one runs. Cancel discards the result.
+//! 5. The beta feed has nothing newer on a prerelease: recheck stable once.
+//! 6. settings.json missing or corrupt: channel `auto`, auto-check on.
+//! 7. Store, CONV2_DISABLE_UPDATES, or dev builds never hit the feed; Flatpak
+//!    refuses download and install with a manual-reinstall notice.
+//! 8. Conversions running at install: INTERNAL_ERROR; the UI offers restart
+//!    after the queue drains.
+//! 9. Install fails: keep the download; a retry restarts without reinstalling.
+//! 10. A feed or download error never clobbers a downloaded update.
 
 use crate::app_state;
 use crate::constants;
@@ -313,6 +295,7 @@ enum InstallOutcome {
     Restarted,
 }
 
+#[allow(clippy::large_enum_variant)] // one-shot channel messages
 enum Command {
     BeginCheck {
         mode: CheckMode,
@@ -414,6 +397,12 @@ impl Default for State {
 }
 
 impl State {
+    /// Tell the app menu whether Install Update is available, then refresh.
+    fn sync_menu(&self) {
+        crate::app_menu::set_update_ready(self.downloaded.is_some() && !self.installing);
+        crate::app_menu::refresh();
+    }
+
     /// Every emit updates the engine's current state so each command can
     /// answer with the payload the renderer last saw.
     fn send(&mut self, phase: UpdatePhase, manual: bool, message: impl Into<String>) {
@@ -456,7 +445,7 @@ impl State {
             }
             return CheckStart::Terminal;
         }
-        if let Some(active) = &self.check {
+        if let Some(_active) = &self.check {
             if manual {
                 self.send(UpdatePhase::AlreadyChecking, true, ALREADY_CHECKING_MESSAGE);
             }
@@ -520,7 +509,7 @@ impl State {
                 // A newer version replaces a stale download (v1 menu-changed).
                 if self.downloaded.take().is_some() {
                     candidates.downloaded = None;
-                    crate::app_menu::refresh();
+                    self.sync_menu();
                 }
                 let message = if self.flatpak {
                     format!("Version {version} is available. {FLATPAK_NOTICE}")
@@ -652,7 +641,7 @@ impl State {
         &mut self,
         candidates: &mut Candidates,
         result: Result<(Vec<u8>, Update), String>,
-        epoch: u64,
+        _epoch: u64,
     ) -> FinishOutcome {
         let Some(active) = self.download.take() else {
             return FinishOutcome::Cancelled;
@@ -665,11 +654,7 @@ impl State {
                 if let Some(version) = self.downloaded.clone() {
                     self.send_downloaded(&version);
                 } else {
-                    self.send(
-                        UpdatePhase::Error,
-                        true,
-                        format!("Update error: {message}"),
-                    );
+                    self.send(UpdatePhase::Error, true, format!("Update error: {message}"));
                 }
                 FinishOutcome::Failed
             }
@@ -677,7 +662,7 @@ impl State {
                 if active.epoch != self.epoch {
                     self.offer = None;
                     candidates.offer = None;
-                    crate::app_menu::refresh();
+                    self.sync_menu();
                     return FinishOutcome::Fenced;
                 }
                 self.offer = None;
@@ -687,7 +672,7 @@ impl State {
                     update,
                     bytes: Arc::new(bytes),
                 });
-                crate::app_menu::refresh();
+                self.sync_menu();
                 self.send_downloaded(&active.version);
                 FinishOutcome::Accepted
             }
@@ -731,7 +716,7 @@ impl State {
         candidates.offer = None;
         if self.downloaded.take().is_some() {
             candidates.downloaded = None;
-            crate::app_menu::refresh();
+            self.sync_menu();
         }
         self.send(UpdatePhase::NotAvailable, false, CHANNEL_CHANGED_MESSAGE);
         if self.check.is_some() {
@@ -771,7 +756,7 @@ impl State {
             return false;
         }
         self.installing = true;
-        crate::app_menu::refresh();
+        self.sync_menu();
         self.send(UpdatePhase::Installing, true, INSTALLING_MESSAGE);
         true
     }
@@ -796,11 +781,7 @@ impl State {
         match outcome {
             InstallOutcome::Failed(message) => {
                 if self.downloaded.as_deref() == Some(version) {
-                    self.send(
-                        UpdatePhase::Error,
-                        true,
-                        format!("Update error: {message}"),
-                    );
+                    self.send(UpdatePhase::Error, true, format!("Update error: {message}"));
                 }
             }
             InstallOutcome::Restarted => {
@@ -812,7 +793,7 @@ impl State {
             }
         }
         self.installing = false;
-        crate::app_menu::refresh();
+        self.sync_menu();
     }
 
     /// Route one command. Returns whether a silent recheck should spawn.
@@ -908,12 +889,14 @@ impl State {
 }
 
 /// What the download worker receives: the plugin object plus its epoch.
+#[allow(clippy::large_enum_variant)]
 enum DownloadStartReply {
     Start { epoch: u64, update: Update },
     Terminal,
 }
 
 /// What the install worker receives: the plugin object plus its bytes.
+#[allow(clippy::large_enum_variant)]
 enum InstallStartReply {
     Proceed {
         version: String,
@@ -926,7 +909,7 @@ enum InstallStartReply {
 
 fn current_gates() -> Gates {
     Gates {
-        disabled: crate::platform::distribution_channel() == "msstore" || updates_disabled_by_env(),
+        disabled: updates_disabled(),
         packaged: e2e_override(|config| config.is_packaged).unwrap_or_else(is_packaged),
         flatpak: e2e_override(|config| config.is_flatpak).unwrap_or_else(flatpak_build),
     }
@@ -1044,7 +1027,9 @@ fn write_settings_atomically(path: &std::path::Path, contents: &str) -> Result<(
         .unwrap_or_else(|| std::path::Path::new("."));
     let temporary = directory.join(format!(
         "{}.updater.tmp",
-        path.file_name().and_then(|name| name.to_str()).unwrap_or("settings.json")
+        path.file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("settings.json")
     ));
     std::fs::write(&temporary, contents)
         .map_err(|error| format!("Could not write {}: {error}", temporary.display()))?;
@@ -1056,6 +1041,11 @@ fn write_settings_atomically(path: &std::path::Path, contents: &str) -> Result<(
 // ── platform answers (platform.rs exposes distribution_channel only) ──────
 
 /// v1's CONV2_DISABLE_UPDATES kill switch.
+/// Store builds and the env switch both turn the updater off.
+pub fn updates_disabled() -> bool {
+    crate::platform::distribution_channel() == "msstore" || updates_disabled_by_env()
+}
+
 fn updates_disabled_by_env() -> bool {
     matches!(
         std::env::var("CONV2_DISABLE_UPDATES").as_deref(),
@@ -1180,8 +1170,7 @@ fn compact_target(beta: bool) -> Option<String> {
     if e2e_override(|config| config.disable_compact.then_some(())).is_some() {
         return None;
     }
-    e2e_override(|config| config.compact_target.clone())
-        .or_else(|| compute_compact_target(beta))
+    e2e_override(|config| config.compact_target.clone()).or_else(|| compute_compact_target(beta))
 }
 
 /// The feed's target: compact first on macOS, else the beta target, else the
@@ -1347,7 +1336,7 @@ fn format_bytes(bytes: f64) -> String {
 }
 
 fn download_flow() {
-    let Some(app) = app_state::app().cloned() else {
+    let Some(_app) = app_state::app().cloned() else {
         return;
     };
     let (epoch, mut update) = match request(|reply| Command::BeginDownload { reply }) {
@@ -1361,10 +1350,7 @@ fn download_flow() {
         |chunk, content_length| {
             transferred = transferred.saturating_add(chunk as u64);
             total = content_length.unwrap_or(0);
-            submit(Command::DownloadProgress {
-                transferred,
-                total,
-            });
+            submit(Command::DownloadProgress { transferred, total });
         },
         || {},
     ))
@@ -1403,8 +1389,10 @@ fn install_flow() -> InstallExit {
         return InstallExit::Busy;
     }
     e2e_hold(|config| config.install_confirm_hold_ms);
-    let confirmed =
-        request(|reply| Command::ConfirmInstall { version: version.clone(), reply });
+    let confirmed = request(|reply| Command::ConfirmInstall {
+        version: version.clone(),
+        reply,
+    });
     if !confirmed.unwrap_or(false) {
         return InstallExit::Done(current_payload());
     }
@@ -1577,7 +1565,10 @@ pub async fn set_update_channel(
     .await
     {
         Ok(payload) => ipc::ok(payload),
-        Err(error) => ipc::err(INTERNAL_ERROR, format!("Update channel switch stopped: {error}")),
+        Err(error) => ipc::err(
+            INTERNAL_ERROR,
+            format!("Update channel switch stopped: {error}"),
+        ),
     }
 }
 
@@ -1779,7 +1770,10 @@ mod tests {
         assert!(!should_accept_update("2.0.0-alpha.3", "2.0.0-beta.1"));
         assert!(should_accept_update("2.0.0-rc.1", "2.0.0-beta.9"));
         // build metadata never counts
-        assert!(!should_accept_update("2.0.0-beta.1+build.2", "2.0.0-beta.1"));
+        assert!(!should_accept_update(
+            "2.0.0-beta.1+build.2",
+            "2.0.0-beta.1"
+        ));
     }
 
     #[test]
@@ -1804,37 +1798,28 @@ mod tests {
         state.check = Some(active_check(1));
 
         // The switch emits, drops the downloaded update, fences the check.
-        assert!(!state.channel_changed(
-            &mut candidates,
-            UpdateChannel::Beta,
-            Ok(())
-        ));
+        assert!(!state.channel_changed(&mut candidates, UpdateChannel::Beta, Ok(())));
         assert_eq!(state.epoch, 1);
         assert!(state.downloaded.is_none());
         assert!(state.check.as_ref().is_some_and(|check| check.discard));
         assert!(state.recheck_queued);
         assert_eq!(state.last.phase, UpdatePhase::NotAvailable);
-        assert_eq!(state.last.message.as_deref(), Some("Update channel changed."));
+        assert_eq!(
+            state.last.message.as_deref(),
+            Some("Update channel changed.")
+        );
 
         // The stale beta-feed answer is dropped and ends the discarded check.
-        let (decision, spawn_recheck) = state.report_feed(
-            &mut candidates,
-            1,
-            FeedPhase::Beta,
-            FeedOutcome::NoneNewer,
-        );
+        let (decision, spawn_recheck) =
+            state.report_feed(&mut candidates, 1, FeedPhase::Beta, FeedOutcome::NoneNewer);
         assert!(matches!(decision, FeedDecision::Stale));
         assert!(spawn_recheck);
         assert!(state.check.is_none());
         assert!(!state.recheck_queued);
 
         // A late answer from the retired generation is ignored entirely.
-        let (decision, _) = state.report_feed(
-            &mut candidates,
-            1,
-            FeedPhase::Beta,
-            FeedOutcome::NoneNewer,
-        );
+        let (decision, _) =
+            state.report_feed(&mut candidates, 1, FeedPhase::Beta, FeedOutcome::NoneNewer);
         assert!(matches!(decision, FeedDecision::Stale));
     }
 
@@ -1851,7 +1836,7 @@ mod tests {
             CheckStart::Terminal
         ));
         assert_eq!(state.last.phase, UpdatePhase::AlreadyChecking);
-        assert_eq!(state.last.manual, true);
+        assert!(state.last.manual);
         // A silent re-entry stays quiet.
         assert!(matches!(
             state.begin_check(CheckMode::Silent, gates()),
@@ -1870,10 +1855,7 @@ mod tests {
             CheckStart::Terminal
         ));
         assert_eq!(disabled.last.phase, UpdatePhase::Disabled);
-        assert_eq!(
-            disabled.last.message.as_deref(),
-            Some(DISABLED_MESSAGE)
-        );
+        assert_eq!(disabled.last.message.as_deref(), Some(DISABLED_MESSAGE));
         // Silent checks on a disabled build emit nothing.
         let mut quiet = State::default();
         assert!(matches!(
@@ -1892,12 +1874,8 @@ mod tests {
         state.check = Some(active_check(1));
 
         // The beta feed is empty: recheck stable, do not finish.
-        let (decision, spawn) = state.report_feed(
-            &mut candidates,
-            1,
-            FeedPhase::Beta,
-            FeedOutcome::NoneNewer,
-        );
+        let (decision, spawn) =
+            state.report_feed(&mut candidates, 1, FeedPhase::Beta, FeedOutcome::NoneNewer);
         assert!(matches!(decision, FeedDecision::FallbackStable));
         assert!(!spawn);
         assert_eq!(state.last.phase, UpdatePhase::Checking);
@@ -1927,16 +1905,15 @@ mod tests {
             last_emit: None,
         });
         state.cancel_download();
-        assert!(state.download.as_ref().is_some_and(|active| active.cancelled));
+        assert!(state
+            .download
+            .as_ref()
+            .is_some_and(|active| active.cancelled));
         assert_eq!(state.last.phase, UpdatePhase::NotAvailable);
         assert_eq!(state.last.message.as_deref(), Some(CANCELLED_MESSAGE));
 
         // Whatever the transfer reports after cancelling is discarded.
-        let outcome = state.finish_download(
-            &mut candidates,
-            Err("late network failure".into()),
-            0,
-        );
+        let outcome = state.finish_download(&mut candidates, Err("late network failure".into()), 0);
         assert!(matches!(outcome, FinishOutcome::Cancelled));
         assert!(state.download.is_none());
         assert!(state.downloaded.is_none());

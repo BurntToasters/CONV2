@@ -510,9 +510,7 @@ function main({
     { timeout: rustTimeoutMs },
   );
   if (rustPrepared) {
-    // FFmpeg sidecar check replaces ROSI's yt-dlp gate; CONV2 bundles no
-    // yt-dlp. TODO: scripts/check-ffmpeg.cjs is the unported ROSI copy until
-    // the porting wave adapts it.
+    // FFmpeg payload and checksum check; CONV2 bundles no other binary.
     runner("ffmpeg", npm, ["run", "ffmpeg:check"], null, results);
     runner(
       "clippy",

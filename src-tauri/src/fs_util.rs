@@ -27,8 +27,8 @@ impl Sha256 {
     fn new() -> Self {
         Sha256 {
             state: [
-                0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c,
-                0x1f83d9ab, 0x5be0cd19,
+                0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab,
+                0x5be0cd19,
             ],
             buf: [0u8; 64],
             buf_len: 0,
@@ -115,10 +115,12 @@ impl Sha256 {
             *word = u32::from_be_bytes(block[index * 4..index * 4 + 4].try_into().unwrap());
         }
         for index in 16..64 {
-            let s0 =
-                w[index - 15].rotate_right(7) ^ w[index - 15].rotate_right(18) ^ (w[index - 15] >> 3);
-            let s1 =
-                w[index - 2].rotate_right(17) ^ w[index - 2].rotate_right(19) ^ (w[index - 2] >> 10);
+            let s0 = w[index - 15].rotate_right(7)
+                ^ w[index - 15].rotate_right(18)
+                ^ (w[index - 15] >> 3);
+            let s1 = w[index - 2].rotate_right(17)
+                ^ w[index - 2].rotate_right(19)
+                ^ (w[index - 2] >> 10);
             w[index] = w[index - 16]
                 .wrapping_add(s0)
                 .wrapping_add(w[index - 7])
@@ -307,4 +309,3 @@ pub fn read_json(path: &Path, max_bytes: u64) -> Option<serde_json::Value> {
 // Coverage for these helpers lives with the FFmpeg gate that consumes them
 // (src-tauri/src/ffmpeg_status.rs), so this file stays free of a second
 // #[cfg(test)] compilation once the conversion port declares it at the root.
-

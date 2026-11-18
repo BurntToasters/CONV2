@@ -10,11 +10,11 @@
 
 # ⬇️ Downloads
 
-| <img height="20" src="https://github.com/user-attachments/assets/340d360e-79b1-4c70-bfab-d944085f75df" /> Windows                                                                                              | <img height="20" src="https://github.com/user-attachments/assets/42d7e887-4616-4e8c-b1d3-e44e01340f8c" /> MacOS | <img height="20" src="https://github.com/user-attachments/assets/e0cc4f33-4516-408b-9c5c-be71a3ac316b" /> Linux                                                                                                                |
-| :------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | :-------------------------------------------------------------------------------------------------------------- | :----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Setup:** [x64](https://github.com/BurntToasters/CONV2/releases/latest/download/CONV2-Win-x64-Setup.exe) / [arm64](https://github.com/BurntToasters/CONV2/releases/latest/download/CONV2-Win-arm64-Setup.exe) | **[Universal DMG](https://github.com/BurntToasters/CONV2/releases/latest/download/CONV2-macOS-universal.dmg)**  | **AppImage:** [x64](https://github.com/BurntToasters/CONV2/releases/latest/download/CONV2-Linux-x86_64.AppImage) / [arm64](https://github.com/BurntToasters/CONV2/releases/latest/download/CONV2-Linux-arm64.AppImage)         |
-| <div align="center"><!--<a href="#"><img src="https://get.microsoft.com/images/en-us%20light.svg" width="150"/></a>--></div>                                                                                   | **[Universal ZIP](https://github.com/BurntToasters/CONV2/releases/latest/download/CONV2-macOS-universal.zip)**  | **Flatpak sideload:** [x64](https://github.com/BurntToasters/CONV2/releases/latest/download/CONV2-Linux-x86_64.flatpak) / [arm64](https://github.com/BurntToasters/CONV2/releases/latest/download/CONV2-Linux-aarch64.flatpak) |
-| _See MSI note in releases_                                                                                                                                                                                     |                                                                                                                 |                                                                                                                                                                                                                                |
+| <img height="20" src="https://github.com/user-attachments/assets/340d360e-79b1-4c70-bfab-d944085f75df" /> Windows                                                                                              | <img height="20" src="https://github.com/user-attachments/assets/42d7e887-4616-4e8c-b1d3-e44e01340f8c" /> MacOS | <img height="20" src="https://github.com/user-attachments/assets/e0cc4f33-4516-408b-9c5c-be71a3ac316b" /> Linux         |
+| :------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | :-------------------------------------------------------------------------------------------------------------- | :---------------------------------------------------------------------------------------------------------------------- |
+| **Setup:** [x64](https://github.com/BurntToasters/CONV2/releases/latest/download/CONV2-Win-x64-Setup.exe) / [arm64](https://github.com/BurntToasters/CONV2/releases/latest/download/CONV2-Win-arm64-Setup.exe) | **[Universal DMG](https://github.com/BurntToasters/CONV2/releases/latest/download/CONV2-macOS-universal.dmg)**  | **AppImage:** [x64](https://github.com/BurntToasters/CONV2/releases/latest/download/CONV2-Linux-x86_64.AppImage)        |
+| <div align="center"><!--<a href="#"><img src="https://get.microsoft.com/images/en-us%20light.svg" width="150"/></a>--></div>                                                                                   | **[Universal ZIP](https://github.com/BurntToasters/CONV2/releases/latest/download/CONV2-macOS-universal.zip)**  | **Flatpak sideload:** [x64](https://github.com/BurntToasters/CONV2/releases/latest/download/CONV2-Linux-x86_64.flatpak) |
+| _Also on the Microsoft Store_                                                                                                                                                                                  |                                                                                                                 |                                                                                                                         |
 
 ### ℹ️ Enjoying CONV2? Consider [❤️ Supporting Me! ❤️](https://rosie.run/support)
 
@@ -22,31 +22,35 @@
 
 ## What is CONV2?
 
-### CONV2 is a quick and simple video converter using ffmpeg on the backend which features:
+### CONV2 is a quick and simple video converter using FFmpeg, which features:
 
-- In-App Updates
-- Windows, macOS, and Linux Support
-- Native **File / Convert / Help** menus on Windows and macOS (no system-wide “Open with CONV2” file registration)
-- Multi-file **batch queue** with per-file status in the main window
-- Minimalist UI
-- Minimal Bloat (besides the part that its electron-based)
-- Quick Video Presets
-- Advanced Settings
-- Light and Dark Mode
-- And More!
+- In-app updates with signed, verified downloads
+- Windows, macOS, and Linux support
+- 28 conversion presets: AV1, H.264, H.265, AVI, GIF, animated WebP, remux, and audio extraction
+- Multi-file **batch queue** with per-file status, retry, and cancel
+- Hardware encoding with automatic CPU fallback
+- Advanced per-format quality settings
+- A native menu on macOS
+- Light, dark, and custom themes
+- Built on [Tauri 2](https://tauri.app): small installers and low memory use
 
 ## What installers are available?
 
 - **Windows**
-  - `.EXE`: x64, arm64
-    - There are portable `.exe` binaries available but they are experimental.
-  - `.MSI`: x64, arm64 (Important! MSI builds have the auto updater permanently disabled as these are meant for enterprise installments!)
-- **MacOS** (Intel support may be phased out soon)
-  - `.DMG`: Universal
-  - `.ZIP`: Universal
+  - Setup (`.exe`, NSIS): x64, arm64
+  - Microsoft Store (stable releases)
+- **macOS** (macOS 15 or later)
+  - `.DMG` and `.ZIP`: universal, arm64, and x64
 - **Linux**
-  - `Flatpak sideload`: x64, arm64 (no Flathub publication)
-  - `.AppImage`: x64, arm64
+  - `.AppImage`: x64
+  - Flatpak sideload: x64 (no Flathub publication)
+
+## Upgrading from CONV2 1
+
+CONV2 2 is a new application (`run.rosie.conv2`). CONV2 1 cannot update itself
+into it; the final CONV2 1 release offers a guided upgrade. On first launch,
+CONV2 2 imports your CONV2 1 settings, window position, and GPU cache. The old
+data is never modified.
 
 ## Hardware acceleration
 
@@ -81,7 +85,8 @@ Notes:
 
 ## FFmpeg
 
-Conv2 comes bundled with a platform specific FFMPEG binary. See the source at: https://github.com/BurntToasters/ffmpeg-static-builds
+CONV2 bundles a platform-specific FFmpeg and FFprobe, verified against a
+checksum manifest before every run. See the source at: https://github.com/BurntToasters/ffmpeg-static-builds
 
 ### Want more info? Please visit: [https://help.rosie.run/conv2/en-us/faq](https://help.rosie.run/conv2/en-us/faq)!
 
@@ -89,11 +94,29 @@ Conv2 comes bundled with a platform specific FFMPEG binary. See the source at: h
 
 ## Building CONV2
 
-CONV2 is an electronjs application using nodejs/npm for its environment.
+CONV2 is a Tauri 2 application: a TypeScript frontend (Vite) and a Rust backend.
 
-- Build scripts are available in the `package.json` file.
-- To install all dependencies run `npm i`.
+- Prerequisites per platform are in [build-setup.md](build-setup.md).
+- Install dependencies with `npm ci`, then fetch FFmpeg with `npm run get:ffmpeg`
+  (needs `FFMPEG_DL_SERVER`) or use `npm run prepare:rust-tests` for stubs.
+- Run the app with `npm run tauri:dev`; build without bundling with
+  `npx tauri build --no-bundle`.
+- Scripts are listed in `package.json`. How the code fits together is in
+  [ARCHITECTURE.md](ARCHITECTURE.md), and the release process is in
+  [docs/RELEASE-STABLE.md](docs/RELEASE-STABLE.md).
+
+### Tests
+
+- `npm run test:all` is the full quality gate.
+- `npm run test:e2e` drives the real app through WebdriverIO: every preset is
+  converted and verified with FFprobe, plus batch, cancel, settings, UI failure
+  modes, accessibility in four themes, and the CONV2 1 import. It writes a
+  hash-bound evidence report to `e2e/artifacts/`. `npm run test:e2e:core` runs a
+  fast subset.
 
 ### CI
 
-To save CI minutes, GitHub Actions tests run only for pushes to `main` and `beta`, never on any other branch. Pull requests into `main` run only the stable promotion metadata check. Run `npm run test:all` and `npm run test:e2e` locally before merging work branches.
+GitHub Actions runs on pull requests and pushes to `main` and `beta`, and weekly
+for security and the live updater feed. A pull request into `main` must be a
+`next-*` promotion or a `release/*` metadata change. Run `npm run test:all` and
+`npm run test:e2e` locally before opening a promotion pull request.

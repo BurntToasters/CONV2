@@ -1,4 +1,3 @@
-import "./audit4-release.test.mjs";
 import assert from "node:assert/strict";
 import crypto from "node:crypto";
 import fs from "node:fs";
@@ -40,31 +39,31 @@ function json(value) {
 function metadataFiles() {
   const base = {
     "package.json": json({
-      name: "rosi",
+      name: "conv2",
       version: beta,
       dependencies: { tauri: "2" },
     }),
     "package-lock.json": json({
-      name: "rosi",
+      name: "conv2",
       version: beta,
       packages: {
-        "": { name: "rosi", version: beta },
+        "": { name: "conv2", version: beta },
         "node_modules/tauri": { version: "2" },
       },
     }),
-    "src-tauri/Cargo.toml": `[package]\nname = "rosi"\nversion = "${beta}"\n\n[dependencies]\ntauri = "2"\n`,
-    "src-tauri/Cargo.lock": `[[package]]\nname = "rosi"\nversion = "${beta}"\n\n[[package]]\nname = "tauri"\nversion = "2.0.0"\n`,
+    "src-tauri/Cargo.toml": `[package]\nname = "conv2"\nversion = "${beta}"\n\n[dependencies]\ntauri = "2"\n`,
+    "src-tauri/Cargo.lock": `[[package]]\nname = "conv2"\nversion = "${beta}"\n\n[[package]]\nname = "tauri"\nversion = "2.0.0"\n`,
     "src-tauri/Info.plist": `<?xml version="1.0"?><plist><dict><key>CFBundleShortVersionString</key><string>${beta}</string><key>CFBundleVersion</key><string>${beta}</string></dict></plist>\n`,
     "src-tauri/tauri.conf.json": json({
-      productName: "ROSI",
+      productName: "CONV2",
       version: beta,
       bundle: {
         resources: {},
         macOS: { bundleVersion: macBundleVersionFromSemver(beta) },
       },
     }),
-    "CHANGELOG.md": `# ROSI\n\n## Changes in \`v${beta}:\`\n\n- Beta notes.\n`,
-    "run.rosie.rosi.metainfo.xml": `<component>\n  <launchable type="desktop-id">run.rosie.rosi.desktop</launchable>\n  <url type="homepage">https://example.invalid/rosi</url>\n  <releases>\n    <release version="${beta}" date="2026-01-01"/>\n    <release version="1.2.2-beta.1" date="2025-12-01"/>\n    <release version="1.2.2" date="2025-11-01"/>\n  </releases>\n</component>\n`,
+    "CHANGELOG.md": `# CONV2\n\n## Changes in \`v${beta}:\`\n\n- Beta notes.\n`,
+    "run.rosie.conv2.metainfo.xml": `<component>\n  <launchable type="desktop-id">run.rosie.conv2.desktop</launchable>\n  <url type="homepage">https://example.invalid/conv2</url>\n  <releases>\n    <release version="${beta}" date="2026-01-01"/>\n    <release version="1.2.2-beta.1" date="2025-12-01"/>\n    <release version="1.2.2" date="2025-11-01"/>\n  </releases>\n</component>\n`,
   };
   const head = { ...base };
   head["package.json"] = json({
@@ -75,7 +74,7 @@ function metadataFiles() {
     ...JSON.parse(base["package-lock.json"]),
     version: stable,
     packages: {
-      "": { name: "rosi", version: stable },
+      "": { name: "conv2", version: stable },
       "node_modules/tauri": { version: "2" },
     },
   });
@@ -100,9 +99,9 @@ function metadataFiles() {
     },
   });
   head["CHANGELOG.md"] =
-    `# ROSI\n\n## Changes in \`v${stable}:\`\n\n- Stable notes.\n\n${base["CHANGELOG.md"]}`;
-  head["run.rosie.rosi.metainfo.xml"] =
-    `<component>\n  <launchable type="desktop-id">run.rosie.rosi.desktop</launchable>\n  <url type="homepage">https://example.invalid/rosi</url>\n  <releases>\n    <release version="${stable}" date="2026-02-01"/>\n    <release version="1.2.2-beta.1" date="2025-12-01"/>\n    <release version="1.2.2" date="2025-11-01"/>\n  </releases>\n</component>\n`;
+    `# CONV2\n\n## Changes in \`v${stable}:\`\n\n- Stable notes.\n\n${base["CHANGELOG.md"]}`;
+  head["run.rosie.conv2.metainfo.xml"] =
+    `<component>\n  <launchable type="desktop-id">run.rosie.conv2.desktop</launchable>\n  <url type="homepage">https://example.invalid/conv2</url>\n  <releases>\n    <release version="${stable}" date="2026-02-01"/>\n    <release version="1.2.2-beta.1" date="2025-12-01"/>\n    <release version="1.2.2" date="2025-11-01"/>\n  </releases>\n</component>\n`;
   return { base, head };
 }
 
@@ -122,7 +121,7 @@ function metadataChanges({ base, head } = metadataFiles()) {
  */
 function betaChangelogFixture(betaVersion) {
   const download = (asset) =>
-    `https://github.com/BurntToasters/ROSI/releases/download/v${betaVersion}/${asset}`;
+    `https://github.com/BurntToasters/CONV2/releases/download/v${betaVersion}/${asset}`;
   return [
     "> [!NOTE]",
     "> 🅱️ This is a Beta build.",
@@ -131,11 +130,11 @@ function betaChangelogFixture(betaVersion) {
     "",
     "| Windows | macOS | Linux |",
     "| :-- | :-- | :-- |",
-    `| **[x64](${download("ROSI-Windows-x64.exe")})** | **[Universal DMG](${download("ROSI-MacOS-universal.dmg")})** | **[x64](${download("ROSI-Linux-x64.AppImage")})** |`,
+    `| **Setup:** [x64](${download("CONV2-Win-x64-Setup.exe")}) | **[Universal DMG](${download("CONV2-macOS-universal.dmg")})** | **AppImage:** [x64](${download("CONV2-Linux-x86_64.AppImage")}) |`,
     "",
-    "> macOS downloads require macOS 15 or later.",
+    "### ℹ️ Enjoying CONV2? Consider [❤️ Supporting Me! ❤️](https://rosie.run/support)",
     "",
-    "ROSI! A cross platform yt-dlp GUI built on Tauri V2!",
+    "---",
     "",
     `## Changes in \`v${betaVersion}:\``,
     "",
@@ -143,7 +142,7 @@ function betaChangelogFixture(betaVersion) {
     "",
     "## Changes in `v1.2.2:`",
     "",
-    "- **NEW - Tauri V2:** ROSI moved from Electron to Tauri V2 with a Rust backend.",
+    "- **NEW - Tauri V2:** CONV2 moved from Electron to Tauri V2 with a Rust backend.",
     "",
   ].join("\n");
 }
@@ -218,8 +217,8 @@ test("stable metadata rejects edits to existing changelog release history", () =
   const { base, head, betaVersion, stableVersion, stableChangelog } =
     realStablePromotionFixture();
   const tampered = stableChangelog.replace(
-    "ROSI moved from Electron to Tauri V2",
-    "ROSI moved from another framework to Tauri V2",
+    "CONV2 moved from Electron to Tauri V2",
+    "CONV2 moved from another framework to Tauri V2",
   );
   assert.notEqual(tampered, stableChangelog);
   const changedHead = { ...head, "CHANGELOG.md": tampered };
@@ -239,7 +238,9 @@ test("stable metainfo permits only insertion of the expected release element", (
     realStablePromotionFixture();
   const changedMetainfo = {
     ...head,
-    "run.rosie.rosi.metainfo.xml": head["run.rosie.rosi.metainfo.xml"].replace(
+    "run.rosie.conv2.metainfo.xml": head[
+      "run.rosie.conv2.metainfo.xml"
+    ].replace(
       "</component>",
       '<launchable type="desktop-id">attacker.desktop</launchable></component>',
     ),
@@ -259,15 +260,15 @@ test("stable metainfo permits only insertion of the expected release element", (
 test("stable metadata accepts the exact AppStream updater promotion output", () => {
   const { base, head, betaVersion, stableVersion } =
     realStablePromotionFixture();
-  const temp = fs.mkdtempSync(path.join(os.tmpdir(), "rosi-round2-metainfo-"));
+  const temp = fs.mkdtempSync(path.join(os.tmpdir(), "conv2-round2-metainfo-"));
   try {
     const packagePath = path.join(temp, "package.json");
-    const metadataPath = path.join(temp, "run.rosie.rosi.metainfo.xml");
+    const metadataPath = path.join(temp, "run.rosie.conv2.metainfo.xml");
     fs.writeFileSync(
       packagePath,
-      json({ name: "rosi", version: stableVersion }),
+      json({ name: "conv2", version: stableVersion }),
     );
-    fs.writeFileSync(metadataPath, base["run.rosie.rosi.metainfo.xml"]);
+    fs.writeFileSync(metadataPath, base["run.rosie.conv2.metainfo.xml"]);
     updateMetainfo({
       now: new Date("2026-02-01T00:00:00.000Z"),
       packagePath,
@@ -276,7 +277,7 @@ test("stable metadata accepts the exact AppStream updater promotion output", () 
     const generatedMetainfo = fs.readFileSync(metadataPath, "utf8");
     const generatedHead = {
       ...head,
-      "run.rosie.rosi.metainfo.xml": generatedMetainfo,
+      "run.rosie.conv2.metainfo.xml": generatedMetainfo,
     };
     validateStableMetadataChange({
       baseVersion: betaVersion,
@@ -350,20 +351,20 @@ test("stable metadata rejects dependency/config changes and every deletion", () 
 test("release checksum entries must match the released asset bytes", () => {
   const contents = Buffer.from("signed release artifact\n");
   const digest = crypto.createHash("sha256").update(contents).digest("hex");
-  const assets = new Map([["ROSI-Windows-x64.exe", contents]]);
+  const assets = new Map([["CONV2-Windows-x64.exe", contents]]);
   assert.deepEqual(
     validateSha256Sums({
       checksumName: "SHA256SUMS-windows-x86_64.txt",
-      text: `${digest}  ROSI-Windows-x64.exe\n`,
+      text: `${digest}  CONV2-Windows-x64.exe\n`,
       assets,
     }),
-    ["ROSI-Windows-x64.exe"],
+    ["CONV2-Windows-x64.exe"],
   );
   for (const text of [
-    `${"0".repeat(64)}  ROSI-Windows-x64.exe\n`,
+    `${"0".repeat(64)}  CONV2-Windows-x64.exe\n`,
     `${digest}  missing.exe\n`,
-    `${digest}  ../ROSI-Windows-x64.exe\n`,
-    `${digest}  ROSI-Windows-x64.exe\n${digest}  ROSI-Windows-x64.exe\n`,
+    `${digest}  ../CONV2-Windows-x64.exe\n`,
+    `${digest}  CONV2-Windows-x64.exe\n${digest}  CONV2-Windows-x64.exe\n`,
     "not a checksum line\n",
   ]) {
     assert.throws(() =>
@@ -433,31 +434,10 @@ test("draft GPG trust resolves only one configured key and validates signer iden
   );
 });
 
-test("bundled notices copy version-matched yt-dlp text to frontend assets", () => {
-  const temp = fs.mkdtempSync(path.join(os.tmpdir(), "rosi-round2-licenses-"));
+test("bundled notices copy the FFmpeg texts to frontend assets", () => {
+  const temp = fs.mkdtempSync(path.join(os.tmpdir(), "conv2-round2-licenses-"));
   try {
-    fs.mkdirSync(path.join(temp, "assets"), { recursive: true });
     fs.mkdirSync(path.join(temp, "resources", "ffmpeg"), { recursive: true });
-    fs.writeFileSync(
-      path.join(temp, "assets", "YT-DLP-NOTICES.txt"),
-      "yt-dlp notice\n",
-    );
-    fs.writeFileSync(
-      path.join(temp, "assets", "yt-dlp-2026.08.19-THIRD_PARTY_LICENSES.txt"),
-      "yt-dlp upstream bundled component licenses, 2026.08.19\n",
-    );
-    // copy-bundled-licenses.js reads the pinned version from this manifest.
-    fs.writeFileSync(
-      path.join(temp, "assets", "ytdlp-checksums.json"),
-      JSON.stringify({
-        version: "2026.08.19",
-        files: {},
-        license: {
-          file: "yt-dlp-2026.08.19-THIRD_PARTY_LICENSES.txt",
-          sha256: "0".repeat(64),
-        },
-      }),
-    );
     for (const file of [
       "NOTICE.txt",
       "ffmpeg_license.txt",
@@ -469,17 +449,32 @@ test("bundled notices copy version-matched yt-dlp text to frontend assets", () =
       );
     }
     const entries = copyBundledNotices(temp);
-    const packagedNotice = path.join(
-      temp,
-      "public",
-      "yt-dlp-third-party-licenses.txt",
+    assert.deepEqual(entries.map((entry) => entry.file).sort(), [
+      "ffmpeg-license.txt",
+      "ffmpeg-notice.txt",
+      "ffmpeg-source-offer.txt",
+    ]);
+    assert.equal(
+      fs.readFileSync(path.join(temp, "public", "ffmpeg-license.txt"), "utf8"),
+      "ffmpeg_license.txt\n",
     );
     assert.equal(
-      fs.readFileSync(packagedNotice, "utf8"),
-      "yt-dlp upstream bundled component licenses, 2026.08.19\n",
+      entries.some((entry) => /yt-dlp/i.test(entry.file)),
+      false,
+      "CONV2 ships no yt-dlp notice",
     );
-    assert.ok(
-      entries.some((entry) => entry.file === "yt-dlp-third-party-licenses.txt"),
+  } finally {
+    fs.rmSync(temp, { recursive: true, force: true });
+  }
+});
+
+test("a missing FFmpeg notice fails the copy instead of shipping without it", () => {
+  const temp = fs.mkdtempSync(path.join(os.tmpdir(), "conv2-round2-missing-"));
+  try {
+    fs.mkdirSync(path.join(temp, "resources", "ffmpeg"), { recursive: true });
+    assert.throws(
+      () => copyBundledNotices(temp),
+      /Missing bundled license notice/,
     );
   } finally {
     fs.rmSync(temp, { recursive: true, force: true });
@@ -538,7 +533,7 @@ test("release tag resolution peels annotated tags and fails closed on mismatch",
   assert.equal(
     resolveReleaseTagCommit({
       owner: "BurntToasters",
-      repo: "ROSI",
+      repo: "CONV2",
       tag: "v5.0.0-beta.2",
       api,
     }),
@@ -549,7 +544,7 @@ test("release tag resolution peels annotated tags and fails closed on mismatch",
     () =>
       assertReleaseTagMatchesHead({
         owner: "BurntToasters",
-        repo: "ROSI",
+        repo: "CONV2",
         tag: "v5.0.0-beta.2",
         headCommit: "d".repeat(40),
         api,
@@ -559,7 +554,7 @@ test("release tag resolution peels annotated tags and fails closed on mismatch",
   assert.equal(
     resolveReleaseTagCommit({
       owner: "BurntToasters",
-      repo: "ROSI",
+      repo: "CONV2",
       tag: "v5.0.0-beta.2",
       api: () => {
         const missing = new Error("HTTP 404");

@@ -16,7 +16,7 @@ export function e2eBinaryIsFresh() {
   const stamp = e2eStampPath();
   if (!fs.existsSync(binary) || !fs.existsSync(stamp)) return false;
   if (fs.readFileSync(stamp, "utf8") !== STAMP) return false;
-  // cargo test / clippy rebuild target/debug/rosi without --features e2e.
+  // cargo test / clippy rebuild target/debug/conv2 without --features e2e.
   return fs.statSync(stamp).mtimeMs >= fs.statSync(binary).mtimeMs;
 }
 

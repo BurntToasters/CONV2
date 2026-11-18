@@ -3,7 +3,7 @@
 // e2e/dmg-ulmo.failure-modes.md. Writes e2e/artifacts/dmg-ulmo-report.json.
 //
 // Release mode (no --dmg): converts target/<triple>/release/bundle/dmg/
-// CONV2-MacOS-<arch>.dmg for every macOS target, then signs, notarizes, and
+// CONV2-macOS-<arch>.dmg for every macOS target, then signs, notarizes, and
 // staples each image. Local mode: --dmg <path> [--out <path>] --no-notarize
 // converts one image and runs every check except signing and notarization.
 //

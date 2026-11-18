@@ -798,7 +798,7 @@ mod tests {
         };
         let mut bytes = vec![0_u8; total_size];
         bytes[0..4].copy_from_slice(b"\x7fELF");
-        bytes[4] = 2; // ELFCLASS64 for ROSI's released Linux targets.
+        bytes[4] = 2; // ELFCLASS64 for CONV2's released Linux targets.
         bytes[5] = 1; // little-endian
         bytes[6] = 1; // current ELF identification version
         bytes[8..11].copy_from_slice(&[b'A', b'I', marker]);
@@ -905,7 +905,7 @@ mod tests {
     fn temporary_directory(label: &str) -> PathBuf {
         for attempt in 0..100 {
             let path = std::env::temp_dir().join(format!(
-                "rosi-appimage-audit3-{}-{label}-{attempt}",
+                "conv2-appimage-audit3-{}-{label}-{attempt}",
                 std::process::id()
             ));
             match fs::create_dir(&path) {
@@ -1014,7 +1014,7 @@ mod tests {
     #[test]
     fn validates_replacement_before_moving_live_image_and_keeps_old_image_after_success() {
         let directory = temporary_directory("success");
-        let live = directory.join("ROSI.AppImage");
+        let live = directory.join("CONV2.AppImage");
         let old = appimage(2, host_machine(), b'o');
         let new = appimage(2, host_machine(), b'n');
         fs::write(&live, &old).unwrap();
@@ -1046,7 +1046,7 @@ mod tests {
     #[test]
     fn swap_failure_restores_live_image_and_failed_restore_keeps_reported_backup() {
         let directory = temporary_directory("rollback");
-        let live = directory.join("ROSI.AppImage");
+        let live = directory.join("CONV2.AppImage");
         let stage = directory.join("next.AppImage");
         let old = appimage(2, host_machine(), b'o');
         let new = appimage(2, host_machine(), b'n');
@@ -1108,7 +1108,7 @@ pub(crate) mod test_fixtures {
         super::tests::appimage(marker, machine, suffix)
     }
 
-    /// A Type 2 AppImage for the host architecture that passes ROSI validation.
+    /// A Type 2 AppImage for the host architecture that passes CONV2 validation.
     pub(crate) fn host_appimage(suffix: u8) -> Vec<u8> {
         super::tests::appimage(2, super::tests::host_machine(), suffix)
     }

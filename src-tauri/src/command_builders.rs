@@ -3,18 +3,15 @@
 
 use crate::gpu::{resolve_encoder, uses_vaapi};
 use crate::ipc::{self, IpcResult};
-use crate::settings::{default_advanced_format_settings, default_settings};
+use crate::settings::default_advanced_format_settings;
 use crate::types::{
-    AdvancedFormatSettings, Av1TierSettings, AviTierSettings, GpuCodec, GpuVendor,
-    GifTierSettings, H264TierSettings, H265TierSettings, RendererPreset, VideoPreset,
-    WebpTierSettings,
+    AdvancedFormatSettings, Av1TierSettings, AviTierSettings, GifTierSettings, GpuCodec, GpuVendor,
+    H264TierSettings, H265TierSettings, RendererPreset, VideoPreset, WebpTierSettings,
 };
 
 /// Stream layout of the input, probed before arguments are built.
 #[derive(Clone, Debug, Default)]
 pub struct SourceStreamInfo {
-    pub video_codec: Option<String>,
-    pub audio_codec: Option<String>,
     pub subtitle_codecs: Option<Vec<String>>,
     pub audio_channels: Option<Vec<u32>>,
 }
@@ -132,32 +129,108 @@ pub static PRESETS: &[Preset] = &[
     preset!(AVI_BEST_QUALITY, "AVI - Best Quality", "AVI container with H.264 best quality encoding", "avi", "avi", gpu: H264, tier: "bestQuality"),
     preset!(AVI_BEST_COMPRESSION, "AVI - Best Compression", "AVI container with H.264 best compression", "avi", "avi", gpu: H264, tier: "bestCompression"),
     preset!(AVI_BALANCED, "AVI - Balanced", "AVI container with H.264 balanced encoding", "avi", "avi", gpu: H264, tier: "balanced"),
-    preset!(GIF_BEST_QUALITY, "GIF - Best Quality", "Maximum GIF quality with highest color detail", "gif", "gif"),
-    preset!(GIF_QUALITY, "GIF - Quality", "High quality GIF with smaller file size", "gif", "gif"),
-    preset!(GIF_BALANCED, "GIF - Balanced", "Balanced GIF output for quality and compression", "gif", "gif"),
-    preset!(GIF_BEST_COMPRESSION, "GIF - Best Compression", "Smallest GIF size with comparable quality", "gif", "gif"),
-    preset!(WEBP_BEST_QUALITY, "WebP - Best Quality", "Maximum animated WebP quality with highest detail", "webp", "webp"),
-    preset!(WEBP_QUALITY, "WebP - Quality", "High quality animated WebP with smaller file size", "webp", "webp"),
-    preset!(WEBP_BALANCED, "WebP - Balanced", "Balanced animated WebP for quality and compression", "webp", "webp"),
-    preset!(WEBP_BEST_COMPRESSION, "WebP - Best Compression", "Smallest animated WebP size with comparable quality", "webp", "webp"),
-    preset!("remux-mp4", "Remux to MP4", "Copy streams to MP4 container (no re-encoding)", "remux", "mp4"),
-    preset!("remux-mkv", "Remux to MKV", "Copy streams to MKV container (no re-encoding)", "remux", "mkv"),
-    preset!("remux-webm", "Remux to WebM", "Copy streams to WebM container (no re-encoding)", "remux", "webm"),
-    preset!("audio-mp3", "Extract Audio (MP3)", "Extract audio track as MP3", "audio", "mp3"),
-    preset!("audio-aac", "Extract Audio (AAC)", "Extract audio track as AAC", "audio", "aac"),
-    preset!("audio-flac", "Extract Audio (FLAC)", "Extract audio track as lossless FLAC", "audio", "flac"),
+    preset!(
+        GIF_BEST_QUALITY,
+        "GIF - Best Quality",
+        "Maximum GIF quality with highest color detail",
+        "gif",
+        "gif"
+    ),
+    preset!(
+        GIF_QUALITY,
+        "GIF - Quality",
+        "High quality GIF with smaller file size",
+        "gif",
+        "gif"
+    ),
+    preset!(
+        GIF_BALANCED,
+        "GIF - Balanced",
+        "Balanced GIF output for quality and compression",
+        "gif",
+        "gif"
+    ),
+    preset!(
+        GIF_BEST_COMPRESSION,
+        "GIF - Best Compression",
+        "Smallest GIF size with comparable quality",
+        "gif",
+        "gif"
+    ),
+    preset!(
+        WEBP_BEST_QUALITY,
+        "WebP - Best Quality",
+        "Maximum animated WebP quality with highest detail",
+        "webp",
+        "webp"
+    ),
+    preset!(
+        WEBP_QUALITY,
+        "WebP - Quality",
+        "High quality animated WebP with smaller file size",
+        "webp",
+        "webp"
+    ),
+    preset!(
+        WEBP_BALANCED,
+        "WebP - Balanced",
+        "Balanced animated WebP for quality and compression",
+        "webp",
+        "webp"
+    ),
+    preset!(
+        WEBP_BEST_COMPRESSION,
+        "WebP - Best Compression",
+        "Smallest animated WebP size with comparable quality",
+        "webp",
+        "webp"
+    ),
+    preset!(
+        "remux-mp4",
+        "Remux to MP4",
+        "Copy streams to MP4 container (no re-encoding)",
+        "remux",
+        "mp4"
+    ),
+    preset!(
+        "remux-mkv",
+        "Remux to MKV",
+        "Copy streams to MKV container (no re-encoding)",
+        "remux",
+        "mkv"
+    ),
+    preset!(
+        "remux-webm",
+        "Remux to WebM",
+        "Copy streams to WebM container (no re-encoding)",
+        "remux",
+        "webm"
+    ),
+    preset!(
+        "audio-mp3",
+        "Extract Audio (MP3)",
+        "Extract audio track as MP3",
+        "audio",
+        "mp3"
+    ),
+    preset!(
+        "audio-aac",
+        "Extract Audio (AAC)",
+        "Extract audio track as AAC",
+        "audio",
+        "aac"
+    ),
+    preset!(
+        "audio-flac",
+        "Extract Audio (FLAC)",
+        "Extract audio track as lossless FLAC",
+        "audio",
+        "flac"
+    ),
 ];
 
 pub fn get_preset(id: &str) -> Option<&'static Preset> {
     PRESETS.iter().find(|preset| preset.id == id)
-}
-
-pub fn get_visible_preset_categories(show_advanced_presets: bool) -> Vec<&'static str> {
-    PRESET_CATEGORY_ORDER
-        .iter()
-        .copied()
-        .filter(|category| show_advanced_presets || !is_advanced(category))
-        .collect()
 }
 
 pub fn map_presets_for_renderer() -> Vec<RendererPreset> {
@@ -271,7 +344,15 @@ fn quality_args(
             } else {
                 clamped
             };
-            args.extend(["-rc_mode", "CQP", "-global_quality", &global_quality.to_string()].map(str::to_string));
+            args.extend(
+                [
+                    "-rc_mode",
+                    "CQP",
+                    "-global_quality",
+                    &global_quality.to_string(),
+                ]
+                .map(str::to_string),
+            );
         }
         EncodeVendor::Vendor(GpuVendor::Nvidia) => {
             let (preset, multipass) = match effort {
@@ -280,9 +361,23 @@ fn quality_args(
                 EncodeEffort::Balanced => ("p5", "disabled"),
                 EncodeEffort::Fast => ("p4", "disabled"),
             };
-            args.extend(["-cq", &hw_quality, "-b:v", "0", "-preset", preset, "-multipass", multipass].map(str::to_string));
+            args.extend(
+                [
+                    "-cq",
+                    &hw_quality,
+                    "-b:v",
+                    "0",
+                    "-preset",
+                    preset,
+                    "-multipass",
+                    multipass,
+                ]
+                .map(str::to_string),
+            );
             if codec != GpuCodec::Av1 {
-                args.extend(["-tune", "hq", "-spatial_aq", "1", "-temporal_aq", "1"].map(str::to_string));
+                args.extend(
+                    ["-tune", "hq", "-spatial_aq", "1", "-temporal_aq", "1"].map(str::to_string),
+                );
             }
         }
         EncodeVendor::Vendor(GpuVendor::Amd) => {
@@ -291,7 +386,19 @@ fn quality_args(
                 EncodeEffort::Balanced => "balanced",
                 EncodeEffort::Fast => "speed",
             };
-            args.extend(["-rc", "cqp", "-qp_i", &hw_quality, "-qp_p", &hw_quality, "-quality", amf].map(str::to_string));
+            args.extend(
+                [
+                    "-rc",
+                    "cqp",
+                    "-qp_i",
+                    &hw_quality,
+                    "-qp_p",
+                    &hw_quality,
+                    "-quality",
+                    amf,
+                ]
+                .map(str::to_string),
+            );
         }
         EncodeVendor::Vendor(GpuVendor::Intel) => {
             let (preset, lookahead) = match effort {
@@ -303,21 +410,45 @@ fn quality_args(
             args.extend(["-global_quality", &hw_quality, "-preset", preset].map(str::to_string));
             if codec != GpuCodec::Av1 && lookahead > 0 {
                 args.extend(
-                    ["-look_ahead", "1", "-look_ahead_depth", &lookahead.to_string(), "-extbrc", "1"]
-                        .map(str::to_string),
+                    [
+                        "-look_ahead",
+                        "1",
+                        "-look_ahead_depth",
+                        &lookahead.to_string(),
+                        "-extbrc",
+                        "1",
+                    ]
+                    .map(str::to_string),
                 );
             }
         }
         EncodeVendor::Vendor(GpuVendor::Apple) => {
-            args.extend(["-q:v", &qp_to_percent_quality(qp).to_string(), "-allow_sw", "1", "-realtime", "0"].map(str::to_string));
+            args.extend(
+                [
+                    "-q:v",
+                    &qp_to_percent_quality(qp).to_string(),
+                    "-allow_sw",
+                    "1",
+                    "-realtime",
+                    "0",
+                ]
+                .map(str::to_string),
+            );
             if effort == EncodeEffort::Fast {
                 args.extend(["-prio_speed", "1"].map(str::to_string));
             }
         }
         EncodeVendor::Vendor(GpuVendor::Qualcomm) => {
             args.extend(
-                ["-hw_encoding", "1", "-rate_control", "quality", "-quality", &qp_to_percent_quality(qp).to_string()]
-                    .map(str::to_string),
+                [
+                    "-hw_encoding",
+                    "1",
+                    "-rate_control",
+                    "quality",
+                    "-quality",
+                    &qp_to_percent_quality(qp).to_string(),
+                ]
+                .map(str::to_string),
             );
         }
         EncodeVendor::Vendor(GpuVendor::Cpu) | EncodeVendor::Cpu => {
@@ -485,8 +616,18 @@ fn gif_args(input: &str, output: &str, tier: &str, context: PresetContext<'_>) -
         settings.dither.as_str()
     );
     [
-        "-i", input, "-filter_complex", &filter, "-map", "[gifout]", "-an", "-sn", "-dn",
-        "-loop", loop_arg, output,
+        "-i",
+        input,
+        "-filter_complex",
+        &filter,
+        "-map",
+        "[gifout]",
+        "-an",
+        "-sn",
+        "-dn",
+        "-loop",
+        loop_arg,
+        output,
     ]
     .map(str::to_string)
     .to_vec()
@@ -522,17 +663,28 @@ fn webp_args(input: &str, output: &str, tier: &str, context: PresetContext<'_>) 
 }
 
 const SVTAV1_ADVANCED_PARAMS: &str = "tune=0:enable-overlays=1:enable-qm=1:qm-min=0:keyint=10s";
-const X265_ADVANCED_PARAMS: &str =
-    "aq-mode=3:psy-rd=2.0:psy-rdoq=1.0:rc-lookahead=60:bframes=8";
+const X265_ADVANCED_PARAMS: &str = "aq-mode=3:psy-rd=2.0:psy-rdoq=1.0:rc-lookahead=60:bframes=8";
 const AVI_X265_PARAMS: &str =
     "aq-mode=3:rd=6:psy-rd=2.0:psy-rdoq=1.0:rdoq-level=2:rc-lookahead=60:bframes=8:ref=6";
 const OPUS_SAFE_LAYOUTS: &str = "aformat=channel_layouts=mono|stereo|3.0|quad|5.0|5.1|6.1|7.1";
 
-fn av1_args(input: &str, output: &str, gpu: GpuVendor, tier: &str, context: PresetContext<'_>) -> Vec<String> {
+fn av1_args(
+    input: &str,
+    output: &str,
+    gpu: GpuVendor,
+    tier: &str,
+    context: PresetContext<'_>,
+) -> Vec<String> {
     let settings = av1_tier(tier, context);
     let platform = context.platform;
     let mut args: Vec<String> = [
-        "-i", input, "-map", "0:v:0", "-map", "0:a?", "-c:v",
+        "-i",
+        input,
+        "-map",
+        "0:v:0",
+        "-map",
+        "0:a?",
+        "-c:v",
         &resolve_encoder(GpuCodec::Av1, gpu, platform),
     ]
     .map(str::to_string)
@@ -549,17 +701,42 @@ fn av1_args(input: &str, output: &str, gpu: GpuVendor, tier: &str, context: Pres
         args.extend(["-svtav1-params", SVTAV1_ADVANCED_PARAMS].map(str::to_string));
         args.extend(["-pix_fmt", "yuv420p10le"].map(str::to_string));
     }
-    args.extend(["-af", OPUS_SAFE_LAYOUTS, "-c:a", "libopus", "-b:a", &bitrate_kbps(settings.audio_bitrate_kbps)].map(str::to_string));
-    args.extend(multichannel_bitrate_args(settings.audio_bitrate_kbps, context));
+    args.extend(
+        [
+            "-af",
+            OPUS_SAFE_LAYOUTS,
+            "-c:a",
+            "libopus",
+            "-b:a",
+            &bitrate_kbps(settings.audio_bitrate_kbps),
+        ]
+        .map(str::to_string),
+    );
+    args.extend(multichannel_bitrate_args(
+        settings.audio_bitrate_kbps,
+        context,
+    ));
     args.push(output.to_string());
     args
 }
 
-fn h264_args(input: &str, output: &str, gpu: GpuVendor, tier: &str, context: PresetContext<'_>) -> Vec<String> {
+fn h264_args(
+    input: &str,
+    output: &str,
+    gpu: GpuVendor,
+    tier: &str,
+    context: PresetContext<'_>,
+) -> Vec<String> {
     let settings = h264_tier(tier, context);
     let platform = context.platform;
     let mut args: Vec<String> = [
-        "-i", input, "-map", "0:v:0", "-map", "0:a?", "-c:v",
+        "-i",
+        input,
+        "-map",
+        "0:v:0",
+        "-map",
+        "0:a?",
+        "-c:v",
         &resolve_encoder(GpuCodec::H264, gpu, platform),
     ]
     .map(str::to_string)
@@ -575,17 +752,40 @@ fn h264_args(input: &str, output: &str, gpu: GpuVendor, tier: &str, context: Pre
         args.extend(["-preset", settings.preset.as_str()].map(str::to_string));
         args.extend(["-pix_fmt", "yuv420p"].map(str::to_string));
     }
-    args.extend(["-c:a", "aac", "-b:a", &bitrate_kbps(settings.audio_bitrate_kbps)].map(str::to_string));
-    args.extend(multichannel_bitrate_args(settings.audio_bitrate_kbps, context));
+    args.extend(
+        [
+            "-c:a",
+            "aac",
+            "-b:a",
+            &bitrate_kbps(settings.audio_bitrate_kbps),
+        ]
+        .map(str::to_string),
+    );
+    args.extend(multichannel_bitrate_args(
+        settings.audio_bitrate_kbps,
+        context,
+    ));
     args.push(output.to_string());
     args
 }
 
-fn h265_args(input: &str, output: &str, gpu: GpuVendor, tier: &str, context: PresetContext<'_>) -> Vec<String> {
+fn h265_args(
+    input: &str,
+    output: &str,
+    gpu: GpuVendor,
+    tier: &str,
+    context: PresetContext<'_>,
+) -> Vec<String> {
     let settings = h265_tier(tier, context);
     let platform = context.platform;
     let mut args: Vec<String> = [
-        "-i", input, "-map", "0:v:0", "-map", "0:a?", "-c:v",
+        "-i",
+        input,
+        "-map",
+        "0:v:0",
+        "-map",
+        "0:a?",
+        "-c:v",
         &resolve_encoder(GpuCodec::H265, gpu, platform),
     ]
     .map(str::to_string)
@@ -600,21 +800,52 @@ fn h265_args(input: &str, output: &str, gpu: GpuVendor, tier: &str, context: Pre
     if resolve_encode_vendor(GpuCodec::H265, gpu, platform) == EncodeVendor::Cpu {
         args.extend(["-preset", settings.preset.as_str()].map(str::to_string));
         if settings.use_advanced_params {
-            args.extend(["-x265-params", X265_ADVANCED_PARAMS, "-pix_fmt", "yuv420p10le"].map(str::to_string));
+            args.extend(
+                [
+                    "-x265-params",
+                    X265_ADVANCED_PARAMS,
+                    "-pix_fmt",
+                    "yuv420p10le",
+                ]
+                .map(str::to_string),
+            );
         }
     }
-    args.extend(["-c:a", "aac", "-b:a", &bitrate_kbps(settings.audio_bitrate_kbps)].map(str::to_string));
-    args.extend(multichannel_bitrate_args(settings.audio_bitrate_kbps, context));
+    args.extend(
+        [
+            "-c:a",
+            "aac",
+            "-b:a",
+            &bitrate_kbps(settings.audio_bitrate_kbps),
+        ]
+        .map(str::to_string),
+    );
+    args.extend(multichannel_bitrate_args(
+        settings.audio_bitrate_kbps,
+        context,
+    ));
     args.push(output.to_string());
     args
 }
 
-fn avi_args(input: &str, output: &str, gpu: GpuVendor, tier: &str, context: PresetContext<'_>) -> Vec<String> {
+fn avi_args(
+    input: &str,
+    output: &str,
+    gpu: GpuVendor,
+    tier: &str,
+    context: PresetContext<'_>,
+) -> Vec<String> {
     let settings = avi_tier(tier, context);
     let platform = context.platform;
     let codec = avi_gpu_codec(settings.codec);
     let mut args: Vec<String> = [
-        "-i", input, "-map", "0:v:0", "-map", "0:a?", "-c:v",
+        "-i",
+        input,
+        "-map",
+        "0:v:0",
+        "-map",
+        "0:a?",
+        "-c:v",
         &resolve_encoder(codec, gpu, platform),
     ]
     .map(str::to_string)
@@ -634,14 +865,37 @@ fn avi_args(input: &str, output: &str, gpu: GpuVendor, tier: &str, context: Pres
             args.extend(["-x265-params", AVI_X265_PARAMS].map(str::to_string));
         }
     }
-    args.extend(["-c:a", "libmp3lame", "-b:a", &bitrate_kbps(settings.audio_bitrate_kbps)].map(str::to_string));
+    args.extend(
+        [
+            "-c:a",
+            "libmp3lame",
+            "-b:a",
+            &bitrate_kbps(settings.audio_bitrate_kbps),
+        ]
+        .map(str::to_string),
+    );
     args.push(output.to_string());
     args
 }
 
 const TEXT_SUBTITLE_CODECS: &[&str] = &[
-    "ass", "jacosub", "microdvd", "mov_text", "mpl2", "pjs", "realtext", "sami", "ssa", "srt",
-    "stl", "subrip", "subviewer", "subviewer1", "text", "vplayer", "webvtt",
+    "ass",
+    "jacosub",
+    "microdvd",
+    "mov_text",
+    "mpl2",
+    "pjs",
+    "realtext",
+    "sami",
+    "ssa",
+    "srt",
+    "stl",
+    "subrip",
+    "subviewer",
+    "subviewer1",
+    "text",
+    "vplayer",
+    "webvtt",
 ];
 
 pub fn is_text_subtitle_codec(codec: Option<&str>) -> bool {
@@ -652,11 +906,26 @@ pub fn is_text_subtitle_codec(codec: Option<&str>) -> bool {
     })
 }
 
-fn remux_args(input: &str, output: &str, extension: &str, context: PresetContext<'_>) -> Vec<String> {
+fn remux_args(
+    input: &str,
+    output: &str,
+    extension: &str,
+    context: PresetContext<'_>,
+) -> Vec<String> {
     if extension == "mkv" {
-        return ["-i", input, "-map", "0", "-map_metadata", "0", "-c", "copy", output]
-            .map(str::to_string)
-            .to_vec();
+        return [
+            "-i",
+            input,
+            "-map",
+            "0",
+            "-map_metadata",
+            "0",
+            "-c",
+            "copy",
+            output,
+        ]
+        .map(str::to_string)
+        .to_vec();
     }
     let subtitle_codecs = context
         .source_streams
@@ -701,12 +970,41 @@ pub fn build_args(
 ) -> Vec<String> {
     let category = preset.category;
     match category {
-        "av1" => av1_args(input, output, gpu, preset.id.trim_start_matches("av1-"), context),
-        "h264" => h264_args(input, output, gpu, preset.id.trim_start_matches("h264-"), context),
-        "h265" => h265_args(input, output, gpu, preset.id.trim_start_matches("h265-"), context),
-        "avi" => avi_args(input, output, gpu, preset.avi_tier.unwrap_or("balanced"), context),
+        "av1" => av1_args(
+            input,
+            output,
+            gpu,
+            preset.id.trim_start_matches("av1-"),
+            context,
+        ),
+        "h264" => h264_args(
+            input,
+            output,
+            gpu,
+            preset.id.trim_start_matches("h264-"),
+            context,
+        ),
+        "h265" => h265_args(
+            input,
+            output,
+            gpu,
+            preset.id.trim_start_matches("h265-"),
+            context,
+        ),
+        "avi" => avi_args(
+            input,
+            output,
+            gpu,
+            preset.avi_tier.unwrap_or("balanced"),
+            context,
+        ),
         "gif" => gif_args(input, output, preset.id.trim_start_matches("gif-"), context),
-        "webp" => webp_args(input, output, preset.id.trim_start_matches("webp-"), context),
+        "webp" => webp_args(
+            input,
+            output,
+            preset.id.trim_start_matches("webp-"),
+            context,
+        ),
         "remux" => remux_args(input, output, preset.extension, context),
         "audio" => audio_args(preset, input, output),
         _ => Vec::new(),
@@ -715,19 +1013,47 @@ pub fn build_args(
 
 fn audio_args(preset: &Preset, input: &str, output: &str) -> Vec<String> {
     match preset.id {
-        "audio-mp3" => ["-i", input, "-vn", "-map_metadata", "0", "-c:a", "libmp3lame", "-q:a", "2", output]
-            .map(str::to_string)
-            .to_vec(),
-        "audio-aac" => ["-i", input, "-vn", "-map_metadata", "0", "-c:a", "aac", "-b:a", "192k", output]
-            .map(str::to_string)
-            .to_vec(),
-        _ => ["-i", input, "-vn", "-map_metadata", "0", "-c:a", "flac", "-compression_level", "8", output]
-            .map(str::to_string)
-            .to_vec(),
+        "audio-mp3" => [
+            "-i",
+            input,
+            "-vn",
+            "-map_metadata",
+            "0",
+            "-c:a",
+            "libmp3lame",
+            "-q:a",
+            "2",
+            output,
+        ]
+        .map(str::to_string)
+        .to_vec(),
+        "audio-aac" => [
+            "-i",
+            input,
+            "-vn",
+            "-map_metadata",
+            "0",
+            "-c:a",
+            "aac",
+            "-b:a",
+            "192k",
+            output,
+        ]
+        .map(str::to_string)
+        .to_vec(),
+        _ => [
+            "-i",
+            input,
+            "-vn",
+            "-map_metadata",
+            "0",
+            "-c:a",
+            "flac",
+            "-compression_level",
+            "8",
+            output,
+        ]
+        .map(str::to_string)
+        .to_vec(),
     }
-}
-
-/// The default settings' advanced table, for callers without a settings read.
-pub fn default_advanced() -> AdvancedFormatSettings {
-    default_settings().advanced_format_settings
 }

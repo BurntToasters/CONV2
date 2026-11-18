@@ -1,4 +1,4 @@
-# ROSI patches to tauri-plugin-updater
+# CONV2 patches to tauri-plugin-updater
 
 This directory is a patched copy of an upstream crate. `src-tauri/Cargo.toml`
 overrides the crates.io dependency with:
@@ -29,15 +29,15 @@ reason (`.github/dependabot.yml`).
 `.cargo_vcs_info.json` are byte-identical to upstream 2.14.0. Upstream 2.14.0
 excludes `guest-js/`, `package.json`, `rollup.config.js`, `tsconfig.json` and
 `banner.png` from the crate, so they are not vendored any more.
-ROSI changes are under `src/`, plus one dependency in `Cargo.toml`.
-`ROSI.patch` is the complete diff (upstream crate to vendored crate),
+CONV2 changes are under `src/`, plus one dependency in `Cargo.toml`.
+`CONV2.patch` is the complete diff (upstream crate to vendored crate),
 excluding `target/`, `Cargo.lock`, `.cargo-ok`, `.cargo_vcs_info.json`,
-`PATCHES.md` and `ROSI.patch`.
+`PATCHES.md` and `CONV2.patch`.
 
 Apply the patch to a pristine copy with:
 
 ```sh
-patch -p1 -d <pristine-2.14.0-dir> -i ROSI.patch
+patch -p1 -d <pristine-2.14.0-dir> -i CONV2.patch
 ```
 
 ## Patched files
@@ -51,7 +51,7 @@ patch -p1 -d <pristine-2.14.0-dir> -i ROSI.patch
 | `src/lib.rs` | modified | Adds `mod install_safety;`. Plumbs the fallible `on_before_exit` hook and a new `on_windows_installer_launched` hook into the updater state. Windows cleanup now runs from the launched hook, not before launch. |
 | `src/error.rs` | modified | Adds `Error::BeforeExit(String)` so a failed app-state flush aborts installation and keeps the update retryable. |
 | `Cargo.toml` | modified | Adds the macOS-only `zstd` dependency (`default-features = false`) for per-arch `.app.tar.zst` updates. |
-| `src/commands.rs` | modified | `allow_downgrades` is accepted but ignored (`let _ = allow_downgrades;`). ROSI decision: the flag cannot select an older release, so the default newer-only comparator always applies. Upstream honours the flag by replacing `version_comparator`. The config-level `allowDowngrades` (`Config::allow_downgrades`, parsed from `tauri.conf`) is not applied either: `lib.rs` does not install the downgrade comparator from it. |
+| `src/commands.rs` | modified | `allow_downgrades` is accepted but ignored (`let _ = allow_downgrades;`). CONV2 decision: the flag cannot select an older release, so the default newer-only comparator always applies. Upstream honours the flag by replacing `version_comparator`. The config-level `allowDowngrades` (`Config::allow_downgrades`, parsed from `tauri.conf`) is not applied either: `lib.rs` does not install the downgrade comparator from it. |
 
 ### `src/updater.rs` details
 
@@ -76,7 +76,7 @@ patch -p1 -d <pristine-2.14.0-dir> -i ROSI.patch
   `recover_macos_live_bundle` roll back a partial swap by moving `Contents` back, including a
   whole-bundle backup left by the 5.0.x updater. When the user-owned path is not
   writable, the privileged AppleScript path runs with quoted arguments.
-- macOS archives: `extract_macos_app_archive` picks gzip (Tauri `.app.tar.gz`) or zstd (ROSI
+- macOS archives: `extract_macos_app_archive` picks gzip (Tauri `.app.tar.gz`) or zstd (CONV2
   per-arch `.app.tar.zst`, `scripts/pack-macos-updater-zst.js`) by magic bytes and rejects
   anything else. zstd frames may not ask for a window above 2^27
   (`MACOS_ZSTD_WINDOW_LOG_MAX`, matching the packer's `--long=27`). Both formats share the
@@ -89,30 +89,30 @@ patch -p1 -d <pristine-2.14.0-dir> -i ROSI.patch
   when the Debian path is absent. AppImage updates route through `appimage_archive` and
   `appimage_install`.
 - Tests: `#[cfg(test)]` modules in `updater.rs`, `install_safety.rs`, `appimage_install.rs` and
-  `appimage_archive.rs` are ROSI additions. They run under `cargo test` in the `rust-check` CI job.
+  `appimage_archive.rs` are CONV2 additions. They run under `cargo test` in the `rust-check` CI job.
 - Rebased onto 2.14.0 (2026-10-17). Upstream 2.14.0 features kept: `Update::verify`,
   `restore_update`, `require_signed_version` and the signed-version checks,
   `configure_client`, `restart_after_install`, and the `updater_parameters` installer argument
-  builder. The upstream `UpdaterContext` struct holds the ROSI fields too (`on_before_exit`,
+  builder. The upstream `UpdaterContext` struct holds the CONV2 fields too (`on_before_exit`,
   `on_windows_installer_launched`, `bundle_identifier`). `Updater` and `Update` keep
   `executable_name` as a plain field.
 - `install()`: verified first (upstream 2.14.0), then `on_before_exit` runs before any install
   step. `download_and_install` goes through `install()`, so the hook runs there too.
 - Not adopted from 2.14.0: its swap-based macOS install (`swap_bundle`, `replace_bundle`,
   `privileged_install_command`, `keep_backup_if_not_restored`, `SWAP_BUNDLE_JXA`, `sh_quote`,
-  `applescript_string`) and `Updater::tmp_dir_locations`. ROSI's `install_inner_locked` and
+  `applescript_string`) and `Updater::tmp_dir_locations`. CONV2's `install_inner_locked` and
   its Linux `try_tmp_locations` replace them. Their tests are dropped too. `try_tmp_locations`
   builds its own local list of candidate directories (system temp, user cache, app directory).
 - Upstream 2.14.0 AppImage tests in `updater.rs` `offline_tests` are kept but use
   `appimage_install::test_fixtures::host_appimage` for both the live and the new image,
-  because ROSI validates real AppImage structure, not only the ELF magic. A payload that is
+  because CONV2 validates real AppImage structure, not only the ELF magic. A payload that is
   not an AppImage fails with `Error::Io` of kind `InvalidData` instead of
   `Error::InvalidUpdaterFormat`.
 
 ## Clippy warnings (resolved without deleting code)
 
 `cargo clippy` on macOS reported 28 dead-code warnings, all in `appimage_install.rs`
-and `appimage_archive.rs`. All of them are ROSI code. None is upstream code. The
+and `appimage_archive.rs`. All of them are CONV2 code. None is upstream code. The
 functions are not dead: their only caller is the Linux/BSD `install_appimage` path in
 `updater.rs`, which macOS does not compile. Deleting them would break AppImage
 installs on Linux.
@@ -148,11 +148,10 @@ more in test code (`appimage_install.rs`, `appimage_archive.rs`, `install_safety
   `src-tauri` as the seed. It is a standalone root package, so its unit tests run with
   `cargo test --locked --manifest-path src-tauri/vendor/tauri-plugin-updater/Cargo.toml --lib`
   (CI gate `vendorUpdater` in `scripts/test-all.js`). The root `cargo test --all-targets`
-  gate does not run them. Last run on Windows (2026-10-28, after the Mach-O and zstd changes):
-  34 pass, 0 fail, 0 ignored. The macOS run is pending for this state. Its count and its one
-  ignored test (the real-archive test that `scripts/e2e-updater-zst.mjs` runs with
-  `ROSI_UPDATER_ZST_E2E_ARCHIVES`) must be confirmed on a Mac, through the macOS CI job or
-  `npm run test:e2e:updater-zst`.
+  gate does not run them. Last run on macOS arm64 (2026-11-18, after the CONV2 sidecar and
+  identity rename): 59 pass, 0 fail, 1 ignored. The ignored test is the
+  real-archive test that `scripts/e2e-updater-zst.mjs` runs with
+  `CONV2_UPDATER_ZST_E2E_ARCHIVES`; run it through `npm run test:e2e:updater-zst`.
 
 ## Rebase procedure (new upstream version X)
 
@@ -161,8 +160,8 @@ more in test code (`appimage_install.rs`, `appimage_archive.rs`, `install_safety
    empty scratch directory and confirm the sha256 matches.
 2. Extract it into a new empty directory `pristine-X`. Do not extract into the repo.
 3. Dry-run the old patch against the new base:
-   `patch -p1 --dry-run -d pristine-X -i ROSI.patch`. Resolve each rejected hunk by hand
-   in `pristine-X`, keeping upstream fixes and the ROSI behaviour listed above.
+   `patch -p1 --dry-run -d pristine-X -i CONV2.patch`. Resolve each rejected hunk by hand
+   in `pristine-X`, keeping upstream fixes and the CONV2 behaviour listed above.
 4. Copy the resolved `src/` tree into this directory. Set `version` in `Cargo.toml`
    only if it differs from upstream X (it should not). Leave `target/` and `Cargo.lock` alone.
 5. Regenerate the patch against pristine X, excluding build output:

@@ -4,7 +4,6 @@ import path from "path";
 import { execFileSync } from "child_process";
 import { fileURLToPath, pathToFileURL } from "url";
 import {
-  discoverV5Fixes,
   e2eRunPlan,
   SCREENSHOT_SCENARIO_NAMES,
   scenarioOutcomeProblems,
@@ -221,11 +220,8 @@ function expectedE2eEvidencePaths(root, identity) {
   };
 }
 
-function fullSuiteExpectedScenarios(root) {
-  const v5AreaNames = discoverV5Fixes(path.join(root, "e2e", "v5-fixes")).map(
-    (area) => area.area,
-  );
-  return e2eRunPlan({ onlySpec: null, v5AreaNames }).expectedScenarios;
+function fullSuiteExpectedScenarios() {
+  return e2eRunPlan({ onlySpec: null }).expectedScenarios;
 }
 
 export function verifyFullE2eEvidence(proof, root, identity) {
@@ -239,9 +235,8 @@ export function verifyFullE2eEvidence(proof, root, identity) {
     );
   }
   const { reportSha256: embeddedSha, ...reportBody } = report;
-  // The same full-suite inventory the gate builds: the manifest scenarios plus
-  // one scenario per discovered v5-fixes area.
-  const expectedScenarios = fullSuiteExpectedScenarios(root);
+  // The same full-suite inventory the gate builds: every manifest scenario.
+  const expectedScenarios = fullSuiteExpectedScenarios();
   const scenarioProblems = Array.isArray(report.scenarios)
     ? scenarioOutcomeProblems(
         report.scenarios,
@@ -249,8 +244,8 @@ export function verifyFullE2eEvidence(proof, root, identity) {
         expectedScenarios,
       )
     : ["scenario results are missing"];
-  // Every screenshot scenario's shots count: the main UI pass and the ui-polish
-  // area, so a missing ui-polish shot fails the same count and name checks.
+  // Every screenshot scenario's shots count, so a missing shot fails the same
+  // count and name checks.
   const screenshotScenarios = Array.isArray(report.scenarios)
     ? report.scenarios.filter((scenario) =>
         SCREENSHOT_SCENARIO_NAMES.includes(scenario?.name),

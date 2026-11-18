@@ -1690,7 +1690,7 @@ impl Update {
         }
 
         let tmp_extract_dir = match tempfile::Builder::new()
-            .prefix(".rosi-updated-app-")
+            .prefix(".conv2-updated-app-")
             .tempdir_in(app_parent)
         {
             Ok(dir) => dir,
@@ -1726,7 +1726,7 @@ impl Update {
                 "staged updater executable does not support the host architecture",
             )));
         }
-        for sidecar in ["rosi-yt-dlp", "rosi-ffmpeg", "rosi-ffprobe"] {
+        for sidecar in ["conv2-ffmpeg", "conv2-ffprobe"] {
             let sidecar_path = tmp_extract_dir.path().join("Contents/MacOS").join(sidecar);
             if !crate::install_safety::macos_bundle_executable_supports_host_arch(&sidecar_path) {
                 return Err(Error::Io(std::io::Error::new(
@@ -1881,7 +1881,7 @@ fn remove_validated_macos_backup(
         )
     })?;
     let retired_dir = tempfile::Builder::new()
-        .prefix(".rosi-update-retired-backup-")
+        .prefix(".conv2-update-retired-backup-")
         .tempdir_in(parent)?;
     let retired_path = retired_dir.path().join("backup");
 
@@ -2107,7 +2107,7 @@ fn extract_macos_app_archive(bytes: &[u8], dest_root: &Path) -> Result<()> {
     extract_macos_app_archive_with_limit(bytes, dest_root, MACOS_MAX_DECOMPRESSED_BYTES)
 }
 
-/// Upper bound for an extracted `.app` (a universal ROSI bundle is ~300 MB).
+/// Upper bound for an extracted `.app` (a universal CONV2 bundle is ~300 MB).
 #[cfg(target_os = "macos")]
 const MACOS_MAX_DECOMPRESSED_BYTES: u64 = 2 * 1024 * 1024 * 1024;
 /// Per-arch `.app.tar.zst` archives are packed with `zstd --long=27`. Refuse
@@ -2115,7 +2115,7 @@ const MACOS_MAX_DECOMPRESSED_BYTES: u64 = 2 * 1024 * 1024 * 1024;
 #[cfg(target_os = "macos")]
 const MACOS_ZSTD_WINDOW_LOG_MAX: u32 = 27;
 
-/// `.app.tar.gz` (Tauri) or `.app.tar.zst` (ROSI per-arch), chosen by magic bytes.
+/// `.app.tar.gz` (Tauri) or `.app.tar.zst` (CONV2 per-arch), chosen by magic bytes.
 #[cfg(target_os = "macos")]
 fn macos_archive_decoder<'a>(bytes: &'a [u8]) -> Result<Box<dyn std::io::Read + 'a>> {
     const GZIP_MAGIC: [u8; 2] = [0x1f, 0x8b];
@@ -2784,7 +2784,7 @@ mod offline_tests {
         assert!(restored.context.config.require_signed_version);
     }
 
-    /// ROSI validates both the live and the replacement image, so the fixtures
+    /// CONV2 validates both the live and the replacement image, so the fixtures
     /// must be structurally valid AppImages rather than bare ELF magic.
     #[cfg(target_os = "linux")]
     fn installed_appimage() -> Vec<u8> {
@@ -2833,7 +2833,7 @@ mod offline_tests {
     #[cfg(target_os = "linux")]
     fn appimage_install_rejects_a_payload_that_is_not_an_appimage() {
         let (_dir, appimage, update) = appimage_update();
-        // ROSI's validator reports a rejected payload as `InvalidData`.
+        // CONV2's validator reports a rejected payload as `InvalidData`.
         assert!(matches!(
             update.install_appimage(b"not an AppImage"),
             Err(Error::Io(err)) if err.kind() == std::io::ErrorKind::InvalidData
@@ -2967,7 +2967,7 @@ mod tests {
             no_proxy: false,
             headers: Default::default(),
             extract_path: std::path::PathBuf::from("/unused/round2-app"),
-            executable_name: Some("rosi".to_string()),
+            executable_name: Some("conv2".to_string()),
             context: UpdaterContext {
                 #[cfg(target_os = "macos")]
                 run_on_main_thread: Arc::new(Box::new(|_| Ok(()))),
@@ -2976,8 +2976,8 @@ mod tests {
                     ..Config::default()
                 },
                 #[cfg(windows)]
-                app_name: "ROSI".to_string(),
-                bundle_identifier: "run.rosie.rosi".to_string(),
+                app_name: "CONV2".to_string(),
+                bundle_identifier: "run.rosie.conv2".to_string(),
                 #[cfg(windows)]
                 installer_args: Vec::new(),
                 #[cfg(windows)]
@@ -3213,14 +3213,14 @@ mod macos_archive_tests {
     use std::io::Write;
     use tar::{EntryType, Header};
 
-    const EXECUTABLE: &str = "ROSI.app/Contents/MacOS/ROSI";
+    const EXECUTABLE: &str = "CONV2.app/Contents/MacOS/CONV2";
 
     fn app_tar(payload: &[u8]) -> Vec<u8> {
         let mut builder = tar::Builder::new(Vec::new());
         for dir in [
-            "ROSI.app/",
-            "ROSI.app/Contents/",
-            "ROSI.app/Contents/MacOS/",
+            "CONV2.app/",
+            "CONV2.app/Contents/",
+            "CONV2.app/Contents/MacOS/",
         ] {
             let mut header = Header::new_gnu();
             header.set_entry_type(EntryType::Directory);
@@ -3261,12 +3261,12 @@ mod macos_archive_tests {
     fn extracted_executable(archive: &[u8]) -> crate::Result<Vec<u8>> {
         let dir = tempfile::tempdir().unwrap();
         extract_macos_app_archive(archive, dir.path())?;
-        Ok(std::fs::read(dir.path().join("Contents/MacOS/ROSI")).unwrap())
+        Ok(std::fs::read(dir.path().join("Contents/MacOS/CONV2")).unwrap())
     }
 
     #[test]
     fn gzip_and_zstd_archives_extract_the_same_bundle() {
-        let payload = b"\xcf\xfa\xed\xfe rosi executable".repeat(64);
+        let payload = b"\xcf\xfa\xed\xfe conv2 executable".repeat(64);
         let raw = app_tar(&payload);
         assert_eq!(extracted_executable(&gzip(&raw)).unwrap(), payload);
         assert_eq!(extracted_executable(&zstd(&raw)).unwrap(), payload);
@@ -3326,7 +3326,7 @@ mod macos_archive_tests {
         header.set_mode(0o644);
         header.set_size(1);
         // `set_path` refuses `..`; write the name bytes directly.
-        header.as_gnu_mut().unwrap().name[..17].copy_from_slice(b"ROSI.app/../../x\0");
+        header.as_gnu_mut().unwrap().name[..18].copy_from_slice(b"CONV2.app/../../x\0");
         header.set_cksum();
         raw.extend_from_slice(header.as_bytes());
         raw.extend_from_slice(&[b'x'; 512]);
@@ -3336,10 +3336,10 @@ mod macos_archive_tests {
 
     /// Run by scripts/e2e-updater-zst.mjs against real release archives.
     #[test]
-    #[ignore = "needs ROSI_UPDATER_ZST_E2E_ARCHIVES"]
+    #[ignore = "needs CONV2_UPDATER_ZST_E2E_ARCHIVES"]
     fn extracts_real_release_archives() {
-        let paths = std::env::var("ROSI_UPDATER_ZST_E2E_ARCHIVES")
-            .expect("ROSI_UPDATER_ZST_E2E_ARCHIVES lists archives separated by ':'");
+        let paths = std::env::var("CONV2_UPDATER_ZST_E2E_ARCHIVES")
+            .expect("CONV2_UPDATER_ZST_E2E_ARCHIVES lists archives separated by ':'");
         for path in paths.split(':').filter(|p| !p.is_empty()) {
             let bytes = std::fs::read(path).unwrap();
             let dir = tempfile::tempdir().unwrap();
@@ -3366,7 +3366,7 @@ mod macos_archive_tests {
                 true,
             );
             println!(
-                "ROSI_UPDATER_ZST_E2E {path} extract_ms={} aarch64={aarch64_ok} x86_64={x86_64_ok} rosetta={rosetta_ok}",
+                "CONV2_UPDATER_ZST_E2E {path} extract_ms={} aarch64={aarch64_ok} x86_64={x86_64_ok} rosetta={rosetta_ok}",
                 started.elapsed().as_millis()
             );
         }
@@ -3381,12 +3381,12 @@ mod macos_dock_identity_tests {
     use std::os::unix::fs::{MetadataExt, PermissionsExt};
     use std::sync::Arc;
 
-    const EXECUTABLES: [&str; 4] = ["rosi", "rosi-yt-dlp", "rosi-ffmpeg", "rosi-ffprobe"];
+    const EXECUTABLES: [&str; 3] = ["conv2", "conv2-ffmpeg", "conv2-ffprobe"];
 
     fn identity() -> MacosBundleIdentity {
         MacosBundleIdentity {
-            bundle_identifier: "run.rosie.rosi".into(),
-            executable: "rosi".into(),
+            bundle_identifier: "run.rosie.conv2".into(),
+            executable: "conv2".into(),
         }
     }
 
@@ -3406,7 +3406,7 @@ mod macos_dock_identity_tests {
         std::fs::create_dir_all(contents.join("MacOS")).unwrap();
         std::fs::write(
             contents.join("Info.plist"),
-            "<plist><dict><key>CFBundleIdentifier</key><string>run.rosie.rosi</string><key>CFBundleExecutable</key><string>rosi</string></dict></plist>",
+            "<plist><dict><key>CFBundleIdentifier</key><string>run.rosie.conv2</string><key>CFBundleExecutable</key><string>conv2</string></dict></plist>",
         )
         .unwrap();
         std::fs::write(contents.join("Resources/version"), version).unwrap();
@@ -3427,10 +3427,10 @@ mod macos_dock_identity_tests {
 
     fn update_archive(version: &str) -> Vec<u8> {
         let stage = tempfile::tempdir().unwrap();
-        write_bundle(&stage.path().join("ROSI.app"), version);
+        write_bundle(&stage.path().join("CONV2.app"), version);
         let mut builder = tar::Builder::new(Vec::new());
         builder
-            .append_dir_all("ROSI.app", stage.path().join("ROSI.app"))
+            .append_dir_all("CONV2.app", stage.path().join("CONV2.app"))
             .unwrap();
         let raw = builder.into_inner().unwrap();
         let mut encoder =
@@ -3454,11 +3454,11 @@ mod macos_dock_identity_tests {
             no_proxy: false,
             headers: Default::default(),
             extract_path: installed.to_path_buf(),
-            executable_name: Some("rosi".to_string()),
+            executable_name: Some("conv2".to_string()),
             context: UpdaterContext {
                 run_on_main_thread: Arc::new(Box::new(|_| Ok(()))),
                 config: Config::default(),
-                bundle_identifier: "run.rosie.rosi".to_string(),
+                bundle_identifier: "run.rosie.conv2".to_string(),
                 on_before_exit: None,
                 configure_client: None,
             },
@@ -3503,7 +3503,7 @@ mod macos_dock_identity_tests {
 
     fn installed_fixture() -> (tempfile::TempDir, PathBuf, PathBuf) {
         let root = tempfile::tempdir().unwrap();
-        let app = root.path().join("ROSI.app");
+        let app = root.path().join("CONV2.app");
         write_bundle(&app, "old");
         let backup = crate::install_safety::macos_update_backup_path(&app).unwrap();
         (root, app, backup)
@@ -3513,7 +3513,7 @@ mod macos_dock_identity_tests {
         let mut names: Vec<String> = std::fs::read_dir(root)
             .unwrap()
             .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
-            .filter(|name| name != "ROSI.app")
+            .filter(|name| name != "CONV2.app")
             .collect();
         names.sort();
         names
@@ -3553,7 +3553,7 @@ mod macos_dock_identity_tests {
         assert!(left.is_empty(), "staging or backup left next to the app: {left:?}");
         assert!(touched_after > touched_before, "installed app must be touched for LaunchServices");
 
-        if let Ok(report) = std::env::var("ROSI_MACOS_DOCK_REPORT") {
+        if let Ok(report) = std::env::var("CONV2_MACOS_DOCK_REPORT") {
             let json = serde_json::json!({
                 "ok": true,
                 "generatedAt": std::time::SystemTime::now()
@@ -3587,7 +3587,7 @@ mod macos_dock_identity_tests {
         header.set_mode(0o755);
         header.set_size(0);
         header.set_cksum();
-        builder.append_data(&mut header, "ROSI.app/", &[][..]).unwrap();
+        builder.append_data(&mut header, "CONV2.app/", &[][..]).unwrap();
         let mut encoder =
             flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::fast());
         std::io::Write::write_all(&mut encoder, &builder.into_inner().unwrap()).unwrap();
@@ -3702,7 +3702,7 @@ mod macos_dock_identity_tests {
         std::process::Command::new("/usr/bin/osascript")
             .arg(file.path())
             .args([app, stage, backup])
-            .args(["run.rosie.rosi", "rosi"])
+            .args(["run.rosie.conv2", "conv2"])
             .status()
             .unwrap()
             .success()

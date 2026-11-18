@@ -30,7 +30,7 @@ export function macosPackageName(target, extension) {
   if (extension !== "dmg" && extension !== "zip") {
     throw new Error(`unsupported macOS package extension: ${extension}`);
   }
-  return `CONV2-MacOS-${targetConfig.assetArch}.${extension}`;
+  return `CONV2-macOS-${targetConfig.assetArch}.${extension}`;
 }
 
 export function assertArchitectureCompatibility(
@@ -94,7 +94,7 @@ function parseMachOMinimumVersion(otoolOutput) {
     /cmd LC_BUILD_VERSION[\s\S]*?\bminos\s+(\d+(?:\.\d+)*)/,
   );
   if (buildVersion?.[1]) return buildVersion[1];
-  // Upstream yt-dlp x86_64 may use the legacy LC_VERSION_MIN_MACOSX command.
+  // Older x86_64 binaries may use the legacy LC_VERSION_MIN_MACOSX command.
   const legacy = otoolOutput.match(
     /cmd LC_VERSION_MIN_MACOSX[\s\S]*?\bversion\s+(\d+(?:\.\d+)*)/,
   );

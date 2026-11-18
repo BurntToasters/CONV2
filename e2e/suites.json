@@ -1,0 +1,130 @@
+{
+  "schemaVersion": 1,
+  "selectionBoundary": "existing runner owner; selected groups expand to every scenario owned by selected passes",
+  "groups": [
+    {
+      "id": "startup",
+      "owners": ["main"]
+    },
+    {
+      "id": "conversion",
+      "owners": ["main"]
+    },
+    {
+      "id": "settings",
+      "owners": ["main"]
+    },
+    {
+      "id": "ui",
+      "owners": ["main"]
+    },
+    {
+      "id": "legacy-import",
+      "owners": ["legacy-import"]
+    }
+  ],
+  "owners": {
+    "main": {
+      "id": "main",
+      "kind": "webdriverio",
+      "entrypoint": "e2e/specs/main.spec.js"
+    },
+    "legacy-import": {
+      "id": "legacy-import",
+      "kind": "webdriverio",
+      "entrypoint": "e2e/specs/legacy-import.spec.js"
+    }
+  },
+  "scenarios": [
+    {
+      "name": "startup",
+      "feature": "startup",
+      "owner": "main",
+      "allowedSkips": []
+    },
+    {
+      "name": "preset-matrix",
+      "feature": "conversion",
+      "owner": "main",
+      "allowedSkips": []
+    },
+    {
+      "name": "batch-queue",
+      "feature": "conversion",
+      "owner": "main",
+      "allowedSkips": []
+    },
+    {
+      "name": "cancel-conversion",
+      "feature": "conversion",
+      "owner": "main",
+      "allowedSkips": []
+    },
+    {
+      "name": "output-naming",
+      "feature": "conversion",
+      "owner": "main",
+      "allowedSkips": []
+    },
+    {
+      "name": "settings-patch",
+      "feature": "settings",
+      "owner": "main",
+      "allowedSkips": []
+    },
+    {
+      "name": "ui-failure-modes",
+      "feature": "ui",
+      "owner": "main",
+      "allowedSkips": []
+    },
+    {
+      "name": "accessibility-themes",
+      "feature": "ui",
+      "owner": "main",
+      "allowedSkips": []
+    },
+    {
+      "name": "ui-screenshots",
+      "feature": "ui",
+      "owner": "main",
+      "allowedSkips": []
+    },
+    {
+      "name": "legacy-import/import",
+      "feature": "legacy-import",
+      "owner": "legacy-import",
+      "allowedSkips": []
+    },
+    {
+      "name": "legacy-import/corrupt-settings",
+      "feature": "legacy-import",
+      "owner": "legacy-import",
+      "allowedSkips": []
+    },
+    {
+      "name": "legacy-import/preserve-v2",
+      "feature": "legacy-import",
+      "owner": "legacy-import",
+      "allowedSkips": []
+    },
+    {
+      "name": "legacy-import/v2-settings-win",
+      "feature": "legacy-import",
+      "owner": "legacy-import",
+      "allowedSkips": []
+    }
+  ],
+  "profiles": {
+    "core": {
+      "mainScenarioIds": ["startup", "batch-queue", "cancel-conversion"],
+      "mainMochaTitles": {
+        "startup": "starts with the bundled FFmpeg and every preset",
+        "batch-queue": "runs a mixed batch and reports each file",
+        "cancel-conversion": "cancels a running conversion and removes the partial file"
+      },
+      "completeOwners": ["legacy-import"],
+      "requiredTools": ["ffmpeg", "ffprobe"]
+    }
+  }
+}

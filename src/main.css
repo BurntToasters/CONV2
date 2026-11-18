@@ -1,6 +1,6 @@
 :root {
-  /* Dark — GitHub.com Primer depth (black-blue stack) */
-  --bg-primary: #010409; /* canvas / inset — deepest */
+  /* Dark: GitHub.com Primer depth (black-blue stack) */
+  --bg-primary: #010409; /* canvas / inset: deepest */
   --bg-secondary: #0d1117; /* panels / cards */
   --bg-tertiary: #151b23; /* inputs / nested wells */
   --bg-elevated: #0d1117;
@@ -27,7 +27,7 @@
   --error: #f85149;
   --error-bg: rgba(248, 81, 73, 0.12);
 
-  /* Solid Primer borders — not translucent white */
+  /* Solid Primer borders: not translucent white */
   --border: #30363d;
   --border-subtle: #21262d;
   --border-hover: #3d444d;
@@ -74,7 +74,7 @@
 }
 
 :root[data-theme='light'] {
-  /* Light — Paper Layers (default light) */
+  /* Light: Paper Layers (default light) */
   --bg-primary: #f6f8fa;
   --bg-secondary: #ffffff;
   --bg-tertiary: #eef1f4;
@@ -134,7 +134,7 @@
 }
 
 :root[data-theme='midnight-blue'] {
-  /* Custom — Midnight Blue (Sapphire successor) */
+  /* Custom: Midnight Blue (Sapphire successor) */
   --bg-primary: #0a0e17;
   --bg-secondary: #12182a;
   --bg-tertiary: #1a2238;
@@ -188,7 +188,7 @@
 }
 
 :root[data-theme='high-contrast-dark'] {
-  /* Custom — High Contrast Dark */
+  /* Custom: High Contrast Dark */
   --bg-primary: #000000;
   --bg-secondary: #0a0a0a;
   --bg-tertiary: #1a1a1a;
@@ -601,7 +601,7 @@ a:hover {
   box-shadow: none;
 }
 
-/* Soft pulse only in glass mode — no blue bloom */
+/* Soft pulse only in glass mode: no blue bloom */
 [data-ui-style='glass'] .drop-zone {
   animation: neonBreathing 5s ease-in-out infinite;
 }
@@ -2463,7 +2463,7 @@ html[data-custom-titlebar='true'] .settings-modal.modal {
   font-size: 13px;
 }
 
-/* prefers-contrast: more — every theme promotes secondary text and solidifies borders. */
+/* prefers-contrast: more: every theme promotes secondary text and solidifies borders. */
 @media (prefers-contrast: more) {
   :root,
   :root[data-theme] {

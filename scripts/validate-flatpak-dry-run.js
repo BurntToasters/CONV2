@@ -12,14 +12,13 @@ import { readPinnedRustToolchain } from "./rust-toolchain.mjs";
 
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
 const required = [
-  "run.rosie.rosi.metainfo.xml",
-  "run.rosie.rosi.yml",
-  "run.rosie.rosi.desktop",
-  "src-tauri/linux/desktop-template.hbs",
+  "run.rosie.conv2.metainfo.xml",
+  "run.rosie.conv2.yml",
+  "run.rosie.conv2.desktop",
   "scripts/prepare-flatpak-source.js",
   "scripts/prepare-sidecars.js",
 ];
-const expectedRuntime = "runtime-version: '50'";
+const expectedRuntime = "runtime-version: '51'";
 
 let failed = false;
 function fail(message) {
@@ -45,7 +44,7 @@ if (fs.existsSync(sourceExporter)) {
     "git",
     "archive",
     "--porcelain=v1",
-    ".rosi-source-commit",
+    ".conv2-source-commit",
     "src-tauri/gen/schemas/",
     'path.join("resources", "ffmpeg", "linux", arch, binary)',
   ]) {
@@ -53,7 +52,7 @@ if (fs.existsSync(sourceExporter)) {
   }
 }
 
-const manifest = path.join(root, "run.rosie.rosi.yml");
+const manifest = path.join(root, "run.rosie.conv2.yml");
 if (fs.existsSync(manifest)) {
   const yaml = fs.readFileSync(manifest, "utf8");
   if (!yaml.includes(expectedRuntime)) fail(`expected ${expectedRuntime}`);
@@ -64,18 +63,18 @@ if (fs.existsSync(manifest)) {
     fail("sideload build must fetch integrity-locked dependencies explicitly");
   }
   if (
-    !yaml.includes("npm@12 --") ||
-    !yaml.includes("--before=") ||
-    !yaml.includes("3 days ago")
+    !yaml.includes("npm install --global npm@") ||
+    !yaml.includes("--ignore-scripts") ||
+    !/test "\$\(npm --version\)" = "\d+\.\d+\.\d+"/u.test(yaml)
   ) {
     fail(
-      "node24 SDK npm 11 must be upgraded to newest npm 12 with a 3-day --before age gate before npm ci",
+      "node24 SDK npm must be upgraded to the exact pinned npm and verified before npm ci",
     );
   }
   if (!yaml.includes("tauri build --no-bundle -- --locked")) {
     fail("Cargo build must enforce Cargo.lock");
   }
-  const cargoBin = "/run/build/rosi/cargo/bin";
+  const cargoBin = "/run/build/conv2/cargo/bin";
   const prependPath = yaml.match(/^\s*prepend-path: (.+)$/m)?.[1]?.split(":");
   const manifestLines = yaml.split(/\r?\n/u);
   const extractsPin = manifestLines.some(
@@ -96,7 +95,7 @@ if (fs.existsSync(manifest)) {
     !yaml.includes(
       "curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs",
     ) ||
-    !yaml.includes("RUSTUP_HOME: /run/build/rosi/rustup") ||
+    !yaml.includes("RUSTUP_HOME: /run/build/conv2/rustup") ||
     !prependPath?.includes(cargoBin) ||
     yaml.includes("RUSTUP_TOOLCHAIN:")
   ) {
@@ -107,7 +106,7 @@ if (fs.existsSync(manifest)) {
   if (!yaml.includes("Unsupported FLATPAK_ARCH")) {
     fail("sidecar install must fail closed on unknown FLATPAK_ARCH");
   }
-  for (const sidecar of ["rosi-yt-dlp", "rosi-ffmpeg", "rosi-ffprobe"]) {
+  for (const sidecar of ["conv2-ffmpeg", "conv2-ffprobe"]) {
     if (!yaml.includes(sidecar)) fail(`manifest does not install ${sidecar}`);
   }
   if (!yaml.includes("node scripts/prepare-sidecars.js --target")) {
@@ -116,33 +115,23 @@ if (fs.existsSync(manifest)) {
   if (yaml.includes("--allow-stub-ffmpeg")) {
     fail("Flatpak must never bundle development FFmpeg stubs");
   }
-  if (yaml.includes("--filesystem=home")) {
-    fail("Flatpak must keep least-privilege filesystem access");
+  // CONV2 1 shipped --filesystem=home (conversions read and write anywhere
+  // under home); anything broader than home plus the media folders is refused.
+  for (const broad of [
+    "--filesystem=host",
+    "--filesystem=/",
+    "--filesystem=host-os",
+  ]) {
+    if (yaml.includes(broad)) fail(`Flatpak must not request ${broad}`);
   }
-  // yt-dlp's bundled JavaScript runtime: the manifest install target and the
-  // Rust constant that passes it to yt-dlp must name the same path.
-  const jsRuntimePath = "/app/lib/rosi/js-runtime/node";
-  const commandBuilders = fs.readFileSync(
-    path.join(root, "src-tauri", "src", "command_builders.rs"),
-    "utf8",
-  );
-  if (
-    !commandBuilders.includes(
-      `const FLATPAK_JS_RUNTIME_PATH: &str = "${jsRuntimePath}";`,
-    )
-  ) {
-    fail(`command_builders.rs must use the Flatpak runtime ${jsRuntimePath}`);
-  }
-  if (
-    !yaml.includes(`install -Dm755 "$node_bin" ${jsRuntimePath}`) ||
-    !yaml.includes("ROSI_FLATPAK_NODE_LICENSE=") ||
-    !yaml.includes("/app/share/rosi/licenses/node/LICENSE")
-  ) {
-    fail("manifest must install the bundled Node.js runtime and its license");
+  if (yaml.includes("--talk-name=org.freedesktop.Flatpak")) {
+    fail(
+      "Flatpak must not request sandbox escape through org.freedesktop.Flatpak",
+    );
   }
 }
 
-const metainfo = path.join(root, "run.rosie.rosi.metainfo.xml");
+const metainfo = path.join(root, "run.rosie.conv2.metainfo.xml");
 if (fs.existsSync(metainfo)) {
   const xml = fs.readFileSync(metainfo, "utf8");
   const pkg = JSON.parse(
@@ -153,9 +142,9 @@ if (fs.existsSync(metainfo)) {
   }
   for (const requiredMarkup of [
     '<component type="desktop-application">',
-    "<id>run.rosie.rosi</id>",
+    "<id>run.rosie.conv2</id>",
     '<developer id="run.rosie">',
-    '<launchable type="desktop-id">run.rosie.rosi.desktop</launchable>',
+    '<launchable type="desktop-id">run.rosie.conv2.desktop</launchable>',
   ]) {
     if (!xml.includes(requiredMarkup))
       fail(`metainfo missing ${requiredMarkup}`);
@@ -178,15 +167,15 @@ function runValidator(command, args) {
 runValidator("appstreamcli", [
   "validate",
   "--no-net",
-  "run.rosie.rosi.metainfo.xml",
+  "run.rosie.conv2.metainfo.xml",
 ]);
-runValidator("desktop-file-validate", ["run.rosie.rosi.desktop"]);
+runValidator("desktop-file-validate", ["run.rosie.conv2.desktop"]);
 
 const tauriConfPath = path.join(root, "src-tauri/tauri.conf.json");
 if (fs.existsSync(tauriConfPath)) {
   const tauriConf = JSON.parse(fs.readFileSync(tauriConfPath, "utf8"));
-  if (tauriConf.identifier !== "run.rosie.rosi") {
-    fail("tauri.conf.json identifier must be run.rosie.rosi");
+  if (tauriConf.identifier !== "run.rosie.conv2") {
+    fail("tauri.conf.json identifier must be run.rosie.conv2");
   }
   const linux = tauriConf.bundle?.linux ?? {};
   if (linux.appimage?.bundleMediaFramework !== false) {
@@ -199,7 +188,7 @@ if (fs.existsSync(tauriConfPath)) {
     fail("bundle.targets must not include retired DEB/RPM targets");
   }
   const externalBin = tauriConf.bundle?.externalBin ?? [];
-  for (const sidecar of ["rosi-yt-dlp", "rosi-ffmpeg", "rosi-ffprobe"]) {
+  for (const sidecar of ["conv2-ffmpeg", "conv2-ffprobe"]) {
     if (!externalBin.includes(`binaries/${sidecar}`)) {
       fail(`bundle.externalBin must include binaries/${sidecar}`);
     }

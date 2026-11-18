@@ -34,7 +34,7 @@ const result = spawnSync(
   {
     cwd: root,
     stdio: "inherit",
-    env: { ...process.env, ROSI_MACOS_DOCK_REPORT: reportPath },
+    env: { ...process.env, CONV2_MACOS_DOCK_REPORT: reportPath },
   },
 );
 if (result.status !== 0) {
