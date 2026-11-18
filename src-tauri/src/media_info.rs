@@ -24,7 +24,8 @@ const MAX_FFPROBE_OUTPUT_BYTES: usize = 8 * 1024 * 1024;
 /// data URIs. (Conversions insert the same list in command_builders.)
 const INPUT_PROTOCOL_ARGS: [&str; 2] = ["-protocol_whitelist", "file,pipe,crypto,data"];
 
-/// v1's exact ffprobe argument list for get-file-info.
+/// v1's exact ffprobe argument list for get-file-info. The input is the value
+/// of `-i` so a leading-hyphen filename can never parse as an option.
 fn ffprobe_args(input_path: &str) -> Vec<String> {
     [
         "-v",
@@ -35,6 +36,7 @@ fn ffprobe_args(input_path: &str) -> Vec<String> {
         "-show_streams",
         INPUT_PROTOCOL_ARGS[0],
         INPUT_PROTOCOL_ARGS[1],
+        "-i",
         input_path,
     ]
     .into_iter()
@@ -321,11 +323,9 @@ pub(crate) fn probe_duration_for_conversion(path: &str) -> Result<f64, ProbeErro
 }
 
 fn fetch_file_info(path: String, reservation: TrackedReservation<'static>) -> Option<VideoInfo> {
-    // v1 resolved the path first and returned null for missing files.
-    let file = Path::new(&path);
-    if !file.is_file() {
-        return None;
-    }
+    // Same admission as conversion inputs: absolute, existing regular file,
+    // never a network-namespace path. A bad path stays a null probe result.
+    let path = crate::validation::existing_file(&path)?;
     // v1's runFFprobe gated on the FFmpeg status before spawning.
     if !ffmpeg_status::current_status().ok {
         return None;
@@ -387,6 +387,7 @@ mod tests {
                 "-show_streams",
                 "-protocol_whitelist",
                 "file,pipe,crypto,data",
+                "-i",
                 "/tmp/movie file.mp4"
             ]
         );

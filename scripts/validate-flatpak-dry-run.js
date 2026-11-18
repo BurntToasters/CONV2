@@ -109,6 +109,20 @@ if (fs.existsSync(manifest)) {
   for (const sidecar of ["conv2-ffmpeg", "conv2-ffprobe"]) {
     if (!yaml.includes(sidecar)) fail(`manifest does not install ${sidecar}`);
   }
+  // bundle.resources must reach the payload at the resource_dir() the runtime
+  // resolves for /app/bin/conv2 (exe_dir/../lib/CONV2), or the checksum gate
+  // fails closed on every conversion.
+  for (const [source, destination] of [
+    ["NOTICE.txt", "NOTICE.txt"],
+    ["ffmpeg_license.txt", "LICENSE.txt"],
+    ["SOURCE_OFFER.txt", "SOURCE_OFFER.txt"],
+    ["checksums.json", "checksums.json"],
+  ]) {
+    const install = `install -Dm644 resources/ffmpeg/${source} /app/lib/CONV2/ffmpeg/${destination}`;
+    if (!yaml.includes(install)) {
+      fail(`manifest does not install bundle.resources ffmpeg/${destination}`);
+    }
+  }
   if (!yaml.includes("node scripts/prepare-sidecars.js --target")) {
     fail("Flatpak must verify sidecars with prepare-sidecars (no stubs)");
   }

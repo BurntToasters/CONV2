@@ -45,10 +45,10 @@ patch -p1 -d <pristine-2.14.0-dir> -i CONV2.patch
 | File | Status | Why the patch exists |
 | --- | --- | --- |
 | `src/install_safety.rs` | new | Shared install checks. macOS: bundle identity and completeness, Mach-O architecture validation (`macos_bundle_executable_supports_host_arch`, checking both native execution and Rosetta 2 translation), a sibling backup path, a process-wide install lock, and a privileged replacement script whose arguments are shell-quoted. Windows: `ShellExecuteW` result check (values `<= 32` are failures). Archives: confined tar member, parent-directory and symlink-target checks, so an update cannot write outside the extract root. Linux: helper binaries (`pkexec`, `sudo`, `zenity`, `kdialog`, `sh`) are resolved only from fixed root-owned system directories and never through `PATH`; the privileged environment is an allowlist (session display, D-Bus, locale vars) and sets `PATH` to fixed system directories. Also cross-device move and copy fallback. Its `#[cfg(test)]` module runs with `cargo test`. |
-| `src/appimage_install.rs` | new | Validates an AppImage before it replaces the live file: ELF class, machine and entrypoint checks, squashfs and ISO9660 structure for Type 2 images. Stages in a private work directory, moves the old image aside, then renames the stage into place, restoring the old image if that fails. Used on Linux and BSD only. |
+| `src/appimage_install.rs` | new | Validates an AppImage before it replaces the live file: ELF class, machine and entrypoint checks, squashfs and ISO9660 structure for Type 2 images. Stages in a private `0o700` work directory, moves the old image aside, then renames the stage into place, restoring the old image if that fails. Used on Linux and BSD only. |
 | `src/appimage_archive.rs` | new | Bounded `.tar.gz` extraction for AppImage updates: entry-count limit, total decompressed-byte limit, exactly one regular `.AppImage` member, no links, truncation detection. Used on Linux and BSD. Its `BoundedArchiveReader` (decompressed-byte cap, tar end-block and trailing-data check) also bounds macOS app extraction. The module is compiled on macOS without the `zip` feature, because its `flate2` and `tar` dependencies are unconditional there. On Linux and BSD it still needs `zip`. |
 | `src/updater.rs` | modified | See details below. |
-| `src/lib.rs` | modified | Adds `mod install_safety;`. Plumbs the fallible `on_before_exit` hook and a new `on_windows_installer_launched` hook into the updater state. Windows cleanup now runs from the launched hook, not before launch. |
+| `src/lib.rs` | modified | Adds `mod install_safety;`. Plumbs the fallible `on_before_exit` hook and a new `on_windows_installer_launched` hook into the updater state. Windows cleanup now runs from the launched hook, not before launch. Calls `configure_ssl_env_once()` from the plugin setup hook (main thread) so the Linux trust-store fallback is applied before worker threads read the environment. |
 | `src/error.rs` | modified | Adds `Error::BeforeExit(String)` so a failed app-state flush aborts installation and keeps the update retryable. |
 | `Cargo.toml` | modified | Adds the macOS-only `zstd` dependency (`default-features = false`) for per-arch `.app.tar.zst` updates. |
 | `src/commands.rs` | modified | `allow_downgrades` is accepted but ignored (`let _ = allow_downgrades;`). CONV2 decision: the flag cannot select an older release, so the default newer-only comparator always applies. Upstream honours the flag by replacing `version_comparator`. The config-level `allowDowngrades` (`Config::allow_downgrades`, parsed from `tauri.conf`) is not applied either: `lib.rs` does not install the downgrade comparator from it. |
@@ -64,14 +64,22 @@ patch -p1 -d <pristine-2.14.0-dir> -i CONV2.patch
 - Downloads: `MAX_UPDATE_PACKAGE_BYTES` (512 MiB) is enforced on `Content-Length` and on
   the running byte count (`append_download_chunk`). A body longer than its declared length
   is an error.
+- Update manifests: `MAX_MANIFEST_BYTES` (1 MiB) is enforced on the declared
+  `Content-Length` and on the streamed byte count (`read_update_manifest`); the bounded
+  buffer is then parsed with `serde_json::from_slice`. An oversized body or a non-JSON 2xx
+  body is a per-endpoint error, so the next endpoint is still tried. Manifest requests to
+  an `https` endpoint set `https_only(true)`, so a redirect downgrade to `http` fails
+  closed; explicitly configured `http` endpoints (loopback e2e fixtures) still work.
 - macOS: installs go through `install_inner_locked` inside the install lock. The new bundle
   is extracted with the confined extractor (`extract_macos_app_archive`), verified to support
   the host CPU architecture (`macos_bundle_executable_supports_host_arch` for the main executable
   and bundled sidecars, including Rosetta 2 migration to native Apple Silicon). Then
   `swap_macos_app_contents` moves the live `Contents` into the sibling backup directory and the
   new `Contents` into the live `.app`, and removes the backup only after the identity check passes.
-  The outer `.app` directory never moves, so the Dock tile keeps pointing at it (upstream renames
-  the whole bundle, which leaves a second Dock icon after restart; failure modes:
+  The staging directory (both the app-parent `tempdir_in` and the user-temp fallback) is created
+  owner-only (`0o700`), so another local user cannot rewrite the verified tree before the
+  privileged move. The outer `.app` directory never moves, so the Dock tile keeps pointing at it
+  (upstream renames the whole bundle, which leaves a second Dock icon after restart; failure modes:
   `e2e/macos-update-dock.failure-modes.md`). `restore_macos_live_bundle` and
   `recover_macos_live_bundle` roll back a partial swap by moving `Contents` back, including a
   whole-bundle backup left by the 5.0.x updater. When the user-owned path is not
@@ -85,9 +93,13 @@ patch -p1 -d <pristine-2.14.0-dir> -i CONV2.patch
 - Linux: privileged commands go through `linux_privileged_command` (env allowlist, fixed
   `PATH`, `LC_ALL=C`). Child processes run in their own process group with timeouts
   (`wait_child_output_timeout`, 600 s for package installs). Helper paths come from
-  `resolve_trusted_system_helper`. `SSL_CERT_FILE` falls back to `/etc/pki/tls/certs/ca-bundle.crt`
-  when the Debian path is absent. AppImage updates route through `appimage_archive` and
-  `appimage_install`.
+  `resolve_trusted_system_helper`. The `SSL_CERT_FILE` / `SSL_CERT_DIR` trust-store fallback
+  (Fedora `ca-bundle.crt` path when the Debian path is absent) is applied by the public
+  `configure_ssl_env_once()` under a `Once`, called from the plugin setup hook on the main
+  thread; apps may also call it during setup. `Updater::check` no longer mutates the
+  environment from a worker thread. deb/rpm staging directories are created `0o700`.
+  AppImage updates route through `appimage_archive` and `appimage_install`; its work
+  directory is created `0o700` with `DirBuilder` (no create-then-chmod window).
 - Tests: `#[cfg(test)]` modules in `updater.rs`, `install_safety.rs`, `appimage_install.rs` and
   `appimage_archive.rs` are CONV2 additions. They run under `cargo test` in the `rust-check` CI job.
 - Rebased onto 2.14.0 (2026-10-17). Upstream 2.14.0 features kept: `Update::verify`,
@@ -130,6 +142,9 @@ more in test code (`appimage_install.rs`, `appimage_archive.rs`, `install_safety
 
 ## Known gaps
 
+- Windows installer staging still uses `tempfile` under the per-user `%TEMP%`, whose ACL
+  inherits the user profile restriction; POSIX `0o700` has no Windows equivalent, so no
+  mode is set there. deb/rpm, AppImage and macOS staging directories are `0o700`.
 - `allow_downgrades` is a deliberate behaviour change (see table above).
 - cargo-audit cannot report advisories for this crate: it is a path dependency,
   so `src-tauri/Cargo.lock` has no registry source. `scripts/check-vendored-updater.mjs`

@@ -555,20 +555,20 @@ fn validate_appimage_file(path: &Path) -> io::Result<Metadata> {
 }
 
 fn create_private_work_directory(root: &Path) -> io::Result<PathBuf> {
+    use std::os::unix::fs::DirBuilderExt;
+
     for _ in 0..128 {
         let sequence = WORK_DIRECTORY_SEQUENCE.fetch_add(1, Ordering::Relaxed);
         let path = root.join(format!(
             ".tauri-appimage-update-{}-{sequence}",
             std::process::id()
         ));
-        match fs::create_dir(&path) {
-            Ok(()) => {
-                if let Err(error) = fs::set_permissions(&path, fs::Permissions::from_mode(0o700)) {
-                    let _ = fs::remove_dir(&path);
-                    return Err(error);
-                }
-                return Ok(path);
-            }
+        // Create owner-only so the tree is never group/world writable, even
+        // between creation and a later chmod.
+        let mut builder = fs::DirBuilder::new();
+        builder.mode(0o700);
+        match builder.create(&path) {
+            Ok(()) => return Ok(path),
             Err(error) if error.kind() == io::ErrorKind::AlreadyExists => continue,
             Err(error) => return Err(error),
         }

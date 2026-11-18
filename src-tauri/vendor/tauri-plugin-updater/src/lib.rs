@@ -294,6 +294,9 @@ impl Builder {
         let headers = self.headers;
         PluginBuilder::<R, Config>::new("updater")
             .setup(move |app, api| {
+                // Main-thread setup; the app's updater and conversion threads
+                // start later.
+                configure_ssl_env_once();
                 let mut config = api.config().clone();
                 if let Some(pubkey) = pubkey {
                     config.pubkey = pubkey;

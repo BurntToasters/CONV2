@@ -31,6 +31,7 @@ const ALLOWED_SETTINGS_KEYS: &[&str] = &[
     "interfaceStyle",
     "showDebugOutput",
     "autoCheckUpdates",
+    "useSystemFfmpeg",
     "useSystemFFmpeg",
     "useCpuDecodingWhenGpu",
     "moveOriginalToTrashOnSuccess",
@@ -653,7 +654,13 @@ pub fn normalize_settings(value: &Value) -> AppSettings {
         },
         show_debug_output: bool_or(&incoming, "showDebugOutput", false),
         auto_check_updates: bool_or(&incoming, "autoCheckUpdates", true),
-        use_system_ffmpeg: bool_or(&incoming, "useSystemFFmpeg", false),
+        // AppSettings serializes this key as useSystemFfmpeg; older files and
+        // the v1 renderer used useSystemFFmpeg.
+        use_system_ffmpeg: incoming
+            .get("useSystemFfmpeg")
+            .or_else(|| incoming.get("useSystemFFmpeg"))
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
         use_cpu_decoding_when_gpu: bool_or(&incoming, "useCpuDecodingWhenGpu", false),
         move_original_to_trash_on_success: bool_or(
             &incoming,
@@ -897,6 +904,24 @@ fn migrate_legacy_tier_defaults(mut raw: Map<String, Value>) -> Map<String, Valu
     raw
 }
 
+fn stored_settings_version(incoming: &Map<String, Value>) -> Option<f64> {
+    incoming
+        .get("settingsSchemaVersion")
+        .and_then(Value::as_f64)
+        .filter(|version| version.fract() == 0.0 && *version >= 0.0)
+}
+
+/// Gate the tier migration on the version the file carried, before
+/// normalization stamps CURRENT_SETTINGS_VERSION over it.
+fn migrate_legacy_tiers_if_needed(mut incoming: Map<String, Value>) -> Map<String, Value> {
+    let predates = stored_settings_version(&incoming)
+        .is_none_or(|version| version < f64::from(TIER_DEFAULTS_MIGRATION_VERSION));
+    if predates {
+        incoming = migrate_legacy_tier_defaults(incoming);
+    }
+    incoming
+}
+
 // ── persistence ────────────────────────────────────────────────────────────
 
 fn back_up_corrupt(settings_path: &std::path::Path) {
@@ -942,15 +967,8 @@ fn read_settings_file() -> (AppSettings, bool) {
         back_up_corrupt(&path);
         return (default_settings(), true);
     };
-    let stored_version = incoming
-        .get("settingsSchemaVersion")
-        .and_then(Value::as_f64)
-        .filter(|version| version.fract() == 0.0 && *version >= 0.0);
-    let predates_tier_migration =
-        stored_version.is_none_or(|version| version < f64::from(TIER_DEFAULTS_MIGRATION_VERSION));
-    if predates_tier_migration {
-        incoming = migrate_legacy_tier_defaults(incoming);
-    }
+    let stored_version = stored_settings_version(&incoming);
+    incoming = migrate_legacy_tiers_if_needed(incoming);
     let outdated = stored_version != Some(f64::from(CURRENT_SETTINGS_VERSION));
     (normalize_settings(&Value::Object(incoming)), outdated)
 }
@@ -1000,8 +1018,22 @@ pub fn current() -> AppSettings {
 
 /// Used by the one-time v1 import before the in-memory copy exists.
 pub fn import_legacy(raw: Value) -> Result<(), String> {
-    let settings = normalize_settings(&raw);
+    // A v1 document predates the tier migration; normalize would hide its version.
+    let incoming = migrate_legacy_tiers_if_needed(object(&raw));
+    let settings = normalize_settings(&Value::Object(incoming));
     save_to_disk(&settings)
+}
+
+/// Persist the updater's channel through the store so SETTINGS and the file
+/// agree; updater.rs rewires to this instead of writing the file itself.
+#[allow(dead_code)] // The updater rewire supplies the first caller.
+pub fn set_update_channel(channel: UpdateChannel) -> Result<(), String> {
+    let _save = SAVE_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let mut next = current();
+    next.update_channel = channel;
+    save_to_disk(&next)
 }
 
 fn merge_patch(current: &AppSettings, patch: &Map<String, Value>) -> AppSettings {

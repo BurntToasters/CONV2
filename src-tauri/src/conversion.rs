@@ -535,6 +535,44 @@ fn remove_output(path: &Path) {
     }
 }
 
+/// Re-establishes the output claim right before FFmpeg's `-y` reopen: the
+/// leaf must be a regular file, never a symlink or other substituted entry.
+fn prepare_output_claim(output_path: &Path) -> Result<(), String> {
+    match std::fs::symlink_metadata(output_path) {
+        Ok(metadata) if metadata.file_type().is_file() => Ok(()),
+        Ok(_) => {
+            remove_output(output_path);
+            Err(format!(
+                "Output path was replaced before FFmpeg started: {}",
+                output_path.display()
+            ))
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            match std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(output_path)
+            {
+                Ok(_) => Ok(()),
+                Err(error) => {
+                    remove_output(output_path);
+                    Err(format!(
+                        "Could not reserve output path {}: {error}",
+                        output_path.display()
+                    ))
+                }
+            }
+        }
+        Err(error) => {
+            remove_output(output_path);
+            Err(format!(
+                "Could not check output path {}: {error}",
+                output_path.display()
+            ))
+        }
+    }
+}
+
 fn cancelled_outcome(output_path: &Path) -> Outcome {
     remove_output(output_path);
     Outcome {
@@ -1183,6 +1221,17 @@ fn run_ffmpeg(
             code: None,
             cancelled: true,
             failure_message: None,
+            stderr: String::new(),
+        };
+    }
+    // FFmpeg reopens the claimed name with `-y`; refuse a substituted leaf so
+    // a planted symlink cannot redirect the truncation.
+    if let Err(message) = prepare_output_claim(output_path) {
+        crate::logging::warn(&message);
+        return Attempt {
+            code: None,
+            cancelled: false,
+            failure_message: Some(message),
             stderr: String::new(),
         };
     }

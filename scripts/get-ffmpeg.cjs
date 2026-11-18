@@ -188,6 +188,8 @@ const DOWNLOAD_TIMEOUT_MS = 120_000;
  * @returns {Promise<void>}
  */
 function download(url, destPath) {
+  // Log the payload name only: the request URL is secret-derived.
+  const payloadName = path.basename(destPath);
   return new Promise((resolve, reject) => {
     let settled = false;
 
@@ -203,18 +205,20 @@ function download(url, destPath) {
       try {
         parsed = new URL(requestUrl);
       } catch {
-        fail(new Error(`Invalid download URL: ${requestUrl}`));
+        fail(new Error(`Invalid download URL for ${payloadName}`));
         return;
       }
 
       if (parsed.protocol !== "https:") {
         fail(
-          new Error(`Refusing non-HTTPS FFmpeg download URL: ${parsed.href}`),
+          new Error(
+            `Refusing non-HTTPS FFmpeg download URL for ${payloadName}`,
+          ),
         );
         return;
       }
       if (redirectCount > MAX_REDIRECTS) {
-        fail(new Error(`Too many redirects while downloading ${url}`));
+        fail(new Error(`Too many redirects while downloading ${payloadName}`));
         return;
       }
 
@@ -231,7 +235,7 @@ function download(url, destPath) {
             if (!location) {
               fail(
                 new Error(
-                  `Redirect with no Location header from ${parsed.href}`,
+                  `Redirect with no Location header while downloading ${payloadName}`,
                 ),
               );
               return;
@@ -242,7 +246,7 @@ function download(url, destPath) {
 
           if (res.statusCode !== 200) {
             res.resume();
-            fail(new Error(`HTTP ${res.statusCode} for ${parsed.href}`));
+            fail(new Error(`HTTP ${res.statusCode} for ${payloadName}`));
             return;
           }
 
@@ -267,7 +271,7 @@ function download(url, destPath) {
             file.close(() => {
               if (settled) return;
               if (receivedBytes === 0) {
-                fail(new Error(`Empty download response from ${parsed.href}`));
+                fail(new Error(`Empty download response for ${payloadName}`));
                 return;
               }
               settled = true;
@@ -283,7 +287,18 @@ function download(url, destPath) {
           new Error(`Download timed out after ${DOWNLOAD_TIMEOUT_MS}ms`),
         ),
       );
-      request.on("error", fail);
+      request.on("error", (err) => {
+        // Node network errors embed the request host; log the code instead.
+        if (err && err.code) {
+          fail(
+            new Error(
+              `Download request failed for ${payloadName} (${err.code})`,
+            ),
+          );
+          return;
+        }
+        fail(err);
+      });
     }
 
     doRequest(url, 0);
@@ -515,18 +530,14 @@ async function main() {
   if (!serverBase) {
     console.error("\nError: FFMPEG_DL_SERVER is not set.");
     console.error("Add it to your .env file:");
-    console.error(
-      "  FFMPEG_DL_SERVER=https://your-server.example/ffmpeg/latest/",
-    );
+    console.error("  FFMPEG_DL_SERVER=<payload server base URL>");
     process.exit(1);
   }
   let parsedServerBase;
   try {
     parsedServerBase = new URL(serverBase);
   } catch {
-    console.error(
-      `\nError: FFMPEG_DL_SERVER is not a valid URL: ${serverBase}`,
-    );
+    console.error("\nError: FFMPEG_DL_SERVER is not a valid URL.");
     process.exit(1);
   }
   if (parsedServerBase.protocol !== "https:") {
@@ -547,9 +558,8 @@ async function main() {
   }
 
   console.log(
-    `\nDownloading ffmpeg binaries for: ${targets.map((t) => `${t.platform}:${t.arch}`).join(", ")}`,
+    `\nDownloading ffmpeg binaries for: ${targets.map((t) => `${t.platform}:${t.arch}`).join(", ")}\n`,
   );
-  console.log(`Server: ${base}\n`);
 
   for (const { platform, arch } of targets) {
     const urlSegment = PLATFORM_URL_SEGMENT[platform];

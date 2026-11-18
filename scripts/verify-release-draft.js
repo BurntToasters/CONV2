@@ -49,6 +49,9 @@ const { assertReleaseTagMatchesHead } = require("./release-git-tag.cjs");
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
 const RETIRED_LINUX_PACKAGE_ASSET =
   /(?:\.(?:deb|rpm)(?:\.(?:asc|sig))?$|^latest-linux(?:-beta)?-[a-z0-9_]+-(?:deb|rpm)\.json$)/i;
+const WINDOWS_SETUP_ASSET = /^CONV2-Win-.+-Setup\.exe$/i;
+const WINDOWS_AUTHENTICODE_ATTESTATION = "windows-authenticode.json";
+const WINDOWS_AUTHENTICODE_SCHEMA = "conv2-windows-authenticode/v1";
 
 function readPackageVersion(repositoryRoot = root) {
   return JSON.parse(
@@ -246,6 +249,115 @@ function sha256Contents(contents) {
     fs.closeSync(descriptor);
   }
   return hash.digest("hex");
+}
+
+function isSafeAssetName(name) {
+  return (
+    typeof name === "string" &&
+    name === path.posix.basename(name) &&
+    name === path.win32.basename(name) &&
+    !/[\\/:\0]/u.test(name) &&
+    name !== "." &&
+    name !== ".."
+  );
+}
+
+// Binds the Windows installers in the draft to the publisher identity that the
+// Windows signing host verified before upload.
+export function validateWindowsAuthenticodeAttestation({
+  attestation,
+  installerDigests,
+}) {
+  if (
+    !attestation ||
+    typeof attestation !== "object" ||
+    Array.isArray(attestation)
+  ) {
+    throw new Error(
+      `${WINDOWS_AUTHENTICODE_ATTESTATION} is not a JSON object.`,
+    );
+  }
+  if (attestation.schema !== WINDOWS_AUTHENTICODE_SCHEMA) {
+    throw new Error(
+      `${WINDOWS_AUTHENTICODE_ATTESTATION} has an unexpected schema; rebuild the Windows installers.`,
+    );
+  }
+  const publisher =
+    typeof attestation.publisher === "string"
+      ? attestation.publisher.trim()
+      : "";
+  const subject =
+    typeof attestation.subject === "string" ? attestation.subject.trim() : "";
+  if (!publisher || !subject) {
+    throw new Error(
+      `${WINDOWS_AUTHENTICODE_ATTESTATION} is missing the publisher or certificate subject.`,
+    );
+  }
+  if (
+    !Array.isArray(attestation.artifacts) ||
+    attestation.artifacts.length === 0
+  ) {
+    throw new Error(`${WINDOWS_AUTHENTICODE_ATTESTATION} covers no artifacts.`);
+  }
+  const attested = new Map();
+  for (const entry of attestation.artifacts) {
+    const name = entry?.assetName;
+    const digest =
+      typeof entry?.sha256 === "string"
+        ? entry.sha256.trim().toLowerCase()
+        : "";
+    if (
+      entry?.verified !== true ||
+      !isSafeAssetName(name) ||
+      !/^[0-9a-f]{64}$/u.test(digest)
+    ) {
+      throw new Error(
+        `${WINDOWS_AUTHENTICODE_ATTESTATION} contains an unverified or malformed artifact entry.`,
+      );
+    }
+    if (entry.publisher !== publisher || entry.subject !== subject) {
+      throw new Error(
+        `${WINDOWS_AUTHENTICODE_ATTESTATION} mixes Authenticode identities for ${name}.`,
+      );
+    }
+    const key = name.toLowerCase();
+    if (attested.has(key)) {
+      throw new Error(
+        `${WINDOWS_AUTHENTICODE_ATTESTATION} repeats artifact ${name}.`,
+      );
+    }
+    attested.set(key, digest);
+  }
+  for (const [name, digest] of installerDigests) {
+    const expected = attested.get(name.toLowerCase());
+    if (!expected) {
+      throw new Error(
+        `${WINDOWS_AUTHENTICODE_ATTESTATION} does not cover Windows installer ${name}.`,
+      );
+    }
+    if (expected !== digest.toLowerCase()) {
+      throw new Error(
+        `${WINDOWS_AUTHENTICODE_ATTESTATION} has a stale SHA-256 for ${name}.`,
+      );
+    }
+  }
+}
+
+async function loadWindowsAuthenticodeAttestation({
+  assetsByName,
+  downloadByName,
+}) {
+  if (assetsByName.has(WINDOWS_AUTHENTICODE_ATTESTATION)) {
+    const filePath = await downloadByName(WINDOWS_AUTHENTICODE_ATTESTATION);
+    return fs.readFileSync(filePath, "utf8");
+  }
+  // Fallback for hosts that ran the Windows build but did not upload the file.
+  const localPath = path.join(
+    root,
+    "release",
+    WINDOWS_AUTHENTICODE_ATTESTATION,
+  );
+  return fs.existsSync(localPath) ? fs.readFileSync(localPath, "utf8") : null;
 }
 
 function keyIdentifierMatches(identifier, keyId) {
@@ -702,6 +814,9 @@ async function verifyDraftGpgAndChecksums({
     ...requiredDraftInstallerNames({ requireLinuxAarch64 }),
     ...requiredDraftUpdaterArchiveNames(),
   ];
+  const windowsInstallerNames = [...assetsByName.keys()].filter((name) =>
+    WINDOWS_SETUP_ASSET.test(name),
+  );
   const requiredChecksumNames = requiredDraftChecksumNames({
     requireLinuxAarch64,
   })
@@ -815,6 +930,34 @@ async function verifyDraftGpgAndChecksums({
         signaturePath,
         signedPath,
         expectedFingerprint,
+      });
+    }
+
+    if (windowsInstallerNames.length > 0) {
+      const attestationText = await loadWindowsAuthenticodeAttestation({
+        assetsByName,
+        downloadByName,
+      });
+      if (!attestationText) {
+        throw new Error(
+          `Draft contains Windows installers (${windowsInstallerNames.join(", ")}) but no ${WINDOWS_AUTHENTICODE_ATTESTATION} attestation is available as a draft asset or in release/${WINDOWS_AUTHENTICODE_ATTESTATION}.`,
+        );
+      }
+      let attestation;
+      try {
+        attestation = JSON.parse(attestationText);
+      } catch {
+        throw new Error(
+          `${WINDOWS_AUTHENTICODE_ATTESTATION} is not valid JSON.`,
+        );
+      }
+      const installerDigests = new Map();
+      for (const name of windowsInstallerNames) {
+        installerDigests.set(name, sha256Contents(await downloadByName(name)));
+      }
+      validateWindowsAuthenticodeAttestation({
+        attestation,
+        installerDigests,
       });
     }
   } finally {

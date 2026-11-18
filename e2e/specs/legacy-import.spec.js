@@ -43,6 +43,11 @@ const CASES = {
       7,
       "normalized to the v2 schema",
     );
+    // v1's shipped tier defaults become the schema 7 defaults on import.
+    const advanced = settings.advancedFormatSettings;
+    assert.equal(advanced.av1.tiers.bestQuality.quality, 18);
+    assert.equal(advanced.av1.tiers.bestQuality.cpuPreset, 4);
+    assert.equal(advanced.h265.tiers.bestQuality.preset, "slow");
     assert.equal(readJson(inData("settings.json")).theme, "light");
 
     // The imported window state is used for the first window (logical units).

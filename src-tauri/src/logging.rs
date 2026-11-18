@@ -1,7 +1,7 @@
 //! Rolling local diagnostics log (`<app data>/logs/conv2.log`), replacing
 //! electron-log. Lines are single-line, timestamped, and size-trimmed.
 
-use std::io::Write;
+use std::io::{Read, Seek, SeekFrom, Write};
 use std::sync::Mutex;
 
 const MAX_LOG_FILE_BYTES: u64 = 5 * 1024 * 1024;
@@ -39,24 +39,35 @@ pub fn iso_timestamp(millis: u64) -> String {
 }
 
 fn trim_if_needed(path: &std::path::Path) {
-    let Ok(metadata) = std::fs::metadata(path) else {
+    // Bounded: only the newest half is read, never the whole file.
+    let Ok(mut file) = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(path)
+    else {
         return;
     };
-    if metadata.len() <= MAX_LOG_FILE_BYTES {
+    let Ok(metadata) = file.metadata() else {
+        return;
+    };
+    let len = metadata.len();
+    if len <= MAX_LOG_FILE_BYTES {
         return;
     }
-    let Ok(bytes) = std::fs::read(path) else {
+    let keep = MAX_LOG_FILE_BYTES / 2;
+    if file.seek(SeekFrom::Start(len - keep)).is_err() {
         return;
-    };
-    let keep_from = bytes
-        .len()
-        .saturating_sub((MAX_LOG_FILE_BYTES / 2) as usize);
-    let tail = &bytes[keep_from..];
+    }
+    let mut tail = Vec::with_capacity(keep as usize);
+    if (&mut file).take(keep).read_to_end(&mut tail).is_err() {
+        return;
+    }
     let start = tail
         .iter()
         .position(|byte| *byte == b'\n')
         .map(|index| index + 1)
         .unwrap_or(0);
+    drop(file);
     let _ = std::fs::write(path, &tail[start..]);
 }
 
@@ -72,10 +83,45 @@ fn write_line(level: &str, message: &str) {
 }
 
 fn append_line(level: &str, line: &str) {
+    // Never write through data_dir()'s predictable temp fallback.
+    if !crate::app_state::data_dir_ready() {
+        return;
+    }
     let path = log_path();
-    if let Some(parent) = path.parent() {
-        if std::fs::create_dir_all(parent).is_err() {
+    let Some(parent) = path.parent() else {
+        return;
+    };
+    if std::fs::create_dir_all(parent).is_err() {
+        return;
+    }
+    // A planted non-directory must not redirect the log.
+    match std::fs::symlink_metadata(parent) {
+        Ok(metadata) if metadata.is_dir() => {}
+        Ok(_) => {
+            eprintln!(
+                "[warn] Log directory {} is not a directory; skipping",
+                parent.display()
+            );
             return;
+        }
+        Err(error) => {
+            eprintln!(
+                "[warn] Could not inspect log directory {}: {error}; skipping",
+                parent.display()
+            );
+            return;
+        }
+    }
+    // Unlink a symlinked leaf so the open creates a fresh file.
+    if let Ok(metadata) = std::fs::symlink_metadata(&path) {
+        if metadata.file_type().is_symlink() {
+            if let Err(error) = std::fs::remove_file(&path) {
+                eprintln!(
+                    "[warn] Could not remove symlinked log file {}: {error}; skipping",
+                    path.display()
+                );
+                return;
+            }
         }
     }
     trim_if_needed(&path);
@@ -121,8 +167,13 @@ pub fn install_panic_hook() {
             let name = thread.name().unwrap_or("<unnamed>");
             let message = format!("PANIC in thread '{name}' at {location}: {payload}")
                 .replace(['\r', '\n'], " ");
-            let _guard = LOG_LOCK.try_lock();
-            append_line("panic", &message);
+            if crate::app_state::data_dir_ready() {
+                let _guard = LOG_LOCK.try_lock();
+                append_line("panic", &message);
+            } else {
+                // DATA_DIR is unset before app init; never touch the temp fallback.
+                eprintln!("[panic] {message}");
+            }
             IN_PANIC_HOOK.with(|flag| flag.set(false));
         }
         previous(info);

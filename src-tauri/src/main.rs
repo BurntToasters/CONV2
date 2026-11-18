@@ -204,6 +204,8 @@ fn main() {
             legacy::import_on_first_launch(app.handle());
             settings::init();
             conversion::init();
+            // Start the updater engine so the launch auto-check watcher runs.
+            updater::init_engine();
             os_integration::init(app.handle());
             if let Err(error) = app_menu::install(app.handle()) {
                 logging::warn(&format!("Failed to install macOS app menu: {error}"));

@@ -52,12 +52,34 @@ export function v1Files({ outputDirectory }) {
   };
 }
 
+/** Shipped v1 tier defaults that schema 7 replaces during the import. */
+const LEGACY_TIER_SETTINGS = {
+  av1: {
+    tiers: {
+      bestQuality: { quality: 18, cpuPreset: 2, audioBitrateKbps: 256 },
+    },
+  },
+  h265: {
+    tiers: {
+      bestQuality: {
+        quality: 16,
+        preset: "veryslow",
+        audioBitrateKbps: 256,
+        useAdvancedParams: true,
+      },
+    },
+  },
+};
+
 /**
  * Seed the v1 folder for `legacyCase`. Returns what the spec needs to assert:
  * the v1 values, and a snapshot hash of every v1 file for the untouched check.
  */
 export function seedLegacyV1Data(profile, { legacyCase }) {
   const files = v1Files({ outputDirectory: profile.output });
+  if (legacyCase === "import") {
+    files.settings.advancedFormatSettings = LEGACY_TIER_SETTINGS;
+  }
   const v1Settings = path.join(profile.legacyDir, "settings.json");
   fs.mkdirSync(profile.legacyDir, { recursive: true });
   if (legacyCase === "corrupt-settings") {

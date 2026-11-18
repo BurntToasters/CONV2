@@ -6,7 +6,8 @@
 //! 2. URL is http, has credentials, targets a local or private host, or is
 //!    over 2048 bytes: dropped silently, as v1 did.
 //! 3. The OS refuses to launch the browser: logged, not surfaced.
-//! 4. `reveal_path` gets a relative or empty path: INVALID_PATH.
+//! 4. `reveal_path` gets a relative, empty, or Windows network path:
+//!    INVALID_PATH, with no filesystem access.
 //! 5. Revealed path is gone: silent no-op, as v1 did.
 //! 6. The file manager reveal fails (Linux without FileManager1): open the
 //!    containing folder instead.

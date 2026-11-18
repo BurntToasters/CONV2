@@ -702,11 +702,15 @@ impl State {
     ) -> bool {
         let was_unsaved = self.channel_unsaved;
         self.channel_unsaved = saved.is_err();
-        if self.known_channel.is_none() {
-            // v1 seeded the channel from settings at launch (main.ts).
+        // v1 seeded the channel from settings at launch (main.ts); the first
+        // change after engine start has no in-memory previous channel, and the
+        // file already holds the new one, so it counts as a real change.
+        let first = self.known_channel.is_none();
+        if first {
             self.known_channel = Some(read_settings().0);
         }
-        let changed = self.known_channel != Some(channel) || (was_unsaved && saved.is_ok());
+        let changed =
+            first || self.known_channel != Some(channel) || (was_unsaved && saved.is_ok());
         self.known_channel = Some(channel);
         if !changed {
             return false;
@@ -915,6 +919,12 @@ fn current_gates() -> Gates {
     }
 }
 
+/// Start the engine channel at launch so the startup watcher and its silent
+/// check exist before any updater command runs.
+pub fn init_engine() {
+    let _ = engine();
+}
+
 fn engine() -> &'static Sender<Command> {
     static ENGINE: OnceLock<Sender<Command>> = OnceLock::new();
     ENGINE.get_or_init(|| {
@@ -991,51 +1001,10 @@ fn read_settings() -> (UpdateChannel, bool) {
     (channel, auto_check)
 }
 
-/// Whole-file read, one-field update, same-directory rename, so the choice
-/// never lands half-written. A file that is not schema-complete keeps its
-/// unknown fields through the raw-JSON path.
+/// Persist through the settings store so SAVE_LOCK serializes the write and
+/// the SETTINGS cache agrees with the file.
 fn persist_channel(channel: UpdateChannel) -> Result<(), String> {
-    let path = settings_path();
-    let text = match std::fs::read_to_string(&path) {
-        Ok(text) => text,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => "{}".to_string(),
-        Err(error) => return Err(format!("Could not read {}: {error}", path.display())),
-    };
-    let updated = if let Ok(mut settings) = serde_json::from_str::<AppSettings>(&text) {
-        settings.update_channel = channel;
-        serde_json::to_string(&settings)
-    } else {
-        let mut value: serde_json::Value = serde_json::from_str(&text)
-            .map_err(|error| format!("settings.json is not valid JSON: {error}"))?;
-        let map = value
-            .as_object_mut()
-            .ok_or("settings.json is not a JSON object")?;
-        map.insert(
-            "updateChannel".into(),
-            serde_json::Value::String(channel.as_str().to_owned()),
-        );
-        serde_json::to_string(&value)
-    }
-    .map_err(|error| error.to_string())?;
-    write_settings_atomically(&path, &updated)
-}
-
-fn write_settings_atomically(path: &std::path::Path, contents: &str) -> Result<(), String> {
-    let directory = path
-        .parent()
-        .filter(|parent| !parent.as_os_str().is_empty())
-        .unwrap_or_else(|| std::path::Path::new("."));
-    let temporary = directory.join(format!(
-        "{}.updater.tmp",
-        path.file_name()
-            .and_then(|name| name.to_str())
-            .unwrap_or("settings.json")
-    ));
-    std::fs::write(&temporary, contents)
-        .map_err(|error| format!("Could not write {}: {error}", temporary.display()))?;
-    std::fs::rename(&temporary, path)
-        .map_err(|error| format!("Could not replace {}: {error}", path.display()))?;
-    Ok(())
+    crate::settings::set_update_channel(channel)
 }
 
 // ── platform answers (platform.rs exposes distribution_channel only) ──────

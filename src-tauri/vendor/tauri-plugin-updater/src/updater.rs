@@ -254,6 +254,99 @@ fn append_download_chunk(
     Ok(())
 }
 
+/// The manifest is metadata, so it is capped far below the package limit.
+const MAX_MANIFEST_BYTES: u64 = 1024 * 1024;
+
+fn validate_manifest_content_length(content_length: Option<u64>) -> Result<()> {
+    if content_length.is_some_and(|length| length > MAX_MANIFEST_BYTES) {
+        return Err(Error::Network(format!(
+            "update manifest exceeds the {MAX_MANIFEST_BYTES} byte limit"
+        )));
+    }
+    Ok(())
+}
+
+fn append_manifest_chunk(
+    buffer: &mut Vec<u8>,
+    chunk: &[u8],
+    content_length: Option<u64>,
+) -> Result<()> {
+    validate_manifest_content_length(content_length)?;
+    let current = u64::try_from(buffer.len()).map_err(|_| {
+        Error::Network("update manifest size exceeds the supported limit".to_string())
+    })?;
+    let chunk_size = u64::try_from(chunk.len()).map_err(|_| {
+        Error::Network("update manifest size exceeds the supported limit".to_string())
+    })?;
+    let next = current.checked_add(chunk_size).ok_or_else(|| {
+        Error::Network("update manifest size exceeds the supported limit".to_string())
+    })?;
+    if next > MAX_MANIFEST_BYTES {
+        return Err(Error::Network(format!(
+            "update manifest exceeds the {MAX_MANIFEST_BYTES} byte limit"
+        )));
+    }
+    if content_length.is_some_and(|length| next > length) {
+        return Err(Error::Network(
+            "update response exceeded its Content-Length".to_string(),
+        ));
+    }
+    buffer.extend_from_slice(chunk);
+    Ok(())
+}
+
+async fn read_update_manifest(response: reqwest::Response) -> Result<serde_json::Value> {
+    let content_length: Option<u64> = response
+        .headers()
+        .get("Content-Length")
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.parse().ok());
+    validate_manifest_content_length(content_length)?;
+
+    let mut buffer = Vec::new();
+    let mut stream = response.bytes_stream();
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk?;
+        append_manifest_chunk(&mut buffer, chunk.as_ref(), content_length)?;
+    }
+    serde_json::from_slice(&buffer).map_err(Into::into)
+}
+
+/// Points the Linux TLS trust store at a system CA bundle when the environment
+/// has no override. Does nothing on other platforms and only writes once.
+///
+/// Call this from the main thread during app setup, before starting any thread
+/// that reads the environment: [`std::env::set_var`] is unsafe while another
+/// thread may be inside `getenv`. Later calls are no-ops. The plugin setup hook
+/// already calls it.
+pub fn configure_ssl_env_once() {
+    #[cfg(target_os = "linux")]
+    {
+        use std::sync::Once;
+
+        static SSL_ENV: Once = Once::new();
+        SSL_ENV.call_once(|| {
+            if std::env::var_os("SSL_CERT_FILE").is_none() {
+                for candidate in [
+                    "/etc/ssl/certs/ca-certificates.crt",
+                    "/etc/pki/tls/certs/ca-bundle.crt",
+                ] {
+                    if std::path::Path::new(candidate).is_file() {
+                        // SAFETY: setup-time call on the main thread; `Once`
+                        // bounds this to a single write per process.
+                        unsafe { std::env::set_var("SSL_CERT_FILE", candidate) };
+                        break;
+                    }
+                }
+            }
+            if std::env::var_os("SSL_CERT_DIR").is_none() {
+                // SAFETY: see above.
+                unsafe { std::env::set_var("SSL_CERT_DIR", "/etc/ssl/certs") };
+            }
+        });
+    }
+}
+
 #[cfg(target_os = "macos")]
 type MainThreadClosure = Box<dyn FnOnce() + Send + Sync + 'static>;
 #[cfg(target_os = "macos")]
@@ -660,27 +753,6 @@ impl Updater {
             headers.insert(ACCEPT, HeaderValue::from_static("application/json"));
         }
 
-        // Set SSL certs for linux if they aren't available.
-        #[cfg(target_os = "linux")]
-        {
-            if std::env::var_os("SSL_CERT_FILE").is_none() {
-                for candidate in [
-                    "/etc/ssl/certs/ca-certificates.crt",
-                    "/etc/pki/tls/certs/ca-bundle.crt",
-                ] {
-                    if std::path::Path::new(candidate).is_file() {
-                        // SAFETY: runs before this request reads the environment; no other thread
-                        // is spawned by this crate to read or write it.
-                        unsafe { std::env::set_var("SSL_CERT_FILE", candidate) };
-                        break;
-                    }
-                }
-            }
-            if std::env::var_os("SSL_CERT_DIR").is_none() {
-                // SAFETY: see above.
-                unsafe { std::env::set_var("SSL_CERT_DIR", "/etc/ssl/certs") };
-            }
-        }
         let target = self.current_target()?;
 
         let mut remote_release: Option<RemoteRelease> = None;
@@ -726,6 +798,12 @@ impl Updater {
             }
 
             let mut request = ClientBuilder::new().user_agent(UPDATER_USER_AGENT);
+            // A redirect from an https feed to http must fail closed. Plain http
+            // endpoints stay allowed for explicit development and loopback e2e
+            // configuration.
+            if url.scheme() == "https" {
+                request = request.https_only(true);
+            }
             if self.context.config.dangerous_accept_invalid_certs {
                 request = request.danger_accept_invalid_certs(true);
             }
@@ -764,14 +842,21 @@ impl Updater {
                             return Ok(None);
                         };
 
-                        let update_response: serde_json::Value = res.json().await?;
+                        let update_response = match read_update_manifest(res).await {
+                            Ok(update_response) => update_response,
+                            Err(err) => {
+                                log::error!("failed to read update response: {err}");
+                                last_error = Some(err);
+                                continue;
+                            }
+                        };
                         log::debug!("update response: {update_response:?}");
-                        raw_json = Some(update_response.clone());
-                        match serde_json::from_value::<RemoteRelease>(update_response)
+                        match serde_json::from_value::<RemoteRelease>(update_response.clone())
                             .map_err(Into::into)
                         {
                             Ok(release) => {
                                 log::debug!("parsed release response {release:?}");
+                                raw_json = Some(update_response);
                                 last_error = None;
                                 remote_release = Some(release);
                                 // we found a release, break the loop
@@ -1429,6 +1514,8 @@ impl Update {
         install_args: &[&str],
         package_extension: &str,
     ) -> Result<()> {
+        use std::os::unix::fs::PermissionsExt;
+
         // Try different temp directories
         let tmp_dir_locations = [
             Box::new(|| Some(std::env::temp_dir())) as Box<dyn FnOnce() -> Option<PathBuf>>,
@@ -1440,7 +1527,12 @@ impl Update {
         for tmp_dir_location in tmp_dir_locations {
             if let Some(path) = tmp_dir_location() {
                 let prefix = format!("tauri_{package_extension}_update");
-                if let Ok(tmp_dir) = tempfile::Builder::new().prefix(&prefix).tempdir_in(path) {
+                let mut builder = tempfile::Builder::new();
+                builder.prefix(&prefix).permissions(
+                    // Owner-only: the system installer runs on this package path.
+                    std::fs::Permissions::from_mode(0o700),
+                );
+                if let Ok(tmp_dir) = builder.tempdir_in(path) {
                     let pkg_path = tmp_dir.path().join(format!("package.{package_extension}"));
 
                     // Try writing the .deb / .rpm file
@@ -1663,6 +1755,7 @@ impl Update {
             macos_update_backup_path, move_dir_replacing, MacosBundleIdentity,
             MACOS_PRIVILEGED_INSTALL_SCRIPT,
         };
+        use std::os::unix::fs::PermissionsExt;
 
         let app_parent = self
             .extract_path
@@ -1689,8 +1782,11 @@ impl Update {
             )));
         }
 
+        // Owner-only: the privileged step trusts this tree, so no other local
+        // user may rewrite it between validation and the swap.
         let tmp_extract_dir = match tempfile::Builder::new()
             .prefix(".conv2-updated-app-")
+            .permissions(std::fs::Permissions::from_mode(0o700))
             .tempdir_in(app_parent)
         {
             Ok(dir) => dir,
@@ -1700,6 +1796,7 @@ impl Update {
                 // must never nest `mv` into a partial `$SRC`.
                 tempfile::Builder::new()
                     .prefix("tauri_updated_app")
+                    .permissions(std::fs::Permissions::from_mode(0o700))
                     .tempdir()?
             }
             Err(err) => return Err(err.into()),

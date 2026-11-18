@@ -8,13 +8,15 @@ use url::Url;
 const MAX_URL_LENGTH: usize = 2048;
 
 /// v1's path.resolve over an absolute path: collapse `.` and `..` lexically.
+/// Windows network-namespace paths are refused before any filesystem access:
+/// stating one would open an SMB session to the host named in the path.
 pub fn resolve_absolute(value: &str) -> Option<PathBuf> {
     let trimmed = value.trim();
     if trimmed.is_empty() {
         return None;
     }
     let path = Path::new(trimmed);
-    if !path.is_absolute() {
+    if !path.is_absolute() || is_network_namespace(path) {
         return None;
     }
     let mut resolved = PathBuf::new();
@@ -28,6 +30,20 @@ pub fn resolve_absolute(value: &str) -> Option<PathBuf> {
         }
     }
     Some(resolved)
+}
+
+/// `\\host\share\...` (UNC) and its verbatim spelling `\\?\UNC\host\share\...`
+/// name a remote host, as do device namespaces; only a local drive prefix
+/// (`C:\...` or `\\?\C:\...`) may reach a filesystem call. Windows parses `/`
+/// and `\` alike, so test the parsed prefix rather than the raw string.
+fn is_network_namespace(path: &Path) -> bool {
+    let Some(Component::Prefix(prefix)) = path.components().next() else {
+        return false;
+    };
+    !matches!(
+        prefix.kind(),
+        std::path::Prefix::Disk(_) | std::path::Prefix::VerbatimDisk(_)
+    )
 }
 
 /// An absolute path to an existing regular file. Symlinks are followed, as in

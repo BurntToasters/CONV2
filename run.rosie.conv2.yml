@@ -84,6 +84,13 @@ modules:
         for sidecar in conv2-ffmpeg conv2-ffprobe; do
           install -Dm755 "src-tauri/binaries/${sidecar}-${triple}" "/app/bin/${sidecar}"
         done
+      # Ship bundle.resources where tauri-utils resolves resource_dir for
+      # /app/bin/conv2 (exe_dir/../lib/CONV2); the runtime checksum gate
+      # fails closed when ffmpeg/checksums.json is absent.
+      - install -Dm644 resources/ffmpeg/NOTICE.txt /app/lib/CONV2/ffmpeg/NOTICE.txt
+      - install -Dm644 resources/ffmpeg/ffmpeg_license.txt /app/lib/CONV2/ffmpeg/LICENSE.txt
+      - install -Dm644 resources/ffmpeg/SOURCE_OFFER.txt /app/lib/CONV2/ffmpeg/SOURCE_OFFER.txt
+      - install -Dm644 resources/ffmpeg/checksums.json /app/lib/CONV2/ffmpeg/checksums.json
       - install -Dm644 run.rosie.conv2.desktop /app/share/applications/run.rosie.conv2.desktop
       - install -Dm644 run.rosie.conv2.metainfo.xml /app/share/metainfo/run.rosie.conv2.metainfo.xml
       - install -Dm644 src-tauri/icons/128x128.png /app/share/icons/hicolor/128x128/apps/run.rosie.conv2.png

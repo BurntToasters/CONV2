@@ -40,6 +40,11 @@ pub fn data_dir() -> PathBuf {
         .unwrap_or_else(|| std::env::temp_dir().join("run.rosie.conv2"))
 }
 
+/// Whether `data_dir()` resolves to the real app data directory.
+pub fn data_dir_ready() -> bool {
+    DATA_DIR.get().is_some()
+}
+
 /// The main window handle, for dialogs that need a parent.
 #[allow(dead_code)]
 pub fn main_window() -> Option<WebviewWindow> {
