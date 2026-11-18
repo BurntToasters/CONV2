@@ -106,7 +106,7 @@
         "https://github.com/BurntToasters/CONV2/releases/latest/download/latest-{{target}}-{{arch}}.json",
         "https://github.com/BurntToasters/CONV2/releases/latest/download/latest-{{target}}.json"
       ],
-      "pubkey": "REPLACE_WITH_CONV2_MINISIGN_PUBKEY",
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDRDNUE1OEQwMENDNTQ0RjYKUldUMlJNVU0wRmhhVE93RWNmOFRZSkFmZCsvb0l1Nm5EWXZBZnEvVzA2UXEybnZnREZvRDVxZEgK",
       "requireSignedVersion": true
     }
   }
