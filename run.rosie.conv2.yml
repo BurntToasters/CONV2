@@ -25,6 +25,10 @@ finish-args:
   - --filesystem=home
   - --filesystem=xdg-videos
   - --filesystem=xdg-download
+  # Completion notifications.
+  - --talk-name=org.freedesktop.Notifications
+  # "Show in folder": ask the host file manager to select the output.
+  - --talk-name=org.freedesktop.FileManager1
   # Flatpak builds update by reinstalling the bundle; the in-app updater shows
   # a notice instead of offering downloads (handled by the Rust updater).
 

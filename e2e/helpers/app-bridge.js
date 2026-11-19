@@ -42,19 +42,44 @@ export const api = (method, ...args) => callInPage("api", method, args);
 /** Call an E2E-only helper (collectors and dialog stubs). */
 export const helper = (method, ...args) => callInPage("helpers", method, args);
 
-/** Wait until the page and the E2E hook are ready. */
+/**
+ * Wait until the page and the E2E hook are ready. A visible "CONV2 Could Not
+ * Start" modal means startup failed for good, so it fails at once with the
+ * app's own explanation instead of timing out after a minute.
+ */
 export async function waitForAppReady() {
+  let startupFailure = null;
   await browser.waitUntil(
-    async () =>
-      browser.execute(
-        () =>
-          Boolean(window.__CONV2_E2E__?.ready) &&
-          Boolean(window.__CONV2_E2E__?.api) &&
-          Boolean(document.getElementById("dropZone")),
-      ),
+    async () => {
+      const state = await browser.execute(() => {
+        const modal = document.getElementById("dynamicModal");
+        const title = document.getElementById("dynamicModalTitle");
+        const failed =
+          Boolean(modal?.classList.contains("visible")) &&
+          /could not start/i.test(title?.textContent ?? "");
+        return {
+          failure: failed
+            ? (modal.querySelector(".modal-body")?.textContent ?? "").trim()
+            : null,
+          ready:
+            Boolean(window.__CONV2_E2E__?.ready) &&
+            Boolean(window.__CONV2_E2E__?.api) &&
+            Boolean(document.getElementById("dropZone")),
+        };
+      });
+      // Reported after the wait, so the failure is this error and not a wrapped timeout.
+      if (state.failure !== null) {
+        startupFailure = state.failure;
+        return true;
+      }
+      return state.ready;
+    },
     {
       timeout: 60_000,
       timeoutMsg: "E2E hook / window.__CONV2_E2E__.api not installed",
     },
   );
+  if (startupFailure !== null) {
+    throw new Error(`CONV2 Could Not Start: ${startupFailure}`);
+  }
 }

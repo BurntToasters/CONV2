@@ -11,11 +11,15 @@
 //! 5. `refresh()` runs on the updater state thread: never query the updater
 //!    here, read the mirrored atomic. Apply on the main thread without waiting.
 //! 6. Updates disabled (Store build, env switch): Check and Install disabled.
+//!    Check is also disabled while a download or install is live, since the
+//!    updater refuses it quietly and the greyed item is the only feedback.
 //! 7. Install Update is enabled only with a downloaded, not-installing update.
 //! 8. Cancel Conversion enabled only while converting. Show Output only with
 //!    output.
 //! 9. `refresh()` before `install()` or on another platform: no-op.
 //! 10. Quit goes through the close-confirmation flow, never `exit` directly.
+//! 11. "Open with" launches use the same `deliver` on every platform and
+//!     queue until the window is ready.
 
 use crate::types::ConversionMenuStatePayload;
 use serde_json::{json, Value};
@@ -25,10 +29,16 @@ use tauri::AppHandle;
 
 static PENDING_MENU_ACTIONS: Mutex<Vec<Value>> = Mutex::new(Vec::new());
 static UPDATE_READY: AtomicBool = AtomicBool::new(false);
+static UPDATE_BUSY: AtomicBool = AtomicBool::new(false);
 
 /// Mirrors the updater's "downloaded and not installing" state.
 pub fn set_update_ready(ready: bool) {
     UPDATE_READY.store(ready, Ordering::SeqCst);
+}
+
+/// Mirrors the updater's "download or install is live" state.
+pub fn set_update_busy(busy: bool) {
+    UPDATE_BUSY.store(busy, Ordering::SeqCst);
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -44,10 +54,11 @@ struct Enablement {
 fn enablement(
     conversion: ConversionMenuStatePayload,
     update_ready: bool,
+    update_busy: bool,
     updates_disabled: bool,
 ) -> Enablement {
     Enablement {
-        check_updates: !updates_disabled,
+        check_updates: !updates_disabled && !update_busy,
         install_update: !updates_disabled && update_ready,
         show_output: conversion.has_output,
         cancel_conversion: conversion.converting,
@@ -58,6 +69,22 @@ fn event_body(action: &str, payload: Option<Value>) -> Value {
     match payload {
         Some(payload) => json!({ "action": action, "payload": payload }),
         None => json!({ "action": action }),
+    }
+}
+
+/// Focus the main window and hand `action` to the renderer, or queue it until
+/// the window reports ready. Shared by the macOS menu and "open with" launches.
+pub fn deliver(app: &AppHandle, action: &str, payload: Option<Value>) {
+    if let Err(error) = crate::window::show_main_window(app) {
+        crate::logging::warn(&format!(
+            "Failed to show main window for menu action: {error}"
+        ));
+    }
+    let body = event_body(action, payload);
+    if crate::constants::MAIN_READY.load(Ordering::SeqCst) {
+        crate::app_state::emit("app-menu-action", body);
+    } else if let Ok(mut pending) = PENDING_MENU_ACTIONS.lock() {
+        pending.push(body);
     }
 }
 
@@ -103,25 +130,12 @@ mod mac {
 
     static ITEMS: OnceLock<Items> = OnceLock::new();
 
-    fn deliver(app: &AppHandle, action: &str, payload: Option<Value>) {
-        if let Err(error) = crate::window::show_main_window(app) {
-            crate::logging::warn(&format!(
-                "Failed to show main window for menu action: {error}"
-            ));
-        }
-        let body = event_body(action, payload);
-        if crate::constants::MAIN_READY.load(Ordering::SeqCst) {
-            crate::app_state::emit("app-menu-action", body);
-        } else if let Ok(mut pending) = PENDING_MENU_ACTIONS.lock() {
-            pending.push(body);
-        }
-    }
-
     fn apply() {
         let Some(items) = ITEMS.get() else { return };
         let state = enablement(
             crate::window::conversion_menu_state(),
             UPDATE_READY.load(Ordering::SeqCst),
+            UPDATE_BUSY.load(Ordering::SeqCst),
             crate::updater::updates_disabled(),
         );
         let _ = items.check_updates.set_enabled(state.check_updates);
@@ -315,7 +329,7 @@ mod tests {
 
     #[test]
     fn idle_start_disables_cancel_install_and_show() {
-        let value = enablement(state(false, false), false, false);
+        let value = enablement(state(false, false), false, false, false);
         assert_eq!(
             value,
             Enablement {
@@ -329,23 +343,23 @@ mod tests {
 
     #[test]
     fn converting_enables_cancel_only() {
-        let value = enablement(state(true, false), false, false);
+        let value = enablement(state(true, false), false, false, false);
         assert!(value.cancel_conversion && !value.show_output);
     }
 
     #[test]
     fn output_enables_show() {
-        assert!(enablement(state(false, true), false, false).show_output);
+        assert!(enablement(state(false, true), false, false, false).show_output);
     }
 
     #[test]
     fn ready_update_enables_install() {
-        assert!(enablement(state(false, false), true, false).install_update);
+        assert!(enablement(state(false, false), true, false, false).install_update);
     }
 
     #[test]
     fn disabled_updates_lock_check_and_install() {
-        let value = enablement(state(false, false), true, true);
+        let value = enablement(state(false, false), true, false, true);
         assert!(!value.check_updates && !value.install_update);
     }
 

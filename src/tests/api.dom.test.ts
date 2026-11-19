@@ -54,6 +54,9 @@ const EXPECTED_API_METHODS = [
   'onWindowMaximizedChanged',
   'resetSettings',
   'restartApp',
+  'getQueueSnapshot',
+  'onPrepareForClose',
+  'notifySettingsFlushed',
   // renames
   'getDefaultSettings',
   'getDistributionChannel',

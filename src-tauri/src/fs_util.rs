@@ -250,12 +250,83 @@ pub fn atomic_write(path: &Path, contents: &[u8]) -> std::io::Result<()> {
         file.write_all(contents)?;
         file.sync_all()?;
         drop(file);
-        std::fs::rename(&staged, path)
+        rename_replacing(&staged, path)?;
+        // The rename already replaced the file; some filesystems (CIFS, 9p,
+        // FUSE) reject directory fsync, so that must not fail the write.
+        if let Err(error) = sync_parent_directory(path) {
+            crate::logging::warn(&format!(
+                "Directory sync failed after writing {}: {error}",
+                path.display()
+            ));
+        }
+        Ok(())
     })();
     if result.is_err() {
         let _ = std::fs::remove_file(&staged);
     }
     result
+}
+
+/// `rename` that replaces `to`. On Windows, antivirus and the indexer briefly
+/// open fresh files, so access-denied / sharing violations are retried.
+fn rename_replacing(from: &Path, to: &Path) -> std::io::Result<()> {
+    let mut attempt = 0;
+    loop {
+        #[cfg(windows)]
+        let renamed = windows_rename_replacing(from, to);
+        #[cfg(not(windows))]
+        let renamed = std::fs::rename(from, to);
+        match renamed {
+            Ok(()) => return Ok(()),
+            Err(error)
+                if cfg!(windows)
+                    && attempt < 10
+                    && (error.kind() == std::io::ErrorKind::PermissionDenied
+                        || error.raw_os_error() == Some(32)) =>
+            {
+                attempt += 1;
+                std::thread::sleep(std::time::Duration::from_millis(25 * attempt));
+            }
+            Err(error) => return Err(error),
+        }
+    }
+}
+
+/// Flush the directory entry after the rename. Windows gets write-through
+/// from the rename flag instead.
+fn sync_parent_directory(path: &Path) -> std::io::Result<()> {
+    #[cfg(unix)]
+    {
+        if let Some(parent) = path.parent() {
+            return std::fs::File::open(parent).and_then(|dir| dir.sync_all());
+        }
+    }
+    let _ = path;
+    Ok(())
+}
+
+#[cfg(windows)]
+fn windows_rename_replacing(from: &Path, to: &Path) -> std::io::Result<()> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::Storage::FileSystem::{
+        MoveFileExW, MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH,
+    };
+
+    let wide = |path: &Path| -> Vec<u16> { path.as_os_str().encode_wide().chain([0]).collect() };
+    let (from, to) = (wide(from), wide(to));
+    // SAFETY: both buffers are NUL-terminated and live across the call.
+    let moved = unsafe {
+        MoveFileExW(
+            from.as_ptr(),
+            to.as_ptr(),
+            MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
+        )
+    };
+    if moved != 0 {
+        Ok(())
+    } else {
+        Err(std::io::Error::last_os_error())
+    }
 }
 
 /// Pretty JSON written atomically.
@@ -264,28 +335,61 @@ pub fn write_json<T: serde::Serialize>(path: &Path, value: &T) -> Result<(), Str
     atomic_write(path, &serialized).map_err(|error| error.to_string())
 }
 
-/// Read a UTF-8 file of at most `max_bytes`. A missing file is `Ok(None)`.
-pub fn read_bounded(path: &Path, max_bytes: u64) -> Result<Option<String>, String> {
+/// Why a bounded read failed.
+#[derive(Debug)]
+pub enum BoundedReadError {
+    TooLarge(u64),
+    InvalidUtf8,
+    Io(String),
+}
+
+impl std::fmt::Display for BoundedReadError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::TooLarge(size) => write!(f, "file is {size} bytes, over the size limit"),
+            Self::InvalidUtf8 => write!(f, "file is not valid UTF-8"),
+            Self::Io(message) => write!(f, "{message}"),
+        }
+    }
+}
+
+/// Like `read_bounded`, with a typed failure. Missing file is `Ok(None)`.
+pub fn read_bounded_typed(path: &Path, max_bytes: u64) -> Result<Option<String>, BoundedReadError> {
+    let io = |error: std::io::Error| BoundedReadError::Io(error.to_string());
     let metadata = match std::fs::metadata(path) {
         Ok(metadata) => metadata,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-        Err(error) => return Err(error.to_string()),
+        Err(error) => return Err(io(error)),
     };
     if !metadata.is_file() {
-        return Err(format!("{} is not a regular file", path.display()));
+        return Err(BoundedReadError::Io(format!(
+            "{} is not a regular file",
+            path.display()
+        )));
     }
     if metadata.len() > max_bytes {
-        return Err(format!(
-            "{} is {} bytes (max {max_bytes})",
-            path.display(),
-            metadata.len()
-        ));
+        return Err(BoundedReadError::TooLarge(metadata.len()));
     }
-    let mut contents = String::new();
+    let mut bytes = Vec::new();
     std::fs::File::open(path)
-        .and_then(|file| file.take(max_bytes + 1).read_to_string(&mut contents))
-        .map_err(|error| error.to_string())?;
-    Ok(Some(contents))
+        .and_then(|file| file.take(max_bytes + 1).read_to_end(&mut bytes))
+        .map_err(io)?;
+    if bytes.len() as u64 > max_bytes {
+        return Err(BoundedReadError::TooLarge(bytes.len() as u64));
+    }
+    String::from_utf8(bytes)
+        .map(Some)
+        .map_err(|_| BoundedReadError::InvalidUtf8)
+}
+
+/// Read a UTF-8 file of at most `max_bytes`. A missing file is `Ok(None)`.
+pub fn read_bounded(path: &Path, max_bytes: u64) -> Result<Option<String>, String> {
+    read_bounded_typed(path, max_bytes).map_err(|error| match error {
+        BoundedReadError::TooLarge(size) => {
+            format!("{} is {size} bytes (max {max_bytes})", path.display())
+        }
+        other => other.to_string(),
+    })
 }
 
 /// Parse a bounded JSON file; a missing or invalid file is `None`.

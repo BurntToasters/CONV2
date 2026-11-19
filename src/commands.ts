@@ -30,6 +30,7 @@ export interface Commands {
     result: Ipc.QueueSnapshot;
   };
   cancel_conversion: { args: { force?: boolean }; result: void };
+  get_queue_snapshot: { args: void; result: Ipc.QueueSnapshot | null };
   select_output_directory: { args: void; result: string | null };
   select_input_files: { args: void; result: string[] };
   get_file_info: { args: { filePath: string }; result: Ipc.VideoInfo | null };
@@ -49,6 +50,7 @@ export interface Commands {
   set_conversion_menu_state: { args: { state: Ipc.ConversionMenuStatePayload }; result: void };
   log_error: { args: { message: string }; result: void };
   mark_main_window_ready: { args: void; result: void };
+  notify_settings_flushed: { args: { generation: number }; result: void };
   check_for_updates: { args: void; result: void };
   download_update: { args: void; result: void };
   install_update: { args: void; result: void };

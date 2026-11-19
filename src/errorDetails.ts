@@ -1,4 +1,5 @@
 // "Details" view for a failed conversion: the friendly reason plus FFmpeg's raw tail.
+import { copyText } from './clipboard.js';
 import { elements } from './dom.js';
 import { focusFirstInteractiveElement } from './modals.js';
 
@@ -49,8 +50,5 @@ elements.copyErrorDetailsBtn.addEventListener('click', () => {
   const text = [elements.errorDetailsSummary.textContent, elements.errorDetailsContent.textContent]
     .filter(Boolean)
     .join('\n\n');
-  void navigator.clipboard.writeText(text).then(
-    () => flashCopyLabel('Copied'),
-    () => flashCopyLabel('Copy failed')
-  );
+  void copyText(text).then((ok) => flashCopyLabel(ok ? 'Copied' : 'Copy failed'));
 });

@@ -1,6 +1,8 @@
 // Process, environment, and git helpers shared by the E2E gate and its runners.
 
+import crypto from "node:crypto";
 import fs from "node:fs";
+import net from "node:net";
 import path from "node:path";
 import { spawn, spawnSync } from "node:child_process";
 import { REPO_ROOT } from "../../e2e/helpers/profile.js";
@@ -25,8 +27,20 @@ export function e2eChildEnv(extra = {}) {
   return env;
 }
 
+/**
+ * Arguments for a spawn. With the Windows cmd shell on (npm.cmd, npx.cmd) the
+ * command line is re-parsed, so an argument with spaces or shell characters
+ * is quoted; without a shell it is passed through untouched.
+ */
+export function shellSafeArgs(command, args) {
+  if (!usesWindowsCmdShell(command)) return args;
+  return args.map((arg) =>
+    /[\s"&|<>^()%!]/.test(arg) ? `"${arg.replaceAll('"', '\\"')}"` : arg,
+  );
+}
+
 export function run(command, args, options = {}) {
-  const result = spawnSync(command, args, {
+  const result = spawnSync(command, shellSafeArgs(command, args), {
     cwd: options.cwd ?? REPO_ROOT,
     env: e2eChildEnv(options.env),
     stdio: "inherit",
@@ -48,7 +62,7 @@ export function run(command, args, options = {}) {
  */
 export function runAsync(command, args, options = {}) {
   return new Promise((resolve, reject) => {
-    const child = spawn(command, args, {
+    const child = spawn(command, shellSafeArgs(command, args), {
       cwd: options.cwd ?? REPO_ROOT,
       env: e2eChildEnv(options.env),
       stdio: "inherit",
@@ -110,6 +124,67 @@ export function gitSourceTree() {
     encoding: "utf8",
   });
   return result.status === 0 ? result.stdout.trim() : null;
+}
+
+/**
+ * Whether the working tree differs from HEAD, plus a hash of the exact status
+ * listing. An unreadable status fails closed: it counts as dirty, with no hash.
+ */
+export function gitWorktreeState(cwd = REPO_ROOT) {
+  const result = spawnSync("git", ["status", "--porcelain=v1", "-uall"], {
+    cwd,
+    encoding: "utf8",
+  });
+  if (result.status !== 0 || typeof result.stdout !== "string") {
+    return { worktreeDirty: true, worktreeStatusSha256: null };
+  }
+  return {
+    worktreeDirty: result.stdout.length > 0,
+    worktreeStatusSha256: crypto
+      .createHash("sha256")
+      .update(result.stdout)
+      .digest("hex"),
+  };
+}
+
+/** One TCP probe of 127.0.0.1:port: "refused", "listening", or an error tag. */
+export function probeTcpPort(port) {
+  return new Promise((resolve) => {
+    const socket = net.connect({ host: "127.0.0.1", port });
+    const finish = (state) => {
+      socket.destroy();
+      resolve(state);
+    };
+    socket.setTimeout(1_000, () => finish("timeout"));
+    socket.once("connect", () => finish("listening"));
+    socket.once("error", (error) =>
+      finish(
+        error.code === "ECONNREFUSED"
+          ? "refused"
+          : `error:${error.code ?? error.message}`,
+      ),
+    );
+  });
+}
+
+/**
+ * A loopback port nothing answers on, for one pass's embedded WebDriver. A
+ * fixed port lets a leftover CONV2 (or another Tauri app) answer /status, so
+ * the pass would attach to the wrong app.
+ */
+export async function reserveFreePort(attempts = 5) {
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    const port = await new Promise((resolve, reject) => {
+      const server = net.createServer();
+      server.once("error", reject);
+      server.listen(0, "127.0.0.1", () => {
+        const { port: chosen } = server.address();
+        server.close(() => resolve(chosen));
+      });
+    });
+    if ((await probeTcpPort(port)) === "refused") return port;
+  }
+  throw new Error("Could not find a free loopback port for the E2E WebDriver");
 }
 
 export function cleanupProfile(profileDir) {

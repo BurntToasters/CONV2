@@ -1,4 +1,4 @@
-import { api, fetchLicenses, type SaveSettingsPayload } from './api';
+import { api, fetchLicenses, listenConversionQueueUpdated } from './api';
 import type * as Ipc from './generated/ipc-types';
 import * as fileSelection from './fileSelection.js';
 import type { FileSelectionMode } from './fileSelection.js';
@@ -7,6 +7,7 @@ import * as pickerModel from './presetPickerModel.js';
 import type { PresetPaneState, PresetParentBucket, PresetPickerItem } from './presetPickerModel.js';
 import * as setupWizard from './setupWizard.js';
 import { elements, getRequiredElement } from './dom.js';
+import { copyText } from './clipboard.js';
 import { closeErrorDetails } from './errorDetails.js';
 import {
   formatDuration,
@@ -26,7 +27,19 @@ import {
   getLastQueueDisplaySnapshot,
   renderConversionQueue,
 } from './queueView.js';
+import {
+  drainSettingsSaves,
+  enqueueSettingsTask,
+  getCommittedSetting,
+  queueSettingsSave,
+  seedCommittedSettings,
+  type SettingsSaveHandle,
+} from './settingsStore';
 import { hideStatus, showStatus } from './status.js';
+
+// Backend falls back to a forced close at 1500 ms; ack before that.
+const CLOSE_FLUSH_TIMEOUT_MS = 1000;
+const RESTART_FLUSH_TIMEOUT_MS = 4000;
 
 // IPC shapes come from the Rust types (src/generated/ipc-types.ts).
 type AppSettings = Ipc.AppSettings;
@@ -91,7 +104,11 @@ let isConverting = false;
 let conversionStarting = false;
 let settings: AppSettings;
 let presets: Preset[] = [];
-let conversionStartTime = 0;
+// Per-file ETA baseline: first progress sample of the current file (or after a retry).
+let etaIndex = -1;
+let etaT0 = 0;
+let etaP0 = 0;
+let etaLastPct = 0;
 let lastOutputPath = '';
 let themeListenerRegistered = false;
 let convertBtnOriginalHTML = '';
@@ -105,7 +122,6 @@ let closeDynamicModal: (() => void) | null = null;
 let modalReturnFocus: HTMLElement | null = null;
 let fileSelectionToken = 0;
 let advancedSaveDebounceTimer: ReturnType<typeof setTimeout> | null = null;
-let advancedSettingsSaveQueue: Promise<void> = Promise.resolve();
 let pendingLogBuffer = '';
 let logFlushScheduled = false;
 let pendingProgressUpdate: ConversionProgressPayload | null = null;
@@ -574,7 +590,13 @@ const rememberRecentPreset = async (presetId: string): Promise<void> => {
     return;
   }
   settings.recentPresetIds = nextRecent;
-  await api.saveSettings({ recentPresetIds: nextRecent });
+  const handle = queueSettingsSave({ recentPresetIds: nextRecent });
+  try {
+    await handle.done;
+  } catch (err) {
+    restoreCommittedSettings(handle.liveKeys());
+    throw err;
+  }
 };
 
 const getSelectedPreset = (): Preset | undefined => {
@@ -780,7 +802,10 @@ const updateManualVendorDropdown = (
     if (firstEnabled !== settings.gpuManualVendor) {
       settings.gpuManualVendor = firstEnabled;
       settings.gpu = firstEnabled;
-      void api.saveSettings({ gpuManualVendor: firstEnabled });
+      const handle = queueSettingsSave({ gpuManualVendor: firstEnabled });
+      void handle.done.catch((err: unknown) => {
+        showStatus('error', `Failed to save GPU vendor: ${getErrorMessage(err)}`);
+      });
     }
   }
 };
@@ -803,21 +828,20 @@ const persistUiPanelState = async (panel: UIPanelKey, expanded: boolean): Promis
     return;
   }
 
-  const previousPanels = settings.uiPanels;
   settings.uiPanels = { ...settings.uiPanels, [panel]: expanded };
   applyPanelCollapseUi();
 
+  const panelUpdate: Partial<UIPanelSettings> =
+    panel === 'presetExpanded' ? { presetExpanded: expanded } : { gpuExpanded: expanded };
+  const handle = queueSettingsSave({ uiPanels: panelUpdate });
   try {
-    const panelUpdate: Partial<UIPanelSettings> =
-      panel === 'presetExpanded' ? { presetExpanded: expanded } : { gpuExpanded: expanded };
-    await api.saveSettings({ uiPanels: panelUpdate });
+    await handle.done;
   } catch (err) {
-    settings.uiPanels = previousPanels;
-    applyPanelCollapseUi();
-    showStatus(
-      'error',
-      `Failed to save panel layout: ${err instanceof Error ? err.message : String(err)}`
-    );
+    if (handle.liveKeys().length > 0) {
+      restoreCommittedSettings(handle.liveKeys());
+      applyPanelCollapseUi();
+    }
+    showStatus('error', `Failed to save panel layout: ${getErrorMessage(err)}`);
   }
 };
 
@@ -825,22 +849,47 @@ const getErrorMessage = (err: unknown): string => {
   return err instanceof Error ? err.message : String(err);
 };
 
+/** Puts the backend's last accepted values back into memory for `keys`. */
+const restoreCommittedSettings = (keys: readonly string[]): void => {
+  const target = settings as unknown as Record<string, unknown>;
+  for (const key of keys) {
+    const [top = '', sub] = key.split('.');
+    const value = getCommittedSetting(key);
+    target[top] =
+      sub === undefined ? value : { ...(target[top] as Record<string, unknown>), [sub]: value };
+  }
+};
+
 const persistSettingsChange = async (
   apply: () => void,
+  /** Runs after memory is restored from committed values; resync the UI only. */
   rollback: () => void,
   payload: Record<string, unknown>,
   failurePrefix: string,
   onSuccess?: () => Promise<void> | void
 ): Promise<void> => {
   apply();
+  const handle = queueSettingsSave(payload);
   try {
-    await api.saveSettings(payload as SaveSettingsPayload);
-    if (onSuccess) {
-      await onSuccess();
-    }
+    await handle.done;
   } catch (err) {
-    rollback();
+    // Keys a newer change owns are left to it.
+    const liveKeys = handle.liveKeys();
+    if (liveKeys.length > 0) {
+      restoreCommittedSettings(liveKeys);
+      rollback();
+    }
     showStatus('error', `${failurePrefix}: ${getErrorMessage(err)}`);
+    return;
+  }
+  if (!onSuccess) {
+    return;
+  }
+  // The save succeeded, so a follow-up failure must not revert it.
+  try {
+    await onSuccess();
+  } catch (err) {
+    showStatus('error', `Setting saved, but applying it failed: ${getErrorMessage(err)}`);
   }
 };
 
@@ -1427,14 +1476,31 @@ const areAdvancedSettingsEqual = (
   return JSON.stringify(left) === JSON.stringify(right);
 };
 
-const enqueueAdvancedSettingsTask = (task: () => Promise<void>): Promise<void> => {
-  const nextTask = advancedSettingsSaveQueue.then(task);
-  advancedSettingsSaveQueue = nextTask.catch(() => undefined);
-  return nextTask;
+// Half-typed numbers (empty or invalid) must never reach the backend.
+const hasIncompleteAdvancedInput = (): boolean => {
+  return Array.from(document.querySelectorAll<HTMLInputElement>('input.advanced-control')).some(
+    (control) =>
+      control.type === 'number' &&
+      (control.value.trim() === '' || !Number.isFinite(Number(control.value)))
+  );
+};
+
+/** Queues an advanced-format task; `canSyncControls` says if rewriting the inputs is safe. */
+const enqueueAdvancedSettingsTask = (
+  run: (canSyncControls: () => boolean) => Promise<void>
+): Promise<void> => {
+  let handle: SettingsSaveHandle | null = null;
+  handle = enqueueSettingsTask(['advancedFormatSettings'], () =>
+    // Not while the user is typing, or after a newer save was queued.
+    run(() => handle?.isStale() !== true && advancedSaveDebounceTimer === null)
+  );
+  return handle.done;
 };
 
 const persistAdvancedFormatSettings = async (
-  nextAdvancedSettings: AdvancedFormatSettings
+  nextAdvancedSettings: AdvancedFormatSettings,
+  normalize: boolean,
+  canSyncControls: () => boolean
 ): Promise<void> => {
   const previousSettings = settings.advancedFormatSettings;
 
@@ -1444,36 +1510,57 @@ const persistAdvancedFormatSettings = async (
     });
     const refreshed = await api.getSettings();
     settings.advancedFormatSettings = refreshed.advancedFormatSettings;
-    if (!areAdvancedSettingsEqual(refreshed.advancedFormatSettings, nextAdvancedSettings)) {
+    // The backend clamps values; show that only once editing has finished.
+    if (
+      normalize &&
+      canSyncControls() &&
+      !areAdvancedSettingsEqual(refreshed.advancedFormatSettings, nextAdvancedSettings)
+    ) {
       setAdvancedFormatControlValues(refreshed.advancedFormatSettings);
     }
   } catch (err) {
     settings.advancedFormatSettings = previousSettings;
-    setAdvancedFormatControlValues(previousSettings);
-    showStatus(
-      'error',
-      `Failed to save advanced format settings: ${err instanceof Error ? err.message : String(err)}`
-    );
+    if (canSyncControls()) {
+      setAdvancedFormatControlValues(previousSettings);
+    }
+    showStatus('error', `Failed to save advanced format settings: ${getErrorMessage(err)}`);
   }
 };
 
-const queueAdvancedSettingsSaveFromControls = (): void => {
+const queueAdvancedSettingsSaveFromControls = (normalize: boolean): void => {
+  if (hasIncompleteAdvancedInput()) {
+    if (normalize) {
+      // Runs after earlier saves, so memory holds the latest saved values.
+      void enqueueAdvancedSettingsTask(async (canSyncControls) => {
+        if (canSyncControls()) {
+          setAdvancedFormatControlValues(settings.advancedFormatSettings);
+        }
+      });
+    }
+    return;
+  }
   const nextAdvancedSettings = readAdvancedFormatControls();
-  void enqueueAdvancedSettingsTask(() => persistAdvancedFormatSettings(nextAdvancedSettings));
+  void enqueueAdvancedSettingsTask((canSyncControls) =>
+    persistAdvancedFormatSettings(nextAdvancedSettings, normalize, canSyncControls)
+  );
 };
 
 type AdvancedFormatKey = keyof AdvancedFormatSettings;
+
+const cancelAdvancedSettingsDebounce = (): void => {
+  if (advancedSaveDebounceTimer) {
+    clearTimeout(advancedSaveDebounceTimer);
+    advancedSaveDebounceTimer = null;
+  }
+};
 
 const resetFormatSettingsToDefaults = async (
   format: AdvancedFormatKey,
   label: string
 ): Promise<void> => {
-  if (advancedSaveDebounceTimer) {
-    clearTimeout(advancedSaveDebounceTimer);
-    advancedSaveDebounceTimer = null;
-  }
+  cancelAdvancedSettingsDebounce();
 
-  await enqueueAdvancedSettingsTask(async () => {
+  await enqueueAdvancedSettingsTask(async (canSyncControls) => {
     const previousSettings = settings.advancedFormatSettings;
 
     try {
@@ -1484,25 +1571,24 @@ const resetFormatSettingsToDefaults = async (
         } as unknown as AdvancedFormatSettings,
       });
       settings.advancedFormatSettings = (await api.getSettings()).advancedFormatSettings;
-      setAdvancedFormatControlValues(settings.advancedFormatSettings);
+      if (canSyncControls()) {
+        setAdvancedFormatControlValues(settings.advancedFormatSettings);
+      }
     } catch (err) {
       settings.advancedFormatSettings = previousSettings;
-      setAdvancedFormatControlValues(previousSettings);
-      showStatus(
-        'error',
-        `Failed to reset ${label} settings: ${err instanceof Error ? err.message : String(err)}`
-      );
+      if (canSyncControls()) {
+        setAdvancedFormatControlValues(previousSettings);
+      }
+      showStatus('error', `Failed to reset ${label} settings: ${getErrorMessage(err)}`);
     }
   });
 };
 
 const scheduleAdvancedSettingsSave = (): void => {
-  if (advancedSaveDebounceTimer) {
-    clearTimeout(advancedSaveDebounceTimer);
-  }
+  cancelAdvancedSettingsDebounce();
   advancedSaveDebounceTimer = setTimeout(() => {
     advancedSaveDebounceTimer = null;
-    queueAdvancedSettingsSaveFromControls();
+    queueAdvancedSettingsSaveFromControls(false);
   }, 220);
 };
 
@@ -1510,14 +1596,18 @@ const flushPendingAdvancedSettingsSave = (): void => {
   if (!advancedSaveDebounceTimer) {
     return;
   }
-  clearTimeout(advancedSaveDebounceTimer);
-  advancedSaveDebounceTimer = null;
-  queueAdvancedSettingsSaveFromControls();
+  cancelAdvancedSettingsDebounce();
+  queueAdvancedSettingsSaveFromControls(true);
+};
+
+/** Sends any debounced edit, then waits (bounded) for every queued save. */
+const flushSettingsSaves = async (timeoutMs: number): Promise<boolean> => {
+  flushPendingAdvancedSettingsSave();
+  return drainSettingsSaves(timeoutMs);
 };
 
 const waitForAdvancedSettingsIdle = async (): Promise<void> => {
-  flushPendingAdvancedSettingsSave();
-  await advancedSettingsSaveQueue.catch(() => undefined);
+  await flushSettingsSaves(RESTART_FLUSH_TIMEOUT_MS);
 };
 
 const openSettingsModal = (): void => {
@@ -1529,9 +1619,7 @@ const openSettingsModal = (): void => {
   }
   modalReturnFocus = document.activeElement as HTMLElement | null;
   setSettingsPanel('settingsGeneralPanel');
-  setAdvancedFormatControlValues(settings.advancedFormatSettings);
-  updateThemeSwitcher();
-  updateUiStyleSwitcher();
+  syncSettingsControls();
   elements.settingsModal.classList.add('visible');
   focusFirstInteractiveElement(elements.settingsModal);
 };
@@ -1605,6 +1693,8 @@ const setCheckUpdateButtonState = (
 };
 
 const showModal = (options: ModalOptions): void => {
+  // A modal still open is cancelled first so its confirm cannot fire later.
+  closeDynamicModal?.();
   const modal = elements.dynamicModal;
   const returnFocus = document.activeElement as HTMLElement | null;
   const titleEl = modal.querySelector('.modal-header h2') as HTMLElement;
@@ -1675,17 +1765,31 @@ const openCreditsModal = async (): Promise<void> => {
   elements.licensesList.innerHTML = '<div class="license-item">Loading credits...</div>';
 
   try {
-    const data = await fetchLicenses();
-    const hasLicenses =
-      !!data && typeof data === 'object' && Object.keys(data as Record<string, unknown>).length > 0;
-    const entries = buildLicenseEntries(data as Record<string, LicenseCrawlerEntry> | null);
-    renderLicenses(entries);
+    const { npm, cargo } = await fetchLicenses();
+    const isPopulated = (data: Record<string, unknown> | null): boolean =>
+      !!data && typeof data === 'object' && Object.keys(data).length > 0;
+    renderLicenses(
+      buildLicenseEntries(
+        npm as Record<string, LicenseCrawlerEntry> | null,
+        cargo as Record<string, LicenseCrawlerEntry> | null
+      )
+    );
 
-    if (!hasLicenses) {
+    const missing: string[] = [];
+    if (!isPopulated(npm)) {
+      missing.push(
+        'licenses.json is missing or empty. Run "npm run licenses" before packaging to include dependency credits.'
+      );
+    }
+    if (!isPopulated(cargo)) {
+      missing.push(
+        'licenses-cargo.json is missing or empty. Run "npm run licenses" before packaging to include Rust crate credits.'
+      );
+    }
+    for (const text of missing) {
       const warning = document.createElement('div');
       warning.className = 'license-item license-error';
-      warning.textContent =
-        'licenses.json is missing or empty. Run "npm run licenses" before packaging to include dependency credits.';
+      warning.textContent = text;
       elements.licensesList.appendChild(warning);
     }
   } catch {
@@ -1773,7 +1877,8 @@ const handleAppMenuAction = (event: { action: string; payload?: { paths?: string
       }
       break;
     case 'cancel-conversion':
-      if (isConverting) {
+      // Skipped while another modal is on top, so it cannot stack over it.
+      if (isConverting && !getTopVisibleModal()) {
         showModal({
           title: 'Cancel Conversion',
           message:
@@ -1805,6 +1910,24 @@ const handleAppMenuAction = (event: { action: string; payload?: { paths?: string
 
 const setupAppMenuActions = (): void => {
   api.onAppMenuAction(handleAppMenuAction);
+};
+
+// Native asks for a flush before closing; it force-closes if we are late.
+const setupCloseFlush = (): void => {
+  api.onPrepareForClose((generation) => {
+    void (async () => {
+      try {
+        await flushSettingsSaves(CLOSE_FLUSH_TIMEOUT_MS);
+      } catch {
+        // close anyway; failed saves were already reported
+      }
+      try {
+        await api.notifySettingsFlushed(generation);
+      } catch {
+        // stale generation: native already closed or retried
+      }
+    })();
+  });
 };
 
 const updateWindowMaximizeUi = (maximized: boolean): void => {
@@ -1845,8 +1968,11 @@ const setupWindowChrome = (): void => {
   elements.windowMaximizeBtn.addEventListener('click', () => {
     void api.toggleMaximizeWindow();
   });
+  // close() raises CloseRequested, so native runs its flush handshake first.
   elements.windowCloseBtn.addEventListener('click', () => {
-    void api.closeWindow();
+    void api.closeWindow().catch((err: unknown) => {
+      showStatus('error', `Could not close the window: ${getErrorMessage(err)}`);
+    });
   });
 
   // Frameless windows drag through Tauri rather than -webkit-app-region,
@@ -1895,6 +2021,36 @@ const tagAdvancedTierCards = (): void => {
   });
 };
 
+/** Non-critical startup step: a failure is logged and the UI carries on. */
+const runBestEffort = async (label: string, step: () => Promise<void>): Promise<void> => {
+  try {
+    await step();
+  } catch (error) {
+    api.logError(`Startup step "${label}" failed: ${getErrorMessage(error)}`);
+  }
+};
+
+/** Critical startup failure: say why and offer a restart instead of a dead window. */
+const showStartupFailure = (error: unknown): void => {
+  const detail = getErrorMessage(error);
+  console.error('[conv2] renderer startup failed', error);
+  api.logError(`Renderer startup failed: ${detail}`);
+  showModal({
+    title: 'CONV2 Could Not Start',
+    message: `Startup did not finish, so parts of the app will not respond. Restart CONV2 to try again.
+
+${detail}`,
+    confirmText: 'Restart',
+    cancelText: 'Dismiss',
+    confirmClass: 'btn-danger',
+    onConfirm: () => {
+      void api.restartApp().catch((restartError: unknown) => {
+        showStatus('error', `Could not restart: ${getErrorMessage(restartError)}`);
+      });
+    },
+  });
+};
+
 const init = async () => {
   configureQueueView({
     isConverting: () => isConverting,
@@ -1908,16 +2064,23 @@ const init = async () => {
   checkUpdateDefaultHTML = elements.checkUpdateBtn.innerHTML;
   tagAdvancedTierCards();
   setupWindowChrome();
-  await checkFFmpeg();
-  await checkPlatform();
-  await loadSettings();
-  setupEventListeners();
-  setupKeyboardShortcuts();
-  setupAppMenuActions();
-  await loadPresets();
-  await loadVersion();
-  await applyTheme();
-  await applyUpdateVisibility();
+  setupCloseFlush();
+  try {
+    await runBestEffort('FFmpeg check', checkFFmpeg);
+    await checkPlatform();
+    await loadSettings();
+    setupEventListeners();
+    setupKeyboardShortcuts();
+    setupAppMenuActions();
+    await loadPresets();
+  } catch (error) {
+    showStartupFailure(error);
+    return;
+  }
+  await runBestEffort('version', loadVersion);
+  await runBestEffort('theme', applyTheme);
+  await runBestEffort('update visibility', applyUpdateVisibility);
+  await runBestEffort('queue restore', rehydrateRunningBatch);
   syncConversionMenuState();
   getSetupWizard()?.maybeOpenSetupWizard();
   document.documentElement.dataset.appReady = 'true';
@@ -2015,17 +2178,26 @@ const loadSettings = async () => {
   }
   settings.uiPanels = normalizeUiPanels(settings.uiPanels);
   settings.gpu = settings.gpuManualVendor;
+  if (!settings.customTheme) {
+    settings.customTheme = 'midnight-blue';
+  }
+  seedCommittedSettings(settings);
   applyGpuModeUi();
   applyPanelCollapseUi();
   elements.gpuManualVendorSelect.value = settings.gpuManualVendor;
   elements.presetPanelSummary.textContent = 'No preset selected';
   presetSearchAllFormats = false;
   elements.presetSearchAllCheck.checked = false;
+  setSettingsPanel('settingsGeneralPanel');
+  setFormatPanel('formatPanelGif');
+  syncSettingsControls();
+};
+
+/** Pushes in-memory settings into the Settings controls and main-window output label. */
+const syncSettingsControls = (): void => {
   elements.themeSelect.value = settings.theme;
-  if (!settings.customTheme) {
-    settings.customTheme = 'midnight-blue';
-  }
-  updateCustomThemeUi();
+  updateThemeSwitcher();
+  updateUiStyleSwitcher();
   elements.debugOutputCheck.checked = settings.showDebugOutput;
   elements.advancedPresetsCheck.checked = settings.showAdvancedPresets;
   elements.removeSpacesCheck.checked = settings.removeSpacesFromFilenames;
@@ -2038,9 +2210,9 @@ const loadSettings = async () => {
   elements.preventSleepWhileConvertingCheck.checked = settings.preventSleepWhileConverting === true;
   elements.showAllGpuVendorsCheck.checked = settings.showAllGpuVendors;
   elements.updateChannelSelect.value = settings.updateChannel;
-  setSettingsPanel('settingsGeneralPanel');
-  setFormatPanel('formatPanelGif');
-  setAdvancedFormatControlValues(settings.advancedFormatSettings);
+  if (advancedSaveDebounceTimer === null) {
+    setAdvancedFormatControlValues(settings.advancedFormatSettings);
+  }
 
   if (settings.showDebugOutput) {
     elements.showLogsBtn.classList.remove('u-hidden');
@@ -2048,6 +2220,10 @@ const loadSettings = async () => {
     elements.showLogsBtn.classList.add('u-hidden');
   }
 
+  syncOutputDirectoryUi();
+};
+
+const syncOutputDirectoryUi = (): void => {
   if (settings.outputDirectory) {
     elements.outputPath.textContent = settings.outputDirectory;
     elements.outputDirResetBtn.hidden = false;
@@ -2087,9 +2263,10 @@ const loadVersion = async () => {
 };
 
 const applyUpdateVisibility = async () => {
-  // Store and Flatpak builds update outside the app; their channels hide the UI.
+  // Store builds update outside the app and hide the UI. Flatpak keeps it: the backend
+  // answers a manual check with a notice and refuses download/install.
   const distributionChannel = await api.getDistributionChannel();
-  const updatesDisabled = distributionChannel === 'msstore' || distributionChannel === 'flatpak';
+  const updatesDisabled = distributionChannel === 'msstore';
   const updateChannelSetting = document.getElementById('updateChannelSetting');
   if (updatesDisabled) {
     elements.checkUpdateBtn.classList.add('u-hidden');
@@ -2349,12 +2526,10 @@ const setupEventListeners = () => {
         });
       }
 
+      // Change fires on blur or commit, so the saved value may be normalized here.
       control.addEventListener('change', () => {
-        if (control instanceof HTMLInputElement && control.type === 'number') {
-          flushPendingAdvancedSettingsSave();
-          return;
-        }
-        queueAdvancedSettingsSaveFromControls();
+        cancelAdvancedSettingsDebounce();
+        queueAdvancedSettingsSaveFromControls(true);
       });
     });
 
@@ -2438,6 +2613,10 @@ const setupEventListeners = () => {
   // Tauri's drag-drop overlay owns the whole window and delivers real file
   // paths; the HTML5 dragover/drop handlers from v1 are gone with it.
   api.onDragDropEvent((event) => {
+    if (isSetupWizardBlockingUi()) {
+      elements.dropZone.classList.remove('dragover');
+      return;
+    }
     if (event.type === 'enter' || event.type === 'over') {
       elements.dropZone.classList.add('dragover');
       return;
@@ -2486,24 +2665,25 @@ const setupEventListeners = () => {
   });
 
   const persistGpuMode = async (nextMode: GPUMode): Promise<void> => {
-    const previousMode = settings.gpuMode;
-    const previousGpu = settings.gpu;
+    settings.gpuMode = nextMode;
+    settings.gpu = settings.gpuManualVendor;
+    applyGpuModeUi();
+    const handle = queueSettingsSave({
+      gpuMode: settings.gpuMode,
+      gpuManualVendor: settings.gpuManualVendor,
+      gpu: settings.gpuManualVendor,
+    });
     try {
-      settings.gpuMode = nextMode;
-      settings.gpu = settings.gpuManualVendor;
-      applyGpuModeUi();
-      await api.saveSettings({
-        gpuMode: settings.gpuMode,
-        gpuManualVendor: settings.gpuManualVendor,
-        gpu: settings.gpuManualVendor,
-      });
-      void refreshGpuPanel(false);
+      await handle.done;
     } catch (err) {
-      settings.gpuMode = previousMode;
-      settings.gpu = previousGpu;
-      applyGpuModeUi();
+      if (handle.liveKeys().length > 0) {
+        restoreCommittedSettings(handle.liveKeys());
+        applyGpuModeUi();
+      }
       showStatus('error', `Failed to save GPU mode: ${getErrorMessage(err)}`);
+      return;
     }
+    void refreshGpuPanel(false);
   };
 
   elements.gpuModeAuto.addEventListener('change', () => {
@@ -2519,34 +2699,33 @@ const setupEventListeners = () => {
   });
 
   elements.gpuManualVendorSelect.addEventListener('change', async () => {
-    const previousGpuManualVendor = settings.gpuManualVendor;
-    const previousGpu = settings.gpu;
+    settings.gpuManualVendor = elements.gpuManualVendorSelect.value as GPUVendor;
+    settings.gpu = settings.gpuManualVendor;
+    const handle = queueSettingsSave({
+      gpuManualVendor: settings.gpuManualVendor,
+      gpu: settings.gpuManualVendor,
+    });
     try {
-      settings.gpuManualVendor = elements.gpuManualVendorSelect.value as GPUVendor;
-      settings.gpu = settings.gpuManualVendor;
-      await api.saveSettings({
-        gpuManualVendor: settings.gpuManualVendor,
-        gpu: settings.gpuManualVendor,
-      });
-      void refreshGpuPanel(false);
+      await handle.done;
     } catch (err) {
-      settings.gpuManualVendor = previousGpuManualVendor;
-      settings.gpu = previousGpu;
-      elements.gpuManualVendorSelect.value = previousGpuManualVendor;
+      if (handle.liveKeys().length > 0) {
+        restoreCommittedSettings(handle.liveKeys());
+        elements.gpuManualVendorSelect.value = settings.gpuManualVendor;
+      }
       showStatus('error', `Failed to save GPU vendor: ${getErrorMessage(err)}`);
+      return;
     }
+    void refreshGpuPanel(false);
   });
 
   elements.themeSelect.addEventListener('change', async () => {
     const nextTheme = elements.themeSelect.value as AppSettings['theme'];
-    const previousTheme = settings.theme;
     await persistSettingsChange(
       () => {
         settings.theme = nextTheme;
       },
       () => {
-        settings.theme = previousTheme;
-        elements.themeSelect.value = previousTheme;
+        elements.themeSelect.value = settings.theme;
       },
       { theme: nextTheme },
       'Failed to save theme',
@@ -2561,15 +2740,13 @@ const setupEventListeners = () => {
     btn.addEventListener('click', async () => {
       const theme = (btn as HTMLElement).dataset.theme as AppSettings['theme'];
       if (theme) {
-        const previousTheme = settings.theme;
         await persistSettingsChange(
           () => {
             settings.theme = theme;
             elements.themeSelect.value = theme;
           },
           () => {
-            settings.theme = previousTheme;
-            elements.themeSelect.value = previousTheme;
+            elements.themeSelect.value = settings.theme;
           },
           { theme },
           'Failed to save theme',
@@ -2586,8 +2763,6 @@ const setupEventListeners = () => {
     btn.addEventListener('click', async () => {
       const customTheme = (btn as HTMLElement).dataset.customTheme as AppSettings['customTheme'];
       if (!customTheme) return;
-      const previousTheme = settings.theme;
-      const previousCustom = settings.customTheme;
       await persistSettingsChange(
         () => {
           settings.theme = 'custom';
@@ -2595,9 +2770,7 @@ const setupEventListeners = () => {
           elements.themeSelect.value = 'custom';
         },
         () => {
-          settings.theme = previousTheme;
-          settings.customTheme = previousCustom;
-          elements.themeSelect.value = previousTheme;
+          elements.themeSelect.value = settings.theme;
         },
         { theme: 'custom', customTheme },
         'Failed to save custom theme',
@@ -2613,14 +2786,11 @@ const setupEventListeners = () => {
     btn.addEventListener('click', async () => {
       const uiStyle = (btn as HTMLElement).dataset.style as AppSettings['interfaceStyle'];
       if (uiStyle) {
-        const previousStyle = settings.interfaceStyle;
         await persistSettingsChange(
           () => {
             settings.interfaceStyle = uiStyle;
           },
-          () => {
-            settings.interfaceStyle = previousStyle;
-          },
+          () => {},
           { interfaceStyle: uiStyle },
           'Failed to save interface style',
           async () => {
@@ -2633,14 +2803,12 @@ const setupEventListeners = () => {
 
   elements.debugOutputCheck.addEventListener('change', async () => {
     const nextValue = elements.debugOutputCheck.checked;
-    const previousValue = settings.showDebugOutput;
     await persistSettingsChange(
       () => {
         settings.showDebugOutput = nextValue;
       },
       () => {
-        settings.showDebugOutput = previousValue;
-        elements.debugOutputCheck.checked = previousValue;
+        elements.debugOutputCheck.checked = settings.showDebugOutput;
       },
       { showDebugOutput: nextValue },
       'Failed to save debug output setting',
@@ -2652,14 +2820,12 @@ const setupEventListeners = () => {
 
   elements.advancedPresetsCheck.addEventListener('change', async () => {
     const nextValue = elements.advancedPresetsCheck.checked;
-    const previousValue = settings.showAdvancedPresets;
     await persistSettingsChange(
       () => {
         settings.showAdvancedPresets = nextValue;
       },
       () => {
-        settings.showAdvancedPresets = previousValue;
-        elements.advancedPresetsCheck.checked = previousValue;
+        elements.advancedPresetsCheck.checked = settings.showAdvancedPresets;
       },
       { showAdvancedPresets: nextValue },
       'Failed to save advanced presets setting',
@@ -2671,14 +2837,12 @@ const setupEventListeners = () => {
 
   elements.removeSpacesCheck.addEventListener('change', async () => {
     const nextValue = elements.removeSpacesCheck.checked;
-    const previousValue = settings.removeSpacesFromFilenames;
     await persistSettingsChange(
       () => {
         settings.removeSpacesFromFilenames = nextValue;
       },
       () => {
-        settings.removeSpacesFromFilenames = previousValue;
-        elements.removeSpacesCheck.checked = previousValue;
+        elements.removeSpacesCheck.checked = settings.removeSpacesFromFilenames;
       },
       { removeSpacesFromFilenames: nextValue },
       'Failed to save filename spacing setting'
@@ -2687,14 +2851,12 @@ const setupEventListeners = () => {
 
   elements.autoCheckUpdatesCheck.addEventListener('change', async () => {
     const nextValue = elements.autoCheckUpdatesCheck.checked;
-    const previousValue = settings.autoCheckUpdates;
     await persistSettingsChange(
       () => {
         settings.autoCheckUpdates = nextValue;
       },
       () => {
-        settings.autoCheckUpdates = previousValue;
-        elements.autoCheckUpdatesCheck.checked = previousValue;
+        elements.autoCheckUpdatesCheck.checked = settings.autoCheckUpdates;
       },
       { autoCheckUpdates: nextValue },
       'Failed to save auto-update setting'
@@ -2703,27 +2865,29 @@ const setupEventListeners = () => {
 
   elements.updateChannelSelect.addEventListener('change', async () => {
     const nextValue = elements.updateChannelSelect.value as AppSettings['updateChannel'];
-    const previousValue = settings.updateChannel;
     settings.updateChannel = nextValue;
+    const handle = enqueueSettingsTask(['updateChannel'], () => api.setUpdateChannel(nextValue), {
+      updateChannel: nextValue,
+    });
     try {
-      await api.setUpdateChannel(nextValue);
+      await handle.done;
     } catch (err) {
-      settings.updateChannel = previousValue;
-      elements.updateChannelSelect.value = previousValue;
+      if (handle.liveKeys().length > 0) {
+        restoreCommittedSettings(handle.liveKeys());
+        elements.updateChannelSelect.value = settings.updateChannel;
+      }
       showStatus('error', `Failed to save update channel: ${getErrorMessage(err)}`);
     }
   });
 
   elements.useSystemFFmpegCheck.addEventListener('change', async () => {
     const nextValue = elements.useSystemFFmpegCheck.checked;
-    const previousValue = settings.useSystemFfmpeg;
     await persistSettingsChange(
       () => {
         settings.useSystemFfmpeg = nextValue;
       },
       () => {
-        settings.useSystemFfmpeg = previousValue;
-        elements.useSystemFFmpegCheck.checked = previousValue;
+        elements.useSystemFFmpegCheck.checked = settings.useSystemFfmpeg;
       },
       { useSystemFfmpeg: nextValue },
       'Failed to save FFmpeg source setting',
@@ -2737,14 +2901,12 @@ const setupEventListeners = () => {
 
   elements.useCpuDecodingWhenGpuCheck.addEventListener('change', async () => {
     const nextValue = elements.useCpuDecodingWhenGpuCheck.checked;
-    const previousValue = settings.useCpuDecodingWhenGpu;
     await persistSettingsChange(
       () => {
         settings.useCpuDecodingWhenGpu = nextValue;
       },
       () => {
-        settings.useCpuDecodingWhenGpu = previousValue;
-        elements.useCpuDecodingWhenGpuCheck.checked = previousValue;
+        elements.useCpuDecodingWhenGpuCheck.checked = settings.useCpuDecodingWhenGpu;
       },
       { useCpuDecodingWhenGpu: nextValue },
       'Failed to save CPU decoding setting'
@@ -2761,8 +2923,8 @@ const setupEventListeners = () => {
           settings.moveOriginalToTrashOnSuccess = nextValue;
         },
         () => {
-          settings.moveOriginalToTrashOnSuccess = previousValue;
-          elements.moveOriginalToTrashOnSuccessCheck.checked = previousValue;
+          elements.moveOriginalToTrashOnSuccessCheck.checked =
+            settings.moveOriginalToTrashOnSuccess;
           updateTrashOriginalNotice();
         },
         { moveOriginalToTrashOnSuccess: nextValue },
@@ -2796,14 +2958,12 @@ const setupEventListeners = () => {
 
   elements.notifyOnConversionCompleteCheck.addEventListener('change', async () => {
     const nextValue = elements.notifyOnConversionCompleteCheck.checked;
-    const previousValue = settings.notifyOnConversionComplete;
     await persistSettingsChange(
       () => {
         settings.notifyOnConversionComplete = nextValue;
       },
       () => {
-        settings.notifyOnConversionComplete = previousValue;
-        elements.notifyOnConversionCompleteCheck.checked = previousValue;
+        elements.notifyOnConversionCompleteCheck.checked = settings.notifyOnConversionComplete;
       },
       { notifyOnConversionComplete: nextValue },
       'Failed to save notification setting'
@@ -2812,14 +2972,12 @@ const setupEventListeners = () => {
 
   elements.preventSleepWhileConvertingCheck.addEventListener('change', async () => {
     const nextValue = elements.preventSleepWhileConvertingCheck.checked;
-    const previousValue = settings.preventSleepWhileConverting;
     await persistSettingsChange(
       () => {
         settings.preventSleepWhileConverting = nextValue;
       },
       () => {
-        settings.preventSleepWhileConverting = previousValue;
-        elements.preventSleepWhileConvertingCheck.checked = previousValue;
+        elements.preventSleepWhileConvertingCheck.checked = settings.preventSleepWhileConverting;
       },
       { preventSleepWhileConverting: nextValue },
       'Failed to save prevent-sleep setting'
@@ -2828,14 +2986,12 @@ const setupEventListeners = () => {
 
   elements.showAllGpuVendorsCheck.addEventListener('change', async () => {
     const nextValue = elements.showAllGpuVendorsCheck.checked;
-    const previousValue = settings.showAllGpuVendors;
     await persistSettingsChange(
       () => {
         settings.showAllGpuVendors = nextValue;
       },
       () => {
-        settings.showAllGpuVendors = previousValue;
-        elements.showAllGpuVendorsCheck.checked = previousValue;
+        elements.showAllGpuVendorsCheck.checked = settings.showAllGpuVendors;
       },
       { showAllGpuVendors: nextValue },
       'Failed to save GPU vendor visibility setting',
@@ -2947,21 +3103,21 @@ const setupEventListeners = () => {
   let copyLogsResetTimer: ReturnType<typeof setTimeout> | null = null;
   elements.copyLogsBtn.addEventListener('click', () => {
     flushLogBuffer();
-    void navigator.clipboard
-      .writeText(elements.logsContent.textContent || '')
-      .then(() => {
-        if (copyLogsResetTimer) clearTimeout(copyLogsResetTimer);
+    void copyText(elements.logsContent.textContent || '').then((copied) => {
+      if (copyLogsResetTimer) clearTimeout(copyLogsResetTimer);
+      if (copied) {
         elements.copyLogsBtn.innerHTML =
           '<svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>Copied!';
-        copyLogsResetTimer = setTimeout(() => {
-          copyLogsResetTimer = null;
-          // eslint-disable-next-line no-unsanitized/property -- restores this button's own markup captured at startup.
-          elements.copyLogsBtn.innerHTML = copyLogsDefaultHTML;
-        }, 2000);
-      })
-      .catch((err) => {
-        showStatus('error', `Failed to copy logs: ${getErrorMessage(err)}`);
-      });
+      } else {
+        elements.copyLogsBtn.textContent = 'Copy failed';
+        showStatus('error', 'Failed to copy logs: the clipboard is unavailable.');
+      }
+      copyLogsResetTimer = setTimeout(() => {
+        copyLogsResetTimer = null;
+        // eslint-disable-next-line no-unsanitized/property -- restores this button's own markup captured at startup.
+        elements.copyLogsBtn.innerHTML = copyLogsDefaultHTML;
+      }, 2000);
+    });
   });
 
   elements.viewCreditsBtn.addEventListener('click', () => {
@@ -2981,20 +3137,13 @@ const setupEventListeners = () => {
   elements.outputDirBtn.addEventListener('click', async () => {
     const dir = await api.selectOutputDirectory();
     if (dir) {
-      const previousDirectory = settings.outputDirectory;
-      const previousOutputPathLabel = elements.outputPath.textContent || 'Same as input file';
-      const previousResetHidden = elements.outputDirResetBtn.hidden;
       await persistSettingsChange(
         () => {
           settings.outputDirectory = dir;
           elements.outputPath.textContent = dir;
           elements.outputDirResetBtn.hidden = false;
         },
-        () => {
-          settings.outputDirectory = previousDirectory;
-          elements.outputPath.textContent = previousOutputPathLabel;
-          elements.outputDirResetBtn.hidden = previousResetHidden;
-        },
+        syncOutputDirectoryUi,
         { outputDirectory: dir },
         'Failed to save output directory'
       );
@@ -3002,20 +3151,13 @@ const setupEventListeners = () => {
   });
 
   elements.outputDirResetBtn.addEventListener('click', async () => {
-    const previousDirectory = settings.outputDirectory;
-    const previousOutputPathLabel = elements.outputPath.textContent || 'Same as input file';
-    const previousResetHidden = elements.outputDirResetBtn.hidden;
     await persistSettingsChange(
       () => {
         settings.outputDirectory = '';
         elements.outputPath.textContent = 'Same as input file';
         elements.outputDirResetBtn.hidden = true;
       },
-      () => {
-        settings.outputDirectory = previousDirectory;
-        elements.outputPath.textContent = previousOutputPathLabel;
-        elements.outputDirResetBtn.hidden = previousResetHidden;
-      },
+      syncOutputDirectoryUi,
       { outputDirectory: '' },
       'Failed to reset output directory'
     );
@@ -3032,8 +3174,17 @@ const setupEventListeners = () => {
       cancelText: 'Cancel',
       confirmClass: 'btn-danger',
       onConfirm: async () => {
-        await api.resetSettings();
-        await api.restartApp();
+        try {
+          // Queued saves must land before the reset; unsent edits are discarded by it.
+          cancelAdvancedSettingsDebounce();
+          await drainSettingsSaves(RESTART_FLUSH_TIMEOUT_MS);
+          await api.resetSettings();
+          cancelAdvancedSettingsDebounce();
+          await drainSettingsSaves(RESTART_FLUSH_TIMEOUT_MS);
+          await api.restartApp();
+        } catch (err) {
+          showStatus('error', `Failed to reset settings: ${getErrorMessage(err)}`);
+        }
       },
     });
   });
@@ -3042,10 +3193,13 @@ const setupEventListeners = () => {
     if (updateReadyToInstall) {
       updateReadyToInstall = false;
       setCheckUpdateButtonState(getInstallingUpdateButtonHTML(), true);
-      api.installUpdate().catch(() => {
-        updateReadyToInstall = true;
-        setCheckUpdateButtonState(getInstallUpdateButtonHTML(), false, true);
-      });
+      void flushSettingsSaves(RESTART_FLUSH_TIMEOUT_MS)
+        .then(() => api.installUpdate())
+        .catch((err: unknown) => {
+          updateReadyToInstall = true;
+          setCheckUpdateButtonState(getInstallUpdateButtonHTML(), false, true);
+          showStatus('error', `Could not install the update: ${getErrorMessage(err)}`);
+        });
       return;
     }
 
@@ -3053,19 +3207,24 @@ const setupEventListeners = () => {
       updateAvailablePending = false;
       updateDownloadInProgress = true;
       setCheckUpdateButtonState(getDownloadingUpdateButtonHTML(), true);
-      void api.downloadUpdate().catch(() => {
+      void api.downloadUpdate().catch((err: unknown) => {
         updateDownloadInProgress = false;
         updateAvailablePending = true;
         setCheckUpdateButtonState(getUpdateAvailableButtonHTML(), false, true);
+        showStatus('error', `Could not download the update: ${getErrorMessage(err)}`);
       });
       return;
     }
     updateDownloadInProgress = false;
     setCheckUpdateButtonState(getCheckingUpdateButtonHTML(), true);
-    void api.checkForUpdates();
+    void api.checkForUpdates().catch((err: unknown) => {
+      setCheckUpdateButtonState(checkUpdateDefaultHTML, false);
+      showStatus('error', `Could not check for updates: ${getErrorMessage(err)}`);
+    });
   });
 
   api.onUpdateState((payload: UpdateStatePayload) => {
+    showUpdateMessage(payload);
     const phase = payload.phase;
     const percent = typeof payload.percent === 'number' ? payload.percent : undefined;
     if (phase === 'checking') {
@@ -3174,14 +3333,23 @@ const setupEventListeners = () => {
       elements.progressPercent.textContent = `${Math.floor(clampedPercent)}%`;
       elements.progressTime.textContent = latestProgress.time;
 
-      if (clampedPercent > 0 && conversionStartTime > 0) {
-        const elapsed = (Date.now() - conversionStartTime) / 1000;
-        const estimatedTotal = elapsed / (clampedPercent / 100);
-        const remaining = estimatedTotal - elapsed;
+      // A percent drop of more than 1 point means the same file restarted (GPU->CPU retry).
+      if (etaT0 === 0 || clampedPercent < etaLastPct - 1) {
+        resetEtaBaseline();
+        etaT0 = Date.now();
+        etaP0 = clampedPercent;
+      }
+      etaLastPct = clampedPercent;
+      const etaElapsed = (Date.now() - etaT0) / 1000;
+      const etaGain = clampedPercent - etaP0;
+      let etaText = '';
+      if (etaGain > 0 && etaElapsed >= 2) {
+        const remaining = (etaElapsed * (100 - clampedPercent)) / etaGain;
         if (remaining > 0 && remaining < 86400) {
-          elements.progressEta.textContent = `ETA: ${formatDuration(remaining)}`;
+          etaText = `ETA: ${formatDuration(remaining)}`;
         }
       }
+      elements.progressEta.textContent = etaText;
 
       if (latestProgress.fps > 0) {
         elements.progressSpeed.textContent = `${latestProgress.fps.toFixed(1)} fps`;
@@ -3215,16 +3383,37 @@ const setupEventListeners = () => {
     },
     saveSettings: async (partial) => {
       const { updateChannel, ...patch } = partial;
+      const handles: SettingsSaveHandle[] = [];
       if (Object.keys(patch).length > 0) {
-        await api.saveSettings(patch as SaveSettingsPayload);
+        handles.push(queueSettingsSave(patch));
       }
       if (updateChannel) {
-        await api.setUpdateChannel(updateChannel);
+        handles.push(
+          enqueueSettingsTask(['updateChannel'], () => api.setUpdateChannel(updateChannel), {
+            updateChannel,
+          })
+        );
+      }
+      try {
+        await Promise.all(handles.map((handle) => handle.done));
+      } catch (err) {
+        // Memory must match disk, except keys a newer change owns.
+        await Promise.allSettled(handles.map((handle) => handle.done));
+        const keys = handles.flatMap((handle) => handle.liveKeys());
+        if (keys.length > 0) {
+          restoreCommittedSettings(keys);
+          syncSettingsControls();
+          if (keys.includes('theme') || keys.includes('interfaceStyle')) {
+            void applyTheme();
+          }
+        }
+        throw err;
       }
     },
     setUpdateChannel: async (channel) => {
-      await api.setUpdateChannel(channel);
+      await enqueueSettingsTask(['updateChannel'], () => api.setUpdateChannel(channel)).done;
     },
+    onClosed: syncSettingsControls,
     reportError: (message) => {
       showStatus('error', message);
     },
@@ -3252,6 +3441,17 @@ const setupEventListeners = () => {
       applyPanelCollapseUi();
     },
   });
+};
+
+/** Manual update actions explain themselves in the status line (latest version, feed errors, notices). */
+const showUpdateMessage = (payload: UpdateStatePayload): void => {
+  const message = payload.message?.trim();
+  if (!payload.manual || !message) {
+    return;
+  }
+  const type =
+    payload.phase === 'error' ? 'error' : payload.phase === 'not-available' ? 'success' : 'warning';
+  showStatus(type, message);
 };
 
 const showGPUErrorStatus = (error: GPUEncoderError): void => {
@@ -3310,6 +3510,10 @@ const renderSelectedFileList = (): void => {
   });
 };
 
+// Edits during a batch only change the list for the next run; the Convert/Cancel
+// button, progress status and Show in Folder belong to the running batch.
+const isBatchBusy = (): boolean => isConverting || conversionStarting;
+
 const refreshSelectedFilesUi = async (): Promise<void> => {
   const selectionToken = ++fileSelectionToken;
   if (selectedFiles.length === 0) {
@@ -3317,7 +3521,9 @@ const refreshSelectedFilesUi = async (): Promise<void> => {
     elements.fileName.textContent = '';
     elements.fileDetails.textContent = '';
     elements.selectedFileList.replaceChildren();
-    elements.convertBtn.disabled = true;
+    if (!isBatchBusy()) {
+      elements.convertBtn.disabled = true;
+    }
     return;
   }
 
@@ -3354,6 +3560,9 @@ const refreshSelectedFilesUi = async (): Promise<void> => {
 
   renderSelectedFileList();
   elements.fileInfo.classList.add('visible');
+  if (isBatchBusy()) {
+    return;
+  }
   elements.convertBtn.disabled = !ffmpegInstalled;
   elements.showInFolderBtn.classList.add('u-hidden');
   hideStatus();
@@ -3426,6 +3635,154 @@ const finishConversionUi = () => {
   syncConversionMenuState();
 };
 
+const resetEtaBaseline = (): void => {
+  etaT0 = 0;
+  etaP0 = 0;
+  etaLastPct = 0;
+  elements.progressEta.textContent = '';
+};
+
+const enterConvertingUi = (): void => {
+  isConverting = true;
+  cancelRequested = false;
+  syncConversionMenuState();
+  elements.convertBtn.classList.add('converting');
+  elements.convertBtn.disabled = true;
+  elements.cancelBtn.classList.remove('u-hidden');
+  elements.progressContainer.classList.add('visible');
+  elements.showInFolderBtn.classList.add('u-hidden');
+  pendingProgressUpdate = null;
+  progressUpdateScheduled = false;
+  pendingLogBuffer = '';
+  elements.logsContent.textContent = '';
+  hideStatus();
+  etaIndex = -1;
+  resetEtaBaseline();
+  elements.progressFill.style.width = '0%';
+  elements.progressFill.setAttribute('aria-valuenow', '0');
+  elements.progressPercent.textContent = '0%';
+  elements.progressTime.textContent = '00:00:00';
+  elements.progressEta.textContent = '';
+  elements.progressSpeed.textContent = '';
+  elements.progressBatchSummary.textContent = '';
+  renderConversionQueue(null);
+};
+
+const renderQueueSnapshotUi = (next: QueueSnapshot): void => {
+  renderConversionQueue(next);
+  if (next.currentIndex !== etaIndex) {
+    etaIndex = next.currentIndex;
+    resetEtaBaseline();
+  }
+  const running = next.items.find((item) => item.status === 'running');
+  if (running && next.total > 1) {
+    elements.progressBatchSummary.textContent = `File ${next.currentIndex + 1} of ${next.total}: ${running.fileName}`;
+    showStatus('warning', `Converting ${next.currentIndex + 1}/${next.total}: ${running.fileName}`);
+  }
+};
+
+/** Leaves the converting UI and shows how the batch ended. */
+const presentBatchOutcome = (
+  snapshot: QueueSnapshot | null,
+  totalFiles: number,
+  unexpectedError: string | null
+): void => {
+  const wasCancelled =
+    cancelRequested || snapshot?.items.some((item) => item.status === 'cancelled');
+  finishConversionUi();
+  renderConversionQueue(null);
+
+  if (unexpectedError) {
+    showStatus('error', `Conversion failed: ${unexpectedError}`);
+    elements.showInFolderBtn.classList.add('u-hidden');
+    return;
+  }
+
+  const items = snapshot?.items ?? [];
+  const successItems = items.filter((item) => item.status === 'done');
+  const lastSuccess = [...successItems].reverse().find((item) => item.outputPath);
+  if (lastSuccess?.outputPath) {
+    lastOutputPath = lastSuccess.outputPath;
+    syncConversionMenuState();
+  }
+
+  if (totalFiles === 1) {
+    const uiStatus = conv2QueueUiStatus({ total: totalFiles, items }, { wasCancelled });
+    const failed = items[0]?.status === 'failed' ? items[0] : undefined;
+    showStatus(
+      uiStatus.type,
+      uiStatus.message,
+      failed?.errorDetail
+        ? {
+            title: `Error details: ${failed.fileName}`,
+            summary: failed.error,
+            detail: failed.errorDetail,
+          }
+        : undefined
+    );
+    if (items[0]?.status === 'done') {
+      elements.showInFolderBtn.classList.remove('u-hidden');
+    } else {
+      elements.showInFolderBtn.classList.add('u-hidden');
+    }
+    return;
+  }
+
+  const uiStatus = conv2QueueUiStatus({ total: totalFiles, items }, { wasCancelled });
+  showStatus(uiStatus.type, uiStatus.message);
+  if (successItems.length > 0) {
+    elements.showInFolderBtn.classList.remove('u-hidden');
+  } else {
+    elements.showInFolderBtn.classList.add('u-hidden');
+  }
+};
+
+/** After a renderer reload: pick up a batch the backend is still running. */
+const rehydrateRunningBatch = async (): Promise<void> => {
+  if (isConverting || conversionStarting) return;
+  let attached = false;
+  let sawEvent = false;
+  let lastActive: QueueSnapshot | null = null;
+  let unsubscribe: () => void = () => {};
+  const apply = (next: QueueSnapshot): void => {
+    if (!attached) {
+      if (!next.active || isConverting || conversionStarting) return;
+      attached = true;
+      enterConvertingUi();
+    }
+    if (next.active) {
+      lastActive = next;
+      renderQueueSnapshotUi(next);
+      return;
+    }
+    unsubscribe();
+    attached = false;
+    presentBatchOutcome(next, next.total, null);
+  };
+  // Wait for the listener to register so a batch ending during the lookup is not missed.
+  unsubscribe = await listenConversionQueueUpdated((next) => {
+    sawEvent = true;
+    apply(next);
+  });
+  try {
+    const current = await api.getQueueSnapshot();
+    // Any live event is newer than this response, so it wins.
+    if (current?.active && !sawEvent) apply(current);
+    if (attached) {
+      // Re-poll once: a batch that ended before attaching must still leave the converting UI.
+      const latest = await api.getQueueSnapshot();
+      if (attached && !latest?.active) {
+        unsubscribe();
+        attached = false;
+        const final = latest ?? lastActive;
+        presentBatchOutcome(final, final?.total ?? 0, null);
+      }
+    }
+  } finally {
+    if (!attached) unsubscribe();
+  }
+};
+
 const runConversionWorkflow = async (inputPathsOverride?: string[]) => {
   if (isConverting || conversionStarting) {
     return;
@@ -3435,7 +3792,11 @@ const runConversionWorkflow = async (inputPathsOverride?: string[]) => {
   elements.convertBtn.disabled = true;
 
   try {
-    await waitForAdvancedSettingsIdle();
+    // Never start on old settings: a stalled save must be retried, not skipped.
+    if (!(await flushSettingsSaves(RESTART_FLUSH_TIMEOUT_MS))) {
+      showStatus('warning', 'Still saving settings, try again');
+      return;
+    }
 
     if (isConverting) {
       return;
@@ -3485,43 +3846,14 @@ const runConversionWorkflow = async (inputPathsOverride?: string[]) => {
       showDebugOutput: settings.showDebugOutput,
     };
 
-    isConverting = true;
-    cancelRequested = false;
-    syncConversionMenuState();
-    elements.convertBtn.classList.add('converting');
-    elements.cancelBtn.classList.remove('u-hidden');
-    elements.progressContainer.classList.add('visible');
-    elements.showInFolderBtn.classList.add('u-hidden');
-    pendingProgressUpdate = null;
-    progressUpdateScheduled = false;
-    pendingLogBuffer = '';
-    elements.logsContent.textContent = '';
-    hideStatus();
-    conversionStartTime = Date.now();
-    elements.progressFill.style.width = '0%';
-    elements.progressFill.setAttribute('aria-valuenow', '0');
-    elements.progressPercent.textContent = '0%';
-    elements.progressTime.textContent = '00:00:00';
-    elements.progressEta.textContent = '';
-    elements.progressSpeed.textContent = '';
-    elements.progressBatchSummary.textContent = '';
-    renderConversionQueue(null);
-
+    enterConvertingUi();
     const totalFiles = filesToConvert.length;
     let unexpectedError: string | null = null;
     let snapshot: QueueSnapshot | null = null;
 
     const unsubQueue = api.onConversionQueueUpdated((next) => {
       snapshot = next;
-      renderConversionQueue(next);
-      const running = next.items.find((item) => item.status === 'running');
-      if (running && next.total > 1) {
-        elements.progressBatchSummary.textContent = `File ${next.currentIndex + 1} of ${next.total}: ${running.fileName}`;
-        showStatus(
-          'warning',
-          `Converting ${next.currentIndex + 1}/${next.total}: ${running.fileName}`
-        );
-      }
+      renderQueueSnapshotUi(next);
     });
 
     try {
@@ -3540,57 +3872,7 @@ const runConversionWorkflow = async (inputPathsOverride?: string[]) => {
       unsubQueue();
     }
 
-    const wasCancelled =
-      cancelRequested || snapshot?.items.some((item) => item.status === 'cancelled');
-    finishConversionUi();
-    renderConversionQueue(null);
-
-    if (unexpectedError) {
-      showStatus('error', `Conversion failed: ${unexpectedError}`);
-      elements.showInFolderBtn.classList.add('u-hidden');
-      return;
-    }
-
-    const items = snapshot?.items ?? [];
-    const successItems = items.filter((item) => item.status === 'done');
-    const lastSuccess = [...successItems].reverse().find((item) => item.outputPath);
-    if (lastSuccess?.outputPath) {
-      lastOutputPath = lastSuccess.outputPath;
-      syncConversionMenuState();
-    }
-
-    if (totalFiles === 1) {
-      const uiStatus = conv2QueueUiStatus({ total: totalFiles, items }, { wasCancelled });
-      const failed = items[0]?.status === 'failed' ? items[0] : undefined;
-      showStatus(
-        uiStatus.type,
-        uiStatus.message,
-        failed?.errorDetail
-          ? {
-              title: `Error details: ${failed.fileName}`,
-              summary: failed.error,
-              detail: failed.errorDetail,
-            }
-          : undefined
-      );
-      if (items[0]?.status === 'done') {
-        elements.showInFolderBtn.classList.remove('u-hidden');
-      } else {
-        elements.showInFolderBtn.classList.add('u-hidden');
-      }
-      return;
-    }
-
-    const uiStatus = conv2QueueUiStatus({ total: totalFiles, items }, { wasCancelled });
-    showStatus(uiStatus.type, uiStatus.message);
-
-    const successCount = successItems.length;
-
-    if (successCount > 0) {
-      elements.showInFolderBtn.classList.remove('u-hidden');
-    } else {
-      elements.showInFolderBtn.classList.add('u-hidden');
-    }
+    presentBatchOutcome(snapshot, totalFiles, unexpectedError);
   } finally {
     conversionStarting = false;
     syncConversionMenuState();
@@ -3630,7 +3912,7 @@ const cancelConversion = async () => {
 document.addEventListener('DOMContentLoaded', () => {
   void init()
     .catch((error: unknown) => {
-      console.error('[conv2] renderer startup failed', error);
+      showStartupFailure(error);
     })
     .finally(() => resolveRendererStartupReady());
 });

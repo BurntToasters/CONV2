@@ -162,18 +162,32 @@ export function exactMochaTitlePattern(titles) {
   return `^(?:${escaped.join("|")})$`;
 }
 
-export function coreArtifactPaths({
+/**
+ * Which per-run evidence directory a run writes to. Only the full suite may
+ * use the canonical e2e-report-<platform>-<arch>.json; `null` means canonical.
+ */
+export function partialRunKind({ profileName, fullSuite }) {
+  if (profileName) return "core";
+  return fullSuite ? null : "adhoc";
+}
+
+/** Unique per-run report, screenshot, and latest-report paths for a partial run. */
+export function runArtifactPaths({
+  kind,
   root = path.join(REPO_ROOT, "e2e", "artifacts"),
   platform = process.platform,
   arch = process.arch,
   runId,
 }) {
+  if (kind !== "core" && kind !== "adhoc") {
+    throw new Error(`E2E run artifact kind must be core or adhoc, got ${kind}`);
+  }
   if (typeof runId !== "string" || !/^[a-zA-Z0-9_-]+$/.test(runId)) {
     throw new Error(
-      "core E2E run id must contain only letters, numbers, _ or -",
+      `${kind} E2E run id must contain only letters, numbers, _ or -`,
     );
   }
-  const hostDirectory = path.join(root, "core", `${platform}-${arch}`);
+  const hostDirectory = path.join(root, kind, `${platform}-${arch}`);
   const runDir = path.join(hostDirectory, runId);
   return {
     hostDirectory,
@@ -182,4 +196,8 @@ export function coreArtifactPaths({
     latestReportPath: path.join(hostDirectory, "latest-report.json"),
     screenshotDir: path.join(runDir, "screenshots"),
   };
+}
+
+export function coreArtifactPaths(options) {
+  return runArtifactPaths({ ...options, kind: "core" });
 }

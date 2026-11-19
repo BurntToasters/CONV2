@@ -20,6 +20,7 @@ import {
   e2eBackgroundValue,
   gitCommit,
   gitSourceTree,
+  gitWorktreeState,
   relativeToRepo,
   which,
 } from "./e2e/common.js";
@@ -27,6 +28,7 @@ import {
   buildE2eBinary,
   e2eBinaryIsFresh,
   mayReuseE2eBinary,
+  prepareE2eSidecars,
 } from "./e2e/build.js";
 import {
   buildMediaFixtures,
@@ -35,9 +37,10 @@ import {
 } from "./e2e/fixtures.js";
 import {
   buildCoreRunPlan,
-  coreArtifactPaths,
   createE2eRunId,
   parseE2eProfile,
+  partialRunKind,
+  runArtifactPaths,
 } from "./e2e/core.js";
 import {
   e2eOnlySpec,
@@ -105,30 +108,45 @@ function reexecUnderXvfb() {
   process.exit(result.status ?? 1);
 }
 
-function writeEvidence(report, { corePaths = null } = {}) {
-  fs.mkdirSync(corePaths?.hostDirectory ?? ARTIFACT_DIR, { recursive: true });
+/**
+ * Write the gate report. Only a full-suite run may write the canonical
+ * e2e-report-<platform>-<arch>.json (release evidence); every partial run
+ * (core, CONV2_E2E_ONLY, or --group) passes its own `runPaths` and never
+ * touches the canonical file.
+ */
+function writeEvidence(
+  report,
+  { runPaths = null, artifactDir = ARTIFACT_DIR } = {},
+) {
+  if (!report.fullSuite && !runPaths) {
+    throw new Error(
+      "partial E2E runs must write evidence to a per-run directory, not the canonical report",
+    );
+  }
+  fs.mkdirSync(runPaths?.hostDirectory ?? artifactDir, { recursive: true });
   const body = { ...report };
   const canonical = JSON.stringify(body, null, 2);
   body.reportSha256 = crypto
     .createHash("sha256")
     .update(canonical)
     .digest("hex");
-  const file = corePaths
-    ? corePaths.reportPath
+  const file = runPaths
+    ? runPaths.reportPath
     : path.join(
-        ARTIFACT_DIR,
+        artifactDir,
         `e2e-report-${process.platform}-${process.arch}.json`,
       );
   const contents = `${JSON.stringify(body, null, 2)}\n`;
   fs.mkdirSync(path.dirname(file), { recursive: true });
   fs.writeFileSync(file, contents);
-  if (corePaths) {
-    const temporaryLatest = `${corePaths.latestReportPath}.${body.runId}.tmp`;
+  if (runPaths) {
+    const temporaryLatest = `${runPaths.latestReportPath}.${body.runId}.tmp`;
     fs.writeFileSync(temporaryLatest, contents);
-    fs.rmSync(corePaths.latestReportPath, { force: true });
-    fs.renameSync(temporaryLatest, corePaths.latestReportPath);
+    fs.rmSync(runPaths.latestReportPath, { force: true });
+    fs.renameSync(temporaryLatest, runPaths.latestReportPath);
+    const label = report.profile ? "Core" : "Partial";
     console.log(
-      `Core E2E evidence written to ${path.relative(REPO_ROOT, file)} (latest: ${path.relative(REPO_ROOT, corePaths.latestReportPath)})`,
+      `${label} E2E evidence written to ${path.relative(REPO_ROOT, file)} (latest: ${path.relative(REPO_ROOT, runPaths.latestReportPath)})`,
     );
   } else {
     console.log(`E2E evidence written to ${path.relative(REPO_ROOT, file)}`);
@@ -215,10 +233,18 @@ async function runE2e(timing, options = {}) {
   const selectedGroups = parseE2eGroups(process.argv.slice(2), process.env);
   const runId =
     options.runId ?? (process.env.CONV2_E2E_RUN_ID?.trim() || createE2eRunId());
-  const corePaths = profileName ? coreArtifactPaths({ runId }) : null;
   const runPlan = profileName
     ? buildCoreRunPlan()
     : e2eRunPlan({ onlySpec, selectedGroups });
+  // Partial runs get unique per-run evidence; only the full suite writes the
+  // canonical report and clears the canonical screenshot folder.
+  const partialKind = partialRunKind({
+    profileName,
+    fullSuite: runPlan.fullSuite,
+  });
+  const runPaths = partialKind
+    ? runArtifactPaths({ kind: partialKind, runId })
+    : null;
   const ownerEnabled = (owner) =>
     runPlan.fullSuite || runPlan.enabledOwners.includes(owner);
   // Set before any launch so every pass inherits it.
@@ -229,23 +255,19 @@ async function runE2e(timing, options = {}) {
   if (background !== null) process.env.CONV2_E2E_BACKGROUND = background;
   reexecUnderXvfb();
   const startedAt = new Date().toISOString();
-  // The full suite is release evidence and must always run against a freshly
-  // compiled binary. Reuse is limited to an explicitly selected ad-hoc spec.
-  const reuseRequested = process.env.CONV2_E2E_REUSE === "1";
-  await timedStage(timing, "build", () => {
-    const reuse = mayReuseE2eBinary({
-      onlySpec: Boolean(onlySpec) && selectedGroups.length === 0,
-      reuseRequested,
-      binaryFresh: !reuseRequested || e2eBinaryIsFresh(),
-    });
-    if (!reuse) buildE2eBinary();
-    return { reusedBinary: reuse };
+  // Recorded before the build so it describes the source the binary came from.
+  const worktree = gitWorktreeState();
+  // Resolve and check the test tools first: a missing FFmpeg or FFprobe must
+  // fail in seconds, not after the full build. Sidecars are staged first, as
+  // the lookup only sees staged ones; the build then skips that step.
+  await timedStage(timing, "sidecars", () => {
+    prepareE2eSidecars();
+    return {};
   });
-
   const ffmpeg = resolveTestFfmpeg();
   if (!ffmpeg) {
     throw new Error(
-      "The E2E suite needs a real FFmpeg (bundled sidecar, CONV2_E2E_FFMPEG, or PATH).",
+      "The E2E suite needs a real FFmpeg: fetch it into resources/ffmpeg (npm run get:ffmpeg), or set CONV2_E2E_FFMPEG, or put ffmpeg on PATH.",
     );
   }
   const ffprobe = companionFfprobe(ffmpeg.binary) ?? which("ffprobe");
@@ -260,238 +282,271 @@ async function runE2e(timing, options = {}) {
       `Core E2E could not run FFprobe: ${probe.stderr || probe.error?.message || "unknown error"}`,
     );
   }
-  const screenshotDir = corePaths
-    ? corePaths.screenshotDir
+  // The full suite is release evidence and must always run against a freshly
+  // compiled binary. Reuse is limited to an explicitly selected ad-hoc spec.
+  const reuseRequested = process.env.CONV2_E2E_REUSE === "1";
+  await timedStage(timing, "build", () => {
+    const reuse = mayReuseE2eBinary({
+      onlySpec: Boolean(onlySpec) && selectedGroups.length === 0,
+      reuseRequested,
+      binaryFresh: !reuseRequested || e2eBinaryIsFresh(),
+    });
+    if (!reuse) buildE2eBinary({ sidecarsPrepared: true });
+    return { reusedBinary: reuse };
+  });
+  // Hashed right after the build, so the evidence names the binary the passes
+  // were about to run rather than whatever is on disk at the end.
+  const binarySha256 = sha256(fs.readFileSync(e2eBinaryPath()));
+
+  const screenshotDir = runPaths
+    ? runPaths.screenshotDir
     : path.join(
         ARTIFACT_DIR,
         "screenshots",
         `${process.platform}-${process.arch}`,
       );
-  // Full-run screenshots start empty; core paths are unique per invocation.
-  if (!corePaths) fs.rmSync(screenshotDir, { recursive: true, force: true });
+  // Full-run screenshots start empty; partial run paths are unique per run.
+  if (!runPaths) fs.rmSync(screenshotDir, { recursive: true, force: true });
   fs.mkdirSync(screenshotDir, { recursive: true });
 
   const useSystemFfmpeg = ffmpeg.source === "system";
-  const mainProfile = createE2eProfile({ useSystemFfmpeg });
-  const fixtureDir = path.join(mainProfile.profileDir, "fixtures");
-  const { fixtures, files: fixtureFiles } = await timedStage(
-    timing,
-    "fixtures",
-    () => buildMediaFixtures({ ffmpeg: ffmpeg.binary, fixtureDir }),
-  );
-  const sharedEnv = buildSharedWdioEnv({
-    ffmpeg,
-    ffprobe,
-    fixtures,
-    fixtureFiles,
-  });
-  const runRecordedPass = (pass, env) =>
-    timedStage(timing, `wdio:${pass.name}`, async () => {
-      await runRecordedWdioPass(pass, env, sharedEnv);
-      return pass;
+  // Every profile created from here on is removed even when a later step
+  // throws before the normal cleanup stage runs.
+  const profileDirs = [];
+  const trackProfile = (profile) => {
+    profileDirs.push(profile.profileDir);
+    return profile;
+  };
+  try {
+    const mainProfile = trackProfile(createE2eProfile({ useSystemFfmpeg }));
+    const fixtureDir = path.join(mainProfile.profileDir, "fixtures");
+    const { fixtures, files: fixtureFiles } = await timedStage(
+      timing,
+      "fixtures",
+      () => buildMediaFixtures({ ffmpeg: ffmpeg.binary, fixtureDir }),
+    );
+    const sharedEnv = buildSharedWdioEnv({
+      ffmpeg,
+      ffprobe,
+      fixtures,
+      fixtureFiles,
+    });
+    const runRecordedPass = (pass, env) =>
+      timedStage(timing, `wdio:${pass.name}`, async () => {
+        await runRecordedWdioPass(pass, env, sharedEnv);
+        return pass;
+      });
+
+    const mainPass = {
+      name: "main",
+      profile: mainProfile,
+      resultsPath: path.join(mainProfile.profileDir, "results.json"),
+      status: "pending",
+      reason: null,
+    };
+    const legacyPasses = buildLegacyPasses({
+      onlySpec,
+      ownerEnabled,
+      useSystemFfmpeg,
+      trackProfile,
     });
 
-  const mainPass = {
-    name: "main",
-    profile: mainProfile,
-    resultsPath: path.join(mainProfile.profileDir, "results.json"),
-    status: "pending",
-    reason: null,
-  };
-  const legacyPasses = buildLegacyPasses({
-    onlySpec,
-    ownerEnabled,
-    useSystemFfmpeg,
-  });
-
-  let failure = null;
-  try {
-    for (const pass of legacyPasses) {
-      await runRecordedPass(pass, {
-        CONV2_E2E_SPECS: "./specs/legacy-import.spec.js",
-        CONV2_E2E_LEGACY_CASE: pass.legacyCase,
-        CONV2_E2E_LEGACY_V1: JSON.stringify(pass.seed),
-        CONV2_E2E_SCREENSHOTS: screenshotDir,
-      });
+    let failure = null;
+    try {
+      for (const pass of legacyPasses) {
+        await runRecordedPass(pass, {
+          CONV2_E2E_SPECS: "./specs/legacy-import.spec.js",
+          CONV2_E2E_LEGACY_CASE: pass.legacyCase,
+          CONV2_E2E_LEGACY_V1: JSON.stringify(pass.seed),
+          CONV2_E2E_SCREENSHOTS: screenshotDir,
+        });
+      }
+      if (onlySpec || ownerEnabled("main")) {
+        await runRecordedPass(mainPass, {
+          // CONV2_E2E_ONLY runs one ad-hoc spec while debugging; the full gate
+          // always runs main.spec.js and requires every scenario.
+          CONV2_E2E_SPECS: runPlan.mainSpecs,
+          CONV2_E2E_SCREENSHOTS: screenshotDir,
+          ...(runPlan.mainMochaTitles
+            ? {
+                CONV2_E2E_MOCHA_TITLES: JSON.stringify(
+                  runPlan.mainMochaTitles.map((entry) => entry.title),
+                ),
+              }
+            : {}),
+        });
+      }
+    } catch (error) {
+      // Only an error outside the pass runs reaches here.
+      failure = error instanceof Error ? error.message : String(error);
     }
-    if (onlySpec || ownerEnabled("main")) {
-      await runRecordedPass(mainPass, {
-        // CONV2_E2E_ONLY runs one ad-hoc spec while debugging; the full gate
-        // always runs main.spec.js and requires every scenario.
-        CONV2_E2E_SPECS: runPlan.mainSpecs,
-        CONV2_E2E_SCREENSHOTS: screenshotDir,
-        ...(runPlan.mainMochaTitles
+    const wdioPasses = [...legacyPasses, mainPass];
+    for (const pass of wdioPasses) {
+      if (pass.status !== "failed") continue;
+      const detail = `${pass.name}: ${pass.reason}`;
+      failure = failure ? `${failure}; ${detail}` : detail;
+    }
+
+    const { expectedScenarios, fullSuite } = runPlan;
+    const readResults = (file) =>
+      fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, "utf8")) : [];
+    const readLogTail = (pass, lines) => {
+      const file = path.join(pass.profile.dataDir, "logs", "conv2.log");
+      return fs.existsSync(file)
+        ? fs.readFileSync(file, "utf8").split(/\r?\n/).slice(-lines)
+        : [];
+    };
+    const scenarios = [
+      ...legacyPasses,
+      ...(onlySpec || ownerEnabled("main") ? [mainPass] : []),
+    ].flatMap((pass) => readResults(pass.resultsPath));
+    const seen = new Set(scenarios.map((scenario) => scenario.name));
+    const missing = expectedScenarios.filter((name) => !seen.has(name));
+    const legacyImportCoverage = Object.fromEntries(
+      Object.entries(LEGACY_IMPORT_FAILURE_MODES).map(([id, description]) => [
+        id,
+        {
+          description,
+          coveredBy: scenarios
+            .filter((scenario) => scenario.covers?.includes(id))
+            .map((scenario) => scenario.name),
+        },
+      ]),
+    );
+    const checksLegacyImportCoverage =
+      fullSuite || runPlan.enabledOwners.includes("legacy-import");
+    const uncovered = checksLegacyImportCoverage
+      ? Object.entries(legacyImportCoverage)
+          .filter(([, mode]) => mode.coveredBy.length === 0)
+          .map(([id]) => id)
+      : [];
+    const { screenshots, problems: screenshotProblems } = verifyScreenshots(
+      scenarios,
+      screenshotDir,
+    );
+    const packageJson = JSON.parse(
+      fs.readFileSync(path.join(REPO_ROOT, "package.json"), "utf8"),
+    );
+    const scenarioProblems =
+      fullSuite || selectedGroups.length > 0 || profileName !== null
+        ? scenarioOutcomeProblems(
+            scenarios,
+            process.platform,
+            expectedScenarios,
+          )
+        : onlyRunScenarioProblems({
+            onlySpec,
+            scenarios,
+            platform: process.platform,
+          });
+    const legacyPassLogTails = Object.fromEntries(
+      legacyPasses.map((pass) => [pass.legacyCase, readLogTail(pass, 15)]),
+    );
+    const appLogTail = readLogTail(mainPass, 40);
+    await timedStage(timing, "cleanup:profiles", () => {
+      for (const dir of profileDirs) cleanupProfile(dir);
+      return {};
+    });
+    const evidence = writeEvidence(
+      {
+        app: "CONV2",
+        fullSuite,
+        runId,
+        ...(profileName ? { profile: profileName } : {}),
+        ...(runPaths
           ? {
-              CONV2_E2E_MOCHA_TITLES: JSON.stringify(
-                runPlan.mainMochaTitles.map((entry) => entry.title),
-              ),
+              runDirectory: relativeToRepo(runPaths.runDir),
+              reportPath: relativeToRepo(runPaths.reportPath),
             }
           : {}),
-      });
-    }
-  } catch (error) {
-    // Only an error outside the pass runs reaches here.
-    failure = error instanceof Error ? error.message : String(error);
-  }
-  const wdioPasses = [...legacyPasses, mainPass];
-  for (const pass of wdioPasses) {
-    if (pass.status !== "failed") continue;
-    const detail = `${pass.name}: ${pass.reason}`;
-    failure = failure ? `${failure}; ${detail}` : detail;
-  }
-
-  const { expectedScenarios, fullSuite } = runPlan;
-  const readResults = (file) =>
-    fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, "utf8")) : [];
-  const readLogTail = (pass, lines) => {
-    const file = path.join(pass.profile.dataDir, "logs", "conv2.log");
-    return fs.existsSync(file)
-      ? fs.readFileSync(file, "utf8").split(/\r?\n/).slice(-lines)
-      : [];
-  };
-  const scenarios = [
-    ...legacyPasses,
-    ...(onlySpec || ownerEnabled("main") ? [mainPass] : []),
-  ].flatMap((pass) => readResults(pass.resultsPath));
-  const seen = new Set(scenarios.map((scenario) => scenario.name));
-  const missing = expectedScenarios.filter((name) => !seen.has(name));
-  const legacyImportCoverage = Object.fromEntries(
-    Object.entries(LEGACY_IMPORT_FAILURE_MODES).map(([id, description]) => [
-      id,
-      {
-        description,
-        coveredBy: scenarios
-          .filter((scenario) => scenario.covers?.includes(id))
-          .map((scenario) => scenario.name),
+        // Present only on partial runs, so full-gate evidence keeps its shape.
+        ...(onlySpec ? { onlySpec } : {}),
+        ...(selectedGroups.length > 0
+          ? { selectedGroups, selectedOwners: runPlan.enabledOwners }
+          : {}),
+        expectedScenarios,
+        version: packageJson.version,
+        commit: gitCommit(),
+        sourceTree: gitSourceTree(),
+        ...worktree,
+        packageLockSha256: sha256(
+          fs.readFileSync(path.join(REPO_ROOT, "package-lock.json")),
+        ),
+        cargoLockSha256: sha256(
+          fs.readFileSync(path.join(REPO_ROOT, "src-tauri", "Cargo.lock")),
+        ),
+        platform: process.platform,
+        arch: process.arch,
+        node: process.version,
+        binarySha256,
+        startedAt,
+        ...(runPlan.requiredTools
+          ? { requiredTools: runPlan.requiredTools }
+          : {}),
+        ffmpeg: { source: ffmpeg.source, binary: path.basename(ffmpeg.binary) },
+        ffprobe: ffprobe ? { binary: path.basename(ffprobe) } : null,
+        fixtures,
+        scenarios,
+        // Each WebdriverIO pass that ran, with its own outcome. Scenario results
+        // come from the pass results files, so a failed pass still reports
+        // whatever scenarios it wrote.
+        wdioPasses: wdioPasses
+          .filter((pass) => pass.status !== "pending")
+          .map(({ name, status, reason }) => ({ name, status, reason })),
+        scenarioGroups: groupedScenarioResults(scenarios, expectedScenarios),
+        missingScenarios: missing,
+        scenarioProblems,
+        legacyImportCoverage,
+        uncoveredLegacyImportFailureModes: uncovered,
+        screenshots,
+        screenshotProblems,
+        failure,
+        passed:
+          !failure &&
+          missing.length === 0 &&
+          scenarioProblems.length === 0 &&
+          uncovered.length === 0 &&
+          screenshotProblems.length === 0,
+        legacyPassLogTails,
+        appLogTail,
+        finishedAt: new Date().toISOString(),
+        timings: timingReport(timing),
       },
-    ]),
-  );
-  const checksLegacyImportCoverage =
-    fullSuite || runPlan.enabledOwners.includes("legacy-import");
-  const uncovered = checksLegacyImportCoverage
-    ? Object.entries(legacyImportCoverage)
-        .filter(([, mode]) => mode.coveredBy.length === 0)
-        .map(([id]) => id)
-    : [];
-  const { screenshots, problems: screenshotProblems } = verifyScreenshots(
-    scenarios,
-    screenshotDir,
-  );
-  const packageJson = JSON.parse(
-    fs.readFileSync(path.join(REPO_ROOT, "package.json"), "utf8"),
-  );
-  const scenarioProblems =
-    fullSuite || selectedGroups.length > 0 || profileName !== null
-      ? scenarioOutcomeProblems(scenarios, process.platform, expectedScenarios)
-      : onlyRunScenarioProblems({
-          onlySpec,
-          scenarios,
-          platform: process.platform,
-        });
-  const legacyPassLogTails = Object.fromEntries(
-    legacyPasses.map((pass) => [pass.legacyCase, readLogTail(pass, 15)]),
-  );
-  const appLogTail = readLogTail(mainPass, 40);
-  await timedStage(timing, "cleanup:profiles", () => {
-    for (const pass of wdioPasses) cleanupProfile(pass.profile.profileDir);
-    return {};
-  });
-  const evidence = writeEvidence(
-    {
-      app: "CONV2",
-      fullSuite,
-      runId,
-      ...(profileName ? { profile: profileName } : {}),
-      ...(corePaths
-        ? {
-            runDirectory: relativeToRepo(corePaths.runDir),
-            reportPath: relativeToRepo(corePaths.reportPath),
-          }
-        : {}),
-      // Present only on partial runs, so full-gate evidence keeps its shape.
-      ...(onlySpec ? { onlySpec } : {}),
-      ...(selectedGroups.length > 0
-        ? { selectedGroups, selectedOwners: runPlan.enabledOwners }
-        : {}),
-      expectedScenarios,
-      version: packageJson.version,
-      commit: gitCommit(),
-      sourceTree: gitSourceTree(),
-      packageLockSha256: sha256(
-        fs.readFileSync(path.join(REPO_ROOT, "package-lock.json")),
-      ),
-      cargoLockSha256: sha256(
-        fs.readFileSync(path.join(REPO_ROOT, "src-tauri", "Cargo.lock")),
-      ),
-      platform: process.platform,
-      arch: process.arch,
-      node: process.version,
-      binarySha256: sha256(fs.readFileSync(e2eBinaryPath())),
-      startedAt,
-      ...(runPlan.requiredTools
-        ? { requiredTools: runPlan.requiredTools }
-        : {}),
-      ffmpeg: { source: ffmpeg.source, binary: path.basename(ffmpeg.binary) },
-      ffprobe: ffprobe ? { binary: path.basename(ffprobe) } : null,
-      fixtures,
-      scenarios,
-      // Each WebdriverIO pass that ran, with its own outcome. Scenario results
-      // come from the pass results files, so a failed pass still reports
-      // whatever scenarios it wrote.
-      wdioPasses: wdioPasses
-        .filter((pass) => pass.status !== "pending")
-        .map(({ name, status, reason }) => ({ name, status, reason })),
-      scenarioGroups: groupedScenarioResults(scenarios, expectedScenarios),
-      missingScenarios: missing,
-      scenarioProblems,
-      legacyImportCoverage,
-      uncoveredLegacyImportFailureModes: uncovered,
-      screenshots,
-      screenshotProblems,
-      failure,
-      passed:
-        !failure &&
-        missing.length === 0 &&
-        scenarioProblems.length === 0 &&
-        uncovered.length === 0 &&
-        screenshotProblems.length === 0,
-      legacyPassLogTails,
-      appLogTail,
-      finishedAt: new Date().toISOString(),
-      timings: timingReport(timing),
-    },
-    { corePaths },
-  );
-  printTimingSummary(
-    timing,
-    failure ||
-      missing.length > 0 ||
-      scenarioProblems.length > 0 ||
-      uncovered.length > 0 ||
-      screenshotProblems.length > 0
-      ? new Error("E2E validation failed")
-      : null,
-  );
-  if (failure) throw new Error(`${failure} (evidence: ${evidence})`);
-  if (missing.length > 0) {
-    throw new Error(
-      `E2E scenarios did not report: ${missing.join(", ")} (evidence: ${evidence})`,
+      { runPaths },
     );
-  }
-  if (scenarioProblems.length > 0) {
-    throw new Error(
-      `E2E scenario outcomes are incomplete or unsuccessful: ${scenarioProblems.join(", ")} (evidence: ${evidence})`,
+    printTimingSummary(
+      timing,
+      failure ||
+        missing.length > 0 ||
+        scenarioProblems.length > 0 ||
+        uncovered.length > 0 ||
+        screenshotProblems.length > 0
+        ? new Error("E2E validation failed")
+        : null,
     );
-  }
-  if (uncovered.length > 0) {
-    throw new Error(
-      `CONV2 1 import failure modes without a covering scenario: ${uncovered.join(", ")} (evidence: ${evidence})`,
-    );
-  }
-  if (screenshotProblems.length > 0) {
-    throw new Error(
-      `Screenshot evidence is inconsistent: ${screenshotProblems.join(", ")} (evidence: ${evidence})`,
-    );
+    if (failure) throw new Error(`${failure} (evidence: ${evidence})`);
+    if (missing.length > 0) {
+      throw new Error(
+        `E2E scenarios did not report: ${missing.join(", ")} (evidence: ${evidence})`,
+      );
+    }
+    if (scenarioProblems.length > 0) {
+      throw new Error(
+        `E2E scenario outcomes are incomplete or unsuccessful: ${scenarioProblems.join(", ")} (evidence: ${evidence})`,
+      );
+    }
+    if (uncovered.length > 0) {
+      throw new Error(
+        `CONV2 1 import failure modes without a covering scenario: ${uncovered.join(", ")} (evidence: ${evidence})`,
+      );
+    }
+    if (screenshotProblems.length > 0) {
+      throw new Error(
+        `Screenshot evidence is inconsistent: ${screenshotProblems.join(", ")} (evidence: ${evidence})`,
+      );
+    }
+  } finally {
+    for (const dir of profileDirs) cleanupProfile(dir);
   }
 }
 
@@ -503,7 +558,13 @@ if (
     .then(() => {
       const times = parseRepeat(process.argv.slice(2));
       const profile = parseE2eProfile(process.argv.slice(2), process.env);
-      return times > 1 ? runStability(times, main, { profile }) : main();
+      // Ad-hoc and group repeats write per-run evidence; stability reads that path.
+      const fullSuite =
+        e2eOnlySpec(process.env.CONV2_E2E_ONLY) === null &&
+        parseE2eGroups(process.argv.slice(2), process.env).length === 0;
+      return times > 1
+        ? runStability(times, main, { profile, fullSuite })
+        : main();
     })
     .catch((error) => {
       console.error(error instanceof Error ? error.message : String(error));

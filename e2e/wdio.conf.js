@@ -8,9 +8,12 @@ if (!binary) {
 }
 
 // Embedded WebDriver port. Passed to @wdio/tauri-service explicitly so the
-// waits below poll the port the service launches the app on.
+// waits below poll the port the service launches the app on. The gate sets
+// TAURI_WEBDRIVER_PORT to a verified-free port per pass; the fallback is only
+// for a hand-run `wdio` and differs from the service default (4445), which a
+// sister Tauri app may be using.
 const WEBDRIVER_PORT =
-  Number.parseInt(process.env.TAURI_WEBDRIVER_PORT ?? "", 10) || 4445;
+  Number.parseInt(process.env.TAURI_WEBDRIVER_PORT ?? "", 10) || 4465;
 // Bounds for the two waits that guard each spec's session start.
 const SESSION_WAIT_TIMEOUT_MS = 30_000;
 const SESSION_WAIT_POLL_MS = 250;

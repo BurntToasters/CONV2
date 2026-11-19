@@ -133,6 +133,8 @@ fn append_line(level: &str, line: &str) {
         options.mode(0o600);
     }
     if let Ok(mut file) = options.open(&path) {
+        // Home-directory prefixes stay out of the on-disk log, as in v1.
+        let line = crate::validation::redact_paths(line);
         let _ = writeln!(
             file,
             "{} [{level}] {line}",

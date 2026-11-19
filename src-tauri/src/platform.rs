@@ -26,6 +26,23 @@ const VIDEO_EXTENSIONS: &[&str] = &[
     "mp4", "mkv", "avi", "mov", "wmv", "flv", "webm", "m4v", "mpeg", "mpg", "3gp",
 ];
 
+/// rfd's gtk3 backend (the plugin default) adds case-sensitive `*.ext` globs,
+/// which hide camera `.MP4`/`.MOV` files, so Linux also lists uppercase forms.
+/// Its "All Files" `*` becomes `*.*`, which still hides extensionless files;
+/// the glob is fixed as `*.{ext}`, so no extension value can express `*`.
+fn filter_extensions(extensions: &[&str]) -> Vec<String> {
+    let mut list: Vec<String> = extensions.iter().map(|ext| (*ext).to_string()).collect();
+    if cfg!(target_os = "linux") {
+        list.extend(
+            extensions
+                .iter()
+                .filter(|ext| **ext != "*")
+                .map(|ext| ext.to_uppercase()),
+        );
+    }
+    list
+}
+
 /// `msstore` builds are produced with `CONV2_DISTRIBUTION_CHANNEL=msstore`
 /// and never use the in-app updater. Baked value first, then the runtime
 /// override for unpackaged dev and E2E runs, then the Store install path.
@@ -154,10 +171,12 @@ pub async fn select_output_directory(app: tauri::AppHandle) -> IpcResult<Option<
 
 /// Blocking multi-select video picker: v1's dialog filters. Empty on cancel.
 pub fn pick_video_files(app: &tauri::AppHandle) -> Vec<String> {
+    let video = filter_extensions(VIDEO_EXTENSIONS);
+    let video: Vec<&str> = video.iter().map(String::as_str).collect();
     let mut dialog = app
         .dialog()
         .file()
-        .add_filter("Video Files", VIDEO_EXTENSIONS)
+        .add_filter("Video Files", &video)
         .add_filter("All Files", &["*"]);
     if let Some(window) = crate::app_state::main_window() {
         dialog = dialog.set_parent(&window);

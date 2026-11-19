@@ -20,9 +20,13 @@ use crate::types::{
 };
 use crate::validation;
 use crate::video_pipeline;
+mod staging;
+
+use staging::StagedOutput;
+use std::collections::HashSet;
 use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
 
@@ -53,6 +57,13 @@ static STATE: Mutex<QueueState> = Mutex::new(QueueState {
     child: None,
 });
 static IDLE: Condvar = Condvar::new();
+/// Latest snapshot of the running batch, for renderer rehydration.
+static LAST_SNAPSHOT: Mutex<Option<QueueSnapshot>> = Mutex::new(None);
+/// FFmpeg silent (no stdout/stderr) this long is treated as hung.
+const STALL_TIMEOUT: Duration = Duration::from_secs(600);
+const STALL_MESSAGE: &str = "FFmpeg stopped responding (no output for 10 minutes) and was stopped.";
+/// Bound on waiting for the output readers once the child is gone.
+const READER_JOIN_TIMEOUT: Duration = Duration::from_secs(2);
 /// Lock-free mirror of `state.cancelled` for probes and reader threads.
 static CANCELLED: AtomicBool = AtomicBool::new(false);
 
@@ -109,11 +120,19 @@ fn is_cancelled(run: u64) -> bool {
 pub fn cancel(force: bool) {
     CANCELLED.store(true, Ordering::SeqCst);
     media_info::cancel_conversion_probe();
-    let child = {
+    let (child, probes) = {
         let mut state = lock_state();
         state.cancelled = true;
-        state.child.clone()
+        // Flag under the lock so a finishing batch's reset cannot be
+        // overtaken; kills run after it is released.
+        let probes = if state.active {
+            gpu::begin_cancel_probes()
+        } else {
+            Vec::new()
+        };
+        (state.child.clone(), probes)
     };
+    gpu::kill_probes(probes);
     if let Some(child) = child {
         if force {
             process_util::kill_tree(&child);
@@ -165,10 +184,14 @@ impl Drop for RunGuard {
                 state.active = false;
                 state.cancelled = false;
                 state.child = None;
+                gpu::reset_probe_cancel();
+                *last_snapshot() = None;
             }
         }
         CANCELLED.store(false, Ordering::SeqCst);
         IDLE.notify_all();
+        // After release: removal retries sleep, and no lock may be held.
+        staging::retry_pending_removals();
     }
 }
 
@@ -275,6 +298,7 @@ fn validate_and_claim(payload: &StartConversionQueuePayload) -> Validation {
     state.cancelled = false;
     state.child = None;
     CANCELLED.store(false, Ordering::SeqCst);
+    gpu::reset_probe_cancel();
     Validation::Run(QueueRequest {
         input_paths,
         preset,
@@ -328,9 +352,28 @@ pub fn cancel_conversion(force: Option<FalliblePayload<bool>>) -> IpcResult<()> 
     ipc::ok(())
 }
 
+/// The running batch's latest snapshot (None when idle), so a reloaded
+/// renderer can rehydrate.
+#[tauri::command(async)]
+pub fn get_queue_snapshot() -> IpcResult<Option<QueueSnapshot>> {
+    ipc::ok(last_snapshot().clone())
+}
+
 // ---------------------------------------------------------------------------
 // Queue runner (v1 runConversionQueue).
 // ---------------------------------------------------------------------------
+
+fn last_snapshot() -> std::sync::MutexGuard<'static, Option<QueueSnapshot>> {
+    LAST_SNAPSHOT
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+/// Remember the batch snapshot (for `get_queue_snapshot`), then broadcast it.
+fn publish_snapshot(snapshot: QueueSnapshot) {
+    *last_snapshot() = Some(snapshot.clone());
+    app_state::emit("conversion-queue-updated", snapshot);
+}
 
 fn snapshot_of(preset_id: &str, items: &[QueueItemSnapshot]) -> QueueSnapshot {
     QueueSnapshot {
@@ -384,13 +427,11 @@ fn run_queue(run: u64, request: QueueRequest) -> QueueSnapshot {
         .remove_spaces_from_filenames
         .unwrap_or(settings.remove_spaces_from_filenames);
 
-    app_state::emit(
-        "conversion-queue-updated",
-        snapshot_of(&request.preset_id, &items),
-    );
+    publish_snapshot(snapshot_of(&request.preset_id, &items));
     os_integration::set_queue_scope(None);
     os_integration::conversion_activity_started(&settings);
 
+    let swept = Arc::new(Mutex::new(HashSet::new()));
     let mut gpu = request.gpu;
     for index in 0..items.len() {
         if is_cancelled(run) {
@@ -399,17 +440,11 @@ fn run_queue(run: u64, request: QueueRequest) -> QueueSnapshot {
                     item.status = QueueItemStatus::Cancelled;
                 }
             }
-            app_state::emit(
-                "conversion-queue-updated",
-                snapshot_of(&request.preset_id, &items),
-            );
+            publish_snapshot(snapshot_of(&request.preset_id, &items));
             break;
         }
         items[index].status = QueueItemStatus::Running;
-        app_state::emit(
-            "conversion-queue-updated",
-            snapshot_of(&request.preset_id, &items),
-        );
+        publish_snapshot(snapshot_of(&request.preset_id, &items));
         os_integration::set_queue_scope(Some(os_integration::ProgressScope {
             file_index: index,
             file_count: items.len(),
@@ -429,6 +464,7 @@ fn run_queue(run: u64, request: QueueRequest) -> QueueSnapshot {
             remove_spaces,
             output_directory: request.output_directory.clone(),
             show_debug,
+            swept: Arc::clone(&swept),
         };
         let mut outcome = convert_one(run, request.preset, &items[index].input_path, gpu, &options);
         let mut used_cpu_fallback = false;
@@ -475,10 +511,7 @@ fn run_queue(run: u64, request: QueueRequest) -> QueueSnapshot {
             for item in items.iter_mut().skip(index + 1) {
                 item.status = QueueItemStatus::Cancelled;
             }
-            app_state::emit(
-                "conversion-queue-updated",
-                snapshot_of(&request.preset_id, &items),
-            );
+            publish_snapshot(snapshot_of(&request.preset_id, &items));
             break;
         } else {
             items[index].status = QueueItemStatus::Failed;
@@ -486,18 +519,15 @@ fn run_queue(run: u64, request: QueueRequest) -> QueueSnapshot {
             items[index].error_detail = outcome.error_detail.clone();
             items[index].used_cpu_fallback = used_cpu_fallback.then_some(true);
         }
-        app_state::emit(
-            "conversion-queue-updated",
-            snapshot_of(&request.preset_id, &items),
-        );
+        publish_snapshot(snapshot_of(&request.preset_id, &items));
     }
 
     let mut final_snapshot = snapshot_of(&request.preset_id, &items);
     final_snapshot.active = false;
-    app_state::emit("conversion-queue-updated", final_snapshot.clone());
+    publish_snapshot(final_snapshot.clone());
     os_integration::set_queue_scope(None);
     let summary = os_integration::summarize_queue(final_snapshot.total, &items);
-    os_integration::notify_conversion_complete(&summary, &settings);
+    os_integration::notify_conversion_complete(&summary, &items);
     final_snapshot
 }
 
@@ -511,6 +541,28 @@ struct ConvertOptions {
     remove_spaces: bool,
     output_directory: Option<String>,
     show_debug: bool,
+    /// Output folders already swept for stale stage dirs in this batch.
+    swept: Arc<Mutex<HashSet<PathBuf>>>,
+}
+
+impl ConvertOptions {
+    fn sweep_once(&self, dir: &Path) {
+        let first = self
+            .swept
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .insert(dir.to_path_buf());
+        if first {
+            staging::sweep_stale(dir);
+        }
+    }
+}
+
+/// Where a finished conversion is published; the name is picked at publish.
+struct OutputTarget {
+    dir: PathBuf,
+    base: String,
+    extension: &'static str,
 }
 
 #[derive(Clone, Copy)]
@@ -555,88 +607,6 @@ impl Outcome {
     }
 }
 
-fn remove_output(path: &Path) {
-    match std::fs::remove_file(path) {
-        Ok(()) => {}
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-        Err(error) => {
-            crate::logging::warn(&format!("Failed to delete {}: {error}", path.display()))
-        }
-    }
-}
-
-/// A private staging area for one FFmpeg attempt. FFmpeg writes here only;
-/// the reserved public leaf is replaced atomically after a verified success.
-struct StagedOutput {
-    dir: PathBuf,
-    file: PathBuf,
-}
-
-impl StagedOutput {
-    fn create(output_path: &Path) -> Result<Self, String> {
-        let Some(parent) = output_path.parent() else {
-            return Err(format!(
-                "Could not stage output next to {}: no parent directory",
-                output_path.display()
-            ));
-        };
-        let Some(name) = output_path.file_name() else {
-            return Err(format!(
-                "Could not stage output for {}: no file name",
-                output_path.display()
-            ));
-        };
-        static SEQUENCE: AtomicU64 = AtomicU64::new(0);
-        for _ in 0..64 {
-            let sequence = SEQUENCE.fetch_add(1, Ordering::Relaxed);
-            let dir = parent.join(format!(".conv2-stage-{}-{sequence}", std::process::id()));
-            match create_private_dir(&dir) {
-                Ok(()) => {
-                    return Ok(Self {
-                        file: dir.join(Path::new(name)),
-                        dir,
-                    })
-                }
-                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
-                Err(error) => {
-                    return Err(format!(
-                        "Could not create staging directory {}: {error}",
-                        dir.display()
-                    ))
-                }
-            }
-        }
-        Err(format!(
-            "Could not create a staging directory next to {}",
-            output_path.display()
-        ))
-    }
-
-    fn path(&self) -> &Path {
-        &self.file
-    }
-
-    /// Verify the staged result, then replace the reserved leaf atomically.
-    fn promote(self, output_path: &Path) -> Result<(), String> {
-        let metadata = std::fs::symlink_metadata(&self.file).map_err(|error| {
-            format!(
-                "Could not verify staged output {}: {error}",
-                self.file.display()
-            )
-        })?;
-        if !metadata.file_type().is_file() || metadata.len() == 0 {
-            return Err("FFmpeg reported success but produced no output file.".to_string());
-        }
-        replace_output_leaf(&self.file, output_path)
-    }
-}
-
-impl Drop for StagedOutput {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.dir);
-    }
-}
-
 /// Replace only the argv output operand with the staged path, preserving the
 /// output extension/format.
 fn replace_output_operand(args: &[String], staged: &Path) -> Option<Vec<String>> {
@@ -649,68 +619,7 @@ fn replace_output_operand(args: &[String], staged: &Path) -> Option<Vec<String>>
     Some(next)
 }
 
-fn create_private_dir(path: &Path) -> std::io::Result<()> {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::DirBuilderExt;
-        std::fs::DirBuilder::new().mode(0o700).create(path)
-    }
-    #[cfg(not(unix))]
-    {
-        std::fs::create_dir(path)
-    }
-}
-
-/// Replace the leaf entry itself, never a symlink or hardlink target. Unix
-/// rename replaces the entry atomically; Windows refuses an existing
-/// destination, so unlink the occupant and retry once, failing safely if
-/// another entry appears.
-fn replace_output_leaf(staged: &Path, output_path: &Path) -> Result<(), String> {
-    match std::fs::rename(staged, output_path) {
-        Ok(()) => return Ok(()),
-        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
-        Err(error) => {
-            return Err(format!(
-                "Could not finalize output {}: {error}",
-                output_path.display()
-            ))
-        }
-    }
-    match std::fs::remove_file(output_path) {
-        Ok(()) => {}
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-        Err(error) => {
-            return Err(format!(
-                "Could not replace output {}: {error}",
-                output_path.display()
-            ))
-        }
-    }
-    match std::fs::rename(staged, output_path) {
-        Ok(()) => Ok(()),
-        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => Err(format!(
-            "Output path was replaced before FFmpeg finished: {}",
-            output_path.display()
-        )),
-        Err(error) => Err(format!(
-            "Could not finalize output {}: {error}",
-            output_path.display()
-        )),
-    }
-}
-
-fn cancelled_outcome(output_path: &Path) -> Outcome {
-    remove_output(output_path);
-    Outcome {
-        success: false,
-        output_path: output_path.to_string_lossy().into_owned(),
-        error: Some(os_integration::CANCELLED_MESSAGE.to_string()),
-        error_detail: None,
-        retry_with_cpu_suggested: false,
-    }
-}
-
-fn cancelled_before_claim() -> Outcome {
+fn cancelled_outcome() -> Outcome {
     Outcome {
         success: false,
         output_path: String::new(),
@@ -759,13 +668,13 @@ fn convert_one(
     };
 
     if is_cancelled(run) {
-        return cancelled_before_claim();
+        return cancelled_outcome();
     }
     if let Some(codec) = codec {
         if effective_gpu != GpuVendor::Cpu {
             let support = gpu::check_encoder_support(effective_gpu, codec, &CANCELLED);
             if is_cancelled(run) {
-                return cancelled_before_claim();
+                return cancelled_outcome();
             }
             if !support.available {
                 if let Some(error) = support.error {
@@ -816,29 +725,27 @@ fn convert_one(
             output_dir.display()
         ));
     }
-    let output_path = match ffmpeg_args::resolve_unique_output_path(
-        &output_dir,
-        &output_base_name,
-        preset.extension,
-    ) {
-        Ok(path) => path,
-        Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => {
-            return Outcome::failed(format!(
-                "Output directory is not writable: {}",
-                output_dir.display()
-            ))
-        }
-        Err(error) => return Outcome::failed(error.to_string()),
+    options.sweep_once(&output_dir);
+    let target = OutputTarget {
+        dir: output_dir,
+        base: output_base_name,
+        extension: preset.extension,
     };
+    // Argv placeholder only: the spawn swaps it for the staged path.
+    let output_path = target.dir.join(ffmpeg_args::output_file_name(
+        &target.base,
+        0,
+        target.extension,
+    ));
 
     let mut total_duration = 0.0;
     let mut video_info = None;
-    match media_info::probe_for_conversion(&input) {
+    match media_info::probe_for_conversion(&input, &|| is_cancelled(run)) {
         Ok(info) => {
             total_duration = info.duration;
             video_info = Some(info);
         }
-        Err(media_info::ProbeError::Cancelled) => return cancelled_outcome(&output_path),
+        Err(media_info::ProbeError::Cancelled) => return cancelled_outcome(),
         Err(media_info::ProbeError::Failed) => {}
     }
     if video_info
@@ -846,12 +753,10 @@ fn convert_one(
         .is_some_and(|info| info.has_video == Some(false))
         && ffmpeg_args::is_video_output_category(preset.category)
     {
-        remove_output(&output_path);
         return Outcome::failed(ffmpeg_failure::NO_VIDEO_MESSAGE);
     }
     if preset.category == "remux" {
         let Some(info) = video_info.as_ref() else {
-            remove_output(&output_path);
             return Outcome::failed(
                 "Could not read input media for remux. The file may be unreadable or corrupt.",
             );
@@ -861,20 +766,19 @@ fn convert_one(
             preset.extension,
             info.audio_codec.as_deref(),
         ) {
-            remove_output(&output_path);
             return Outcome::failed(reason);
         }
     }
     if total_duration <= 0.0 {
-        match media_info::probe_duration_for_conversion(&input) {
+        match media_info::probe_duration_for_conversion(&input, &|| is_cancelled(run)) {
             Ok(duration) => total_duration = duration,
-            Err(media_info::ProbeError::Cancelled) => return cancelled_outcome(&output_path),
+            Err(media_info::ProbeError::Cancelled) => return cancelled_outcome(),
             Err(media_info::ProbeError::Failed) => {
                 crate::logging::warn("Could not get video duration, progress may be inaccurate");
             }
         }
     }
-    warn_when_disk_space_is_low(&input, &output_dir, &reporter);
+    warn_when_disk_space_is_low(&input, &target.dir, &reporter);
 
     let is_video_preset = codec.is_some();
     let mut active_gpu = effective_gpu;
@@ -902,7 +806,7 @@ fn convert_one(
         Vec::new()
     };
     if is_cancelled(run) {
-        return cancelled_outcome(&output_path);
+        return cancelled_outcome();
     }
 
     let streams = video_info.as_ref().map(|info| SourceStreamInfo {
@@ -927,7 +831,6 @@ fn convert_one(
         input_codec.as_deref(),
     );
     let Some(guarded) = ffmpeg_args::with_input_protocol_args(&preset_args, &input) else {
-        remove_output(&output_path);
         return Outcome::failed("Internal error: preset has no input.");
     };
     preset_args = guarded;
@@ -991,7 +894,7 @@ fn convert_one(
         run,
         &preset_args,
         active_decode_args,
-        &output_path,
+        &target,
         total_duration,
         &reporter,
     );
@@ -1001,7 +904,12 @@ fn convert_one(
         && effective_gpu != GpuVendor::Cpu
     {
         if let Some(codec) = codec {
-            let stderr = outcome.error_detail.as_deref().unwrap_or("");
+            // v1: errorDetail ?? error, so message-only failures classify too.
+            let stderr = outcome
+                .error_detail
+                .as_deref()
+                .or(outcome.error.as_deref())
+                .unwrap_or("");
             if let Some(error) = gpu::parse_gpu_error(stderr, effective_gpu, Some(codec)) {
                 outcome.retry_with_cpu_suggested = error.can_retry_with_cpu;
                 if !options.suppress_gpu_error_event {
@@ -1060,11 +968,28 @@ fn maybe_trash_original(
 // FFmpeg attempts, stderr capture, and progress throttling.
 // ---------------------------------------------------------------------------
 
+/// A finished attempt as an outcome, or None when it needs the exit-code path.
+fn settle(attempt: &Attempt) -> Option<Outcome> {
+    if attempt.cancelled {
+        return Some(cancelled_outcome());
+    }
+    if let Some(message) = &attempt.failure_message {
+        return Some(Outcome::failed(message.clone()));
+    }
+    attempt.published.as_ref().map(|path| Outcome {
+        success: true,
+        output_path: path.to_string_lossy().into_owned(),
+        error: None,
+        error_detail: None,
+        retry_with_cpu_suggested: false,
+    })
+}
+
 fn run_attempts(
     run: u64,
     preset_args: &[String],
     decode_args: Vec<String>,
-    output_path: &Path,
+    target: &OutputTarget,
     total_duration: f64,
     reporter: &Reporter,
 ) -> Outcome {
@@ -1077,70 +1002,28 @@ fn run_attempts(
         args
     };
     reporter.log(&format!("Running command: ffmpeg {}\n", args.join(" ")));
-    let mut attempt = run_ffmpeg(run, &args, output_path, total_duration, reporter);
-    if attempt.cancelled {
-        remove_output(output_path);
-        return cancelled_outcome(output_path);
+    let mut attempt = run_ffmpeg(run, &args, target, total_duration, reporter);
+    if let Some(outcome) = settle(&attempt) {
+        return outcome;
     }
-    if let Some(message) = attempt.failure_message {
-        remove_output(output_path);
-        return Outcome {
-            success: false,
-            output_path: output_path.to_string_lossy().into_owned(),
-            error: Some(message),
-            error_detail: None,
-            retry_with_cpu_suggested: false,
-        };
-    }
-    if attempt.code == Some(0) {
-        return Outcome {
-            success: true,
-            output_path: output_path.to_string_lossy().into_owned(),
-            error: None,
-            error_detail: None,
-            retry_with_cpu_suggested: false,
-        };
-    }
-    // Keep the public leaf reserved across the software-decode retry; the next
-    // attempt stages privately and promotes over our own claim.
+    // Each attempt stages privately; nothing is published until one succeeds.
     if !decode_args.is_empty() && ffmpeg_failure::should_retry_with_software_decode(&attempt.stderr)
     {
         reporter.log("Hardware decode failed; retrying with software decode.\n");
         attempt = run_ffmpeg(
             run,
             &args_without_decode(&args, decode_args.len()),
-            output_path,
+            target,
             total_duration,
             reporter,
         );
-        if attempt.cancelled {
-            remove_output(output_path);
-            return cancelled_outcome(output_path);
-        }
-        if let Some(message) = attempt.failure_message {
-            remove_output(output_path);
-            return Outcome {
-                success: false,
-                output_path: output_path.to_string_lossy().into_owned(),
-                error: Some(message),
-                error_detail: None,
-                retry_with_cpu_suggested: false,
-            };
-        }
-        if attempt.code == Some(0) {
-            return Outcome {
-                success: true,
-                output_path: output_path.to_string_lossy().into_owned(),
-                error: None,
-                error_detail: None,
-                retry_with_cpu_suggested: false,
-            };
+        if let Some(outcome) = settle(&attempt) {
+            return outcome;
         }
     }
-    remove_output(output_path);
     Outcome {
         success: false,
-        output_path: output_path.to_string_lossy().into_owned(),
+        output_path: String::new(),
         error: Some(ffmpeg_failure::describe(Some(&attempt.stderr))),
         error_detail: Some(ffmpeg_failure::detail(Some(&attempt.stderr))),
         retry_with_cpu_suggested: false,
@@ -1157,10 +1040,31 @@ fn args_without_decode(args: &[String], decode_len: usize) -> Vec<String> {
 }
 
 struct Attempt {
-    code: Option<i32>,
     cancelled: bool,
     failure_message: Option<String>,
+    /// The published output; set only after FFmpeg exited 0 and publishing worked.
+    published: Option<PathBuf>,
     stderr: String,
+}
+
+impl Attempt {
+    fn cancelled() -> Self {
+        Self {
+            cancelled: true,
+            failure_message: None,
+            published: None,
+            stderr: String::new(),
+        }
+    }
+
+    fn failed(message: String) -> Self {
+        Self {
+            cancelled: false,
+            failure_message: Some(message),
+            published: None,
+            stderr: String::new(),
+        }
+    }
 }
 
 struct ProgressGate {
@@ -1213,6 +1117,8 @@ struct AttemptShared {
     reporter: Reporter,
     stderr: Mutex<String>,
     gate: Mutex<ProgressGate>,
+    /// Last time FFmpeg wrote to stdout or stderr, for stall detection.
+    last_output: Mutex<Instant>,
 }
 
 impl AttemptShared {
@@ -1222,7 +1128,21 @@ impl AttemptShared {
             reporter,
             stderr: Mutex::new(String::new()),
             gate: Mutex::new(ProgressGate::new()),
+            last_output: Mutex::new(Instant::now()),
         }
+    }
+
+    fn touch(&self) {
+        if let Ok(mut at) = self.last_output.lock() {
+            *at = Instant::now();
+        }
+    }
+
+    fn silent_for(&self) -> Duration {
+        self.last_output
+            .lock()
+            .map(|at| at.elapsed())
+            .unwrap_or_default()
     }
 
     fn offer(&self, progress: ConversionProgress) {
@@ -1278,6 +1198,7 @@ fn pump_stdout(mut stream: std::process::ChildStdout, shared: Arc<AttemptShared>
         match stream.read(&mut chunk) {
             Ok(0) | Err(_) => break,
             Ok(read) => {
+                shared.touch();
                 let text = String::from_utf8_lossy(&chunk[..read]).into_owned();
                 shared.reporter.log(&text);
                 for line in text.lines() {
@@ -1305,6 +1226,7 @@ fn pump_stderr(mut stream: std::process::ChildStderr, shared: Arc<AttemptShared>
         match stream.read(&mut chunk) {
             Ok(0) | Err(_) => break,
             Ok(read) => {
+                shared.touch();
                 let text = String::from_utf8_lossy(&chunk[..read]).into_owned();
                 shared.reporter.log(&text);
                 shared.append_stderr(&text);
@@ -1320,86 +1242,67 @@ fn pump_stderr(mut stream: std::process::ChildStderr, shared: Arc<AttemptShared>
     }
 }
 
+/// Spawns a reader that signals on `done` when its pipe ends, so the caller
+/// can wait with a bound instead of joining a thread that may never finish.
+fn spawn_reader(work: impl FnOnce() + Send + 'static) -> std::sync::mpsc::Receiver<()> {
+    let (sender, receiver) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        work();
+        let _ = sender.send(());
+    });
+    receiver
+}
+
+/// True when every reader finished within the shared deadline.
+fn wait_for_readers(readers: Vec<std::sync::mpsc::Receiver<()>>) -> bool {
+    let deadline = Instant::now() + READER_JOIN_TIMEOUT;
+    readers.into_iter().all(|reader| {
+        matches!(
+            reader.recv_timeout(deadline.saturating_duration_since(Instant::now())),
+            Ok(()) | Err(std::sync::mpsc::RecvTimeoutError::Disconnected)
+        )
+    })
+}
+
 fn run_ffmpeg(
     run: u64,
     args: &[String],
-    output_path: &Path,
+    target: &OutputTarget,
     total_duration: f64,
     reporter: &Reporter,
 ) -> Attempt {
     if is_cancelled(run) {
-        return Attempt {
-            code: None,
-            cancelled: true,
-            failure_message: None,
-            stderr: String::new(),
-        };
+        return Attempt::cancelled();
     }
     let status = ffmpeg_status::current_status();
     if !status.ok {
-        return Attempt {
-            code: None,
-            cancelled: false,
-            failure_message: Some(ffmpeg_unavailable_message(&status)),
-            stderr: String::new(),
-        };
+        return Attempt::failed(ffmpeg_unavailable_message(&status));
     }
     let Some(tools) = ffmpeg_status::effective_tools() else {
         let status = ffmpeg_status::current_status();
-        return Attempt {
-            code: None,
-            cancelled: false,
-            failure_message: Some(ffmpeg_unavailable_message(&status)),
-            stderr: String::new(),
-        };
+        return Attempt::failed(ffmpeg_unavailable_message(&status));
     };
     if is_cancelled(run) {
-        return Attempt {
-            code: None,
-            cancelled: true,
-            failure_message: None,
-            stderr: String::new(),
-        };
+        return Attempt::cancelled();
     }
-    // FFmpeg writes only into a private staging directory; the reserved public
-    // leaf is replaced atomically after a verified success.
-    let stage = match StagedOutput::create(output_path) {
+    // FFmpeg writes only into a private staging directory; the result is
+    // installed under a free public name after a verified success.
+    let stage = match StagedOutput::create(&target.dir, target.extension) {
         Ok(stage) => stage,
         Err(message) => {
             crate::logging::warn(&message);
-            remove_output(output_path);
-            return Attempt {
-                code: None,
-                cancelled: false,
-                failure_message: Some(message),
-                stderr: String::new(),
-            };
+            return Attempt::failed(message);
         }
     };
-    let staged_args = match replace_output_operand(args, stage.path()) {
-        Some(args) => args,
-        None => {
-            remove_output(output_path);
-            return Attempt {
-                code: None,
-                cancelled: false,
-                failure_message: Some("Internal error: preset has no output.".to_string()),
-                stderr: String::new(),
-            };
-        }
+    let Some(staged_args) = replace_output_operand(args, stage.path()) else {
+        return Attempt::failed("Internal error: preset has no output.".to_string());
     };
     let mut command = process_util::command(&tools.ffmpeg, &staged_args, &[], true);
     let child = match process_util::spawn(&mut command) {
         Ok(child) => child,
         Err(error) => {
             crate::logging::warn(&format!("Failed to start FFmpeg: {error}"));
-            remove_output(output_path);
-            return Attempt {
-                code: None,
-                cancelled: false,
-                failure_message: Some(format!("Could not start FFmpeg: {error}")),
-                stderr: String::new(),
-            };
+            return Attempt::failed(format!("Could not start FFmpeg: {error}"));
         }
     };
     {
@@ -1407,27 +1310,25 @@ fn run_ffmpeg(
         if state.run != run || state.cancelled {
             drop(state);
             process_util::kill_tree(&child);
-            return Attempt {
-                code: None,
-                cancelled: true,
-                failure_message: None,
-                stderr: String::new(),
-            };
+            return Attempt::cancelled();
         }
         state.child = Some(Arc::clone(&child));
     }
 
     let shared = Arc::new(AttemptShared::new(total_duration, *reporter));
-    let stdout_reader = child.take_stdout().map(|stream| {
+    let mut readers = Vec::new();
+    if let Some(stream) = child.take_stdout() {
         let shared = Arc::clone(&shared);
-        std::thread::spawn(move || pump_stdout(stream, shared))
-    });
-    let stderr_reader = child.take_stderr().map(|stream| {
+        readers.push(spawn_reader(move || pump_stdout(stream, shared)));
+    }
+    if let Some(stream) = child.take_stderr() {
         let shared = Arc::clone(&shared);
-        std::thread::spawn(move || pump_stderr(stream, shared))
-    });
+        readers.push(spawn_reader(move || pump_stderr(stream, shared)));
+    }
 
     let mut cancelled = false;
+    let mut stalled = false;
+    let mut wait_failed = false;
     let exit = loop {
         if !cancelled && is_cancelled(run) {
             cancelled = true;
@@ -1435,18 +1336,25 @@ fn run_ffmpeg(
         }
         match child.wait_timeout(Duration::from_millis(50)) {
             Ok(Some(status)) => break Some(status),
-            Ok(None) => shared.flush_due(),
+            Ok(None) => {
+                shared.flush_due();
+                // `-progress` reports about twice a second, so silence is a hang.
+                if !cancelled && !stalled && shared.silent_for() >= STALL_TIMEOUT {
+                    stalled = true;
+                    crate::logging::warn("FFmpeg produced no output for 10 minutes; stopping it.");
+                    process_util::terminate_tree(&child);
+                }
+            }
             Err(error) => {
                 crate::logging::warn(&format!("FFmpeg wait failed: {error}"));
-                break None;
+                wait_failed = true;
+                process_util::terminate_tree(&child);
+                break child.wait().ok();
             }
         }
     };
-    if let Some(reader) = stdout_reader {
-        let _ = reader.join();
-    }
-    if let Some(reader) = stderr_reader {
-        let _ = reader.join();
+    if !wait_for_readers(readers) {
+        crate::logging::warn("FFmpeg output readers did not finish in time.");
     }
     shared.flush();
     {
@@ -1462,21 +1370,48 @@ fn run_ffmpeg(
     let code = exit.and_then(|status| status.code());
     let cancelled = cancelled || is_cancelled(run);
     let stderr = shared.stderr();
-    if !cancelled && code == Some(0) {
-        if let Err(message) = stage.promote(output_path) {
-            crate::logging::warn(&message);
-            return Attempt {
-                code: None,
-                cancelled: false,
-                failure_message: Some(message),
-                stderr,
-            };
+    if cancelled {
+        return Attempt {
+            cancelled: true,
+            failure_message: None,
+            published: None,
+            stderr,
+        };
+    }
+    let failure_message = if stalled {
+        Some(STALL_MESSAGE.to_string())
+    } else if wait_failed {
+        Some("Lost track of the FFmpeg process, so the conversion was stopped.".to_string())
+    } else {
+        None
+    };
+    if failure_message.is_some() {
+        return Attempt {
+            cancelled: false,
+            failure_message,
+            published: None,
+            stderr,
+        };
+    }
+    let mut published = None;
+    if code == Some(0) {
+        match stage.publish(&target.dir, &target.base, target.extension) {
+            Ok(path) => published = Some(path),
+            Err(message) => {
+                crate::logging::warn(&message);
+                return Attempt {
+                    cancelled: false,
+                    failure_message: Some(message),
+                    published: None,
+                    stderr,
+                };
+            }
         }
     }
     Attempt {
-        code,
-        cancelled,
+        cancelled: false,
         failure_message: None,
+        published,
         stderr,
     }
 }

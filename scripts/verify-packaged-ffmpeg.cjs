@@ -12,6 +12,10 @@
 //  4. The host-matching sidecar fails `-version`; only verified binaries are ever executed.
 //  5. A universal macOS app must match the manifest per arch slice, and every
 //     sidecar must be signed by the app's Team ID.
+//  6. Signing rewrites bytes, so the raw hash no longer matches: a signed NSIS
+//     sidecar matches by its Authenticode-stripped hash (mirrors
+//     ffmpeg_status.rs); a macOS sidecar signed by the app's Team ID is
+//     verified by codesign instead of by hash.
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
@@ -115,6 +119,188 @@ async function sha256Range(filePath, start, length) {
       .on("error", reject)
       .on("end", () => resolve(hash.digest("hex")));
   });
+}
+
+// ─── Authenticode-stripped PE hash (signed Windows sidecars) ───────────────
+// Port of authenticode_stripped_sha256_candidates in ffmpeg_status.rs: hash the
+// PE with the certificate table removed, its Security directory entry zeroed
+// and CheckSum recomputed (or zeroed), for each zero-padding length that
+// signtool may have added before the table. Unsigned, malformed or
+// appended-data files yield no candidates, so the raw hash alone decides.
+
+const PE_HEADER_READ_BYTES = 4096;
+const PE_SECURITY_DIRECTORY_INDEX = 4;
+const PE_DIRECTORY_ENTRY_BYTES = 8;
+const PE_PAD_MAX_BYTES = 7;
+
+function peDataDirectoriesOffset(magic) {
+  if (magic === 0x10b) return 96;
+  if (magic === 0x20b) return 112;
+  return null;
+}
+
+function readAuthenticodeLayout(head, fileSize) {
+  if (head.length < 0x40 || head.readUInt16LE(0) !== 0x5a4d) return null;
+  const peAt = head.readUInt32LE(0x3c);
+  if (peAt + 24 > head.length || head.readUInt32LE(peAt) !== 0x00004550)
+    return null;
+  const optionalAt = peAt + 24;
+  if (optionalAt + 2 > head.length) return null;
+  const dirsOffset = peDataDirectoriesOffset(head.readUInt16LE(optionalAt));
+  if (dirsOffset === null) return null;
+  const dataDirsAt = optionalAt + dirsOffset;
+  const securityEntryAt =
+    dataDirsAt + PE_SECURITY_DIRECTORY_INDEX * PE_DIRECTORY_ENTRY_BYTES;
+  const checksumAt = optionalAt + 64;
+  if (
+    securityEntryAt + PE_DIRECTORY_ENTRY_BYTES > head.length ||
+    checksumAt + 4 > head.length
+  )
+    return null;
+  if (head.readUInt32LE(dataDirsAt - 4) <= PE_SECURITY_DIRECTORY_INDEX)
+    return null;
+  const certOffset = head.readUInt32LE(securityEntryAt);
+  const certSize = head.readUInt32LE(securityEntryAt + 4);
+  const headerEnd = head.readUInt32LE(optionalAt + 60);
+  const patchEnd = Math.max(
+    checksumAt + 4,
+    securityEntryAt + PE_DIRECTORY_ENTRY_BYTES,
+  );
+  if (certOffset === 0 || certSize === 0) return null;
+  if (certOffset <= headerEnd || certOffset < patchEnd) return null;
+  if (certOffset + certSize !== fileSize) return null;
+  return { certOffset, checksumAt, securityEntryAt, patchEnd };
+}
+
+function patchedPeHeader(head, layout, checksum) {
+  const patched = Buffer.from(head.subarray(0, layout.patchEnd));
+  patched.fill(
+    0,
+    layout.securityEntryAt,
+    layout.securityEntryAt + PE_DIRECTORY_ENTRY_BYTES,
+  );
+  patched.writeUInt32LE(checksum >>> 0, layout.checksumAt);
+  return patched;
+}
+
+const foldPeSum = (value) => (value & 0xffff) + (value >>> 16);
+
+/** PE checksum word sum; a trailing odd byte counts as its low byte. */
+class PeWordSum {
+  constructor() {
+    this.sum = 0;
+    this.pendingLow = null;
+  }
+
+  add(chunk) {
+    let index = 0;
+    if (this.pendingLow !== null && chunk.length > 0) {
+      this.sum = foldPeSum(
+        (this.sum + (this.pendingLow | (chunk[0] << 8))) >>> 0,
+      );
+      this.pendingLow = null;
+      index = 1;
+    }
+    while (index + 1 < chunk.length) {
+      this.sum = foldPeSum(
+        (this.sum + (chunk[index] | (chunk[index + 1] << 8))) >>> 0,
+      );
+      index += 2;
+    }
+    if (index < chunk.length) this.pendingLow = chunk[index];
+  }
+
+  folded() {
+    if (this.pendingLow === null) return foldPeSum(this.sum);
+    return foldPeSum(foldPeSum((this.sum + this.pendingLow) >>> 0));
+  }
+}
+
+async function readAt(handle, offset, length) {
+  const buffer = Buffer.alloc(length);
+  let done = 0;
+  while (done < length) {
+    const { bytesRead } = await handle.read(
+      buffer,
+      done,
+      length - done,
+      offset + done,
+    );
+    if (bytesRead === 0) throw new Error("short read while hashing PE file");
+    done += bytesRead;
+  }
+  return buffer;
+}
+
+async function streamRange(handle, start, end, onChunk) {
+  const chunk = Buffer.alloc(1 << 20);
+  for (let position = start; position < end;) {
+    const want = Math.min(chunk.length, end - position);
+    const { bytesRead } = await handle.read(chunk, 0, want, position);
+    if (bytesRead === 0) throw new Error("short read while streaming PE body");
+    onChunk(chunk.subarray(0, bytesRead));
+    position += bytesRead;
+  }
+}
+
+async function authenticodeStrippedSha256Candidates(filePath) {
+  const handle = await fs.promises.open(filePath, "r");
+  try {
+    const { size } = await handle.stat();
+    const head = await readAt(handle, 0, Math.min(size, PE_HEADER_READ_BYTES));
+    const layout = readAuthenticodeLayout(head, size);
+    if (!layout) return [];
+    const tailStart = Math.max(
+      layout.patchEnd,
+      layout.certOffset - PE_PAD_MAX_BYTES,
+    );
+    const tail = await readAt(handle, tailStart, layout.certOffset - tailStart);
+
+    // Pass 1: PE checksum over the stripped content, zero-padded to certOffset.
+    const wordSum = new PeWordSum();
+    wordSum.add(patchedPeHeader(head, layout, 0));
+    await streamRange(handle, layout.patchEnd, tailStart, (chunk) =>
+      wordSum.add(chunk),
+    );
+    wordSum.add(tail);
+    const folded = wordSum.folded();
+
+    // A padding length is a candidate only when its bytes are zero; zero bytes
+    // add nothing to the word sum, so that length's checksum is folded + length.
+    const contents = [];
+    for (let pad = 0; pad <= tail.length; pad += 1) {
+      if (tail.subarray(tail.length - pad).every((byte) => byte === 0)) {
+        const length = layout.certOffset - pad;
+        contents.push([length, 0]);
+        contents.push([length, (folded + length) >>> 0]);
+      }
+    }
+
+    // Pass 2: one header-plus-body hash per distinct CheckSum value.
+    const bases = new Map();
+    for (const [, checksum] of contents) {
+      if (!bases.has(checksum)) {
+        bases.set(
+          checksum,
+          crypto
+            .createHash("sha256")
+            .update(patchedPeHeader(head, layout, checksum)),
+        );
+      }
+    }
+    await streamRange(handle, layout.patchEnd, tailStart, (chunk) => {
+      for (const hash of bases.values()) hash.update(chunk);
+    });
+    const seen = new Set();
+    for (const [length, checksum] of contents) {
+      const hash = bases.get(checksum).copy();
+      hash.update(tail.subarray(0, length - tailStart));
+      seen.add(hash.digest("hex"));
+    }
+    return [...seen].sort();
+  } finally {
+    await handle.close();
+  }
 }
 
 // ─── macOS codesign ────────────────────────────────────────────────────────
@@ -347,7 +533,25 @@ function describeBundle(bundle) {
 
 // ─── Verification ──────────────────────────────────────────────────────────
 
-async function verifySidecar(sidecar, manifest, target, onMac) {
+/**
+ * `hostTeam` is the signing Team ID of the macOS app being verified (null for
+ * other bundles or unsigned apps). Notarization rewrites sidecar bytes, so a
+ * sidecar signed by that same team is verified by its code signature instead
+ * of by hash; a broken signature throws.
+ */
+async function verifySidecar(sidecar, manifest, target, onMac, hostTeam) {
+  if (onMac && hostTeam) {
+    let sidecarTeam = null;
+    try {
+      sidecarTeam = readTeamIdentifier(sidecar.path);
+    } catch {
+      // Unsigned or ad-hoc sidecar: fall back to the hash check below.
+    }
+    if (sidecarTeam === hostTeam) {
+      runCapture("codesign", ["--verify", "--strict", sidecar.path]);
+      return true;
+    }
+  }
   const targetKey = `${target.platform === "darwin" ? "mac" : target.platform === "win32" ? "win" : "linux"}:${target.arches[0]}`;
   const bytes = await sha256File(sidecar.path);
   const expectedSingle = expectedChecksum(manifest, targetKey, sidecar.binary);
@@ -371,6 +575,10 @@ async function verifySidecar(sidecar, manifest, target, onMac) {
       matched += 1;
     }
     return matched === target.arches.length;
+  }
+  if (target.platform === "win32" && expectedSingle) {
+    const candidates = await authenticodeStrippedSha256Candidates(sidecar.path);
+    return candidates.includes(expectedSingle);
   }
   return false;
 }
@@ -446,6 +654,14 @@ async function main() {
         );
       }
       const manifest = readManifest(app.manifestPath);
+      let hostTeam = null;
+      if (app.kind === "mac" && onMac) {
+        try {
+          hostTeam = readTeamIdentifier(app.appPath);
+        } catch {
+          // Unsigned app: sidecars are verified by hash only.
+        }
+      }
       for (const sidecar of app.sidecars) {
         const rel = relative(sidecar.path);
         const entry = { app: appLabel, name: sidecar.binary, path: rel };
@@ -460,6 +676,7 @@ async function main() {
             manifest,
             app.target,
             onMac,
+            hostTeam,
           );
         } catch (error) {
           entry.verified = false;
@@ -528,4 +745,9 @@ if (require.main === module) {
   });
 }
 
-module.exports = { findBundles, findFileByName, targetKeyFor };
+module.exports = {
+  authenticodeStrippedSha256Candidates,
+  findBundles,
+  findFileByName,
+  targetKeyFor,
+};
