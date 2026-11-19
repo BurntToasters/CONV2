@@ -8,6 +8,9 @@
 //! executable; when `useSystemFFmpeg` is set in settings.json, absolute
 //! binaries are pinned from PATH instead. v1's private temp copies and dev
 //! overrides are dropped: the sidecar directory is the only bundled source.
+//! A system lookup that resolves nothing stays missing; a bare `ffmpeg` name
+//! is never spawned, so no OS PATH/CWD search can stand in. `effective_tools`
+//! returns the exact absolute paths whose status `current_status` accepted.
 
 use crate::fs_util::{self, Sha256Stream};
 use crate::ipc::{self, IpcResult, INTERNAL_ERROR};
@@ -87,10 +90,7 @@ pub fn bundled_sidecar_path(name: &str) -> PathBuf {
         .unwrap_or_else(|| PathBuf::from(name))
 }
 
-pub fn bundled_ffmpeg() -> PathBuf {
-    bundled_sidecar_path(FFMPEG_SIDECAR)
-}
-
+#[allow(dead_code)] // Bundled-only helper; probes use `effective_tools`.
 pub fn bundled_ffprobe() -> PathBuf {
     bundled_sidecar_path(FFPROBE_SIDECAR)
 }
@@ -140,8 +140,9 @@ fn use_system_ffmpeg_setting() -> bool {
 #[derive(Clone, Debug)]
 struct BinaryPlan {
     name: BinaryName,
-    /// The path that is executed.
-    effective: PathBuf,
+    /// The absolute path that is executed; None when nothing absolute was
+    /// resolved, so the binary is missing rather than a bare-name lookup.
+    effective: Option<PathBuf>,
     /// The bundled source that is verified; None when using system binaries.
     source: Option<PathBuf>,
 }
@@ -152,26 +153,44 @@ struct StatusPlan {
     binaries: Vec<BinaryPlan>,
 }
 
+impl StatusPlan {
+    /// The accepted executables for `key`; None if either side is unresolved.
+    fn effective_tools(&self, key: &str) -> Option<EffectiveTools> {
+        let path = |name: BinaryName| {
+            self.binaries
+                .iter()
+                .find(|binary| binary.name == name)
+                .and_then(|binary| binary.effective.clone())
+        };
+        Some(EffectiveTools {
+            ffmpeg: path(BinaryName::Ffmpeg)?,
+            ffprobe: path(BinaryName::Ffprobe)?,
+            plan_key: key.to_string(),
+        })
+    }
+}
+
 fn resolve_plan() -> StatusPlan {
     let using_bundled = !use_system_ffmpeg_setting();
     let binaries = [BinaryName::Ffmpeg, BinaryName::Ffprobe]
         .into_iter()
         .map(|name| {
             if using_bundled {
+                // bundled_sidecar_path falls back to a bare name when the
+                // exe directory is unknown; that fallback is not executable.
                 let path = bundled_sidecar_path(name.sidecar());
+                let effective = path.is_absolute().then_some(path);
                 BinaryPlan {
                     name,
-                    effective: path.clone(),
-                    source: Some(path),
+                    effective: effective.clone(),
+                    source: effective,
                 }
             } else {
                 // Pin one absolute binary so later PATH changes cannot swap
-                // it mid-session; a bare name makes the -version run decide.
-                let effective = resolve_from_path(&name.system_name())
-                    .unwrap_or_else(|| PathBuf::from(name.system_name()));
+                // it mid-session; an unresolved lookup stays missing.
                 BinaryPlan {
                     name,
-                    effective,
+                    effective: resolve_from_path(&name.system_name()),
                     source: None,
                 }
             }
@@ -202,7 +221,13 @@ fn file_signature(path: &Path) -> String {
 fn plan_key(plan: &StatusPlan) -> String {
     let mut parts = vec![plan.using_bundled.to_string()];
     for binary in &plan.binaries {
-        parts.push(file_signature(&binary.effective));
+        parts.push(
+            binary
+                .effective
+                .as_deref()
+                .map(file_signature)
+                .unwrap_or_else(|| "unresolved".to_string()),
+        );
         parts.push(
             binary
                 .source
@@ -585,10 +610,9 @@ fn verify_bundled_binary_checksum(
     manifest: Option<&Path>,
     packaged: bool,
 ) -> bool {
-    // A bare name is a PATH lookup in builds without bundled binaries; the
-    // -version run decides.
+    // A bare name is an OS PATH/CWD lookup, never a verified bundled binary.
     if !binary_path.is_absolute() {
-        return true;
+        return false;
     }
     if !binary_path.exists() {
         return false;
@@ -641,11 +665,8 @@ fn verify_bundled_binary_checksum(
 }
 
 fn verify_bundled_binary(binary: &BinaryPlan, manifest: Option<&Path>, packaged: bool) -> bool {
-    if !binary.effective.is_absolute() {
-        return true;
-    }
-    // v2 has no private temp copies, so the bundled source is the only thing
-    // worth hashing (v1 additionally compared a copy against its source).
+    // compute_status already failed Missing when no absolute bundled path
+    // resolved; verification never falls back to the -version spawn.
     let Some(source) = &binary.source else {
         return false;
     };
@@ -700,10 +721,13 @@ fn run_version_check(binary: &Path) -> BinaryRunState {
     }
 }
 
-/// v1's isMissingBinary: v2 drops the `__missing_` marker paths (v1's
-/// packaged fallback), keeping the absolute-bundled-path existence check.
-fn is_missing_binary(plan: &StatusPlan, binary: &BinaryPlan) -> bool {
-    plan.using_bundled && binary.effective.is_absolute() && !binary.effective.exists()
+/// Only an absolute, existing executable counts as present. A bare name would
+/// be an OS PATH/CWD lookup (Windows searches the CWD first), so it is missing.
+fn is_missing_binary(binary: &BinaryPlan) -> bool {
+    match &binary.effective {
+        Some(path) if path.is_absolute() => !path.exists(),
+        _ => true,
+    }
 }
 
 fn fail(plan: &StatusPlan, reason: FFmpegStatusReason) -> FFmpegStatus {
@@ -715,11 +739,7 @@ fn fail(plan: &StatusPlan, reason: FFmpegStatusReason) -> FFmpegStatus {
 }
 
 fn compute_status(plan: &StatusPlan) -> FFmpegStatus {
-    if plan
-        .binaries
-        .iter()
-        .any(|binary| is_missing_binary(plan, binary))
-    {
+    if plan.binaries.iter().any(is_missing_binary) {
         return fail(plan, FFmpegStatusReason::Missing);
     }
     if plan.using_bundled {
@@ -748,12 +768,16 @@ fn compute_status(plan: &StatusPlan) -> FFmpegStatus {
         .iter()
         .map(|binary| {
             let effective = binary.effective.clone();
-            std::thread::spawn(move || run_version_check(&effective))
+            std::thread::spawn(move || match effective {
+                Some(path) => run_version_check(&path),
+                None => BinaryRunState::Missing,
+            })
         })
         .collect();
+    // A panicked probe fails closed as not-runnable rather than being ignored.
     let states: Vec<_> = probes
         .into_iter()
-        .filter_map(|probe| probe.join().ok())
+        .map(|probe| probe.join().unwrap_or(BinaryRunState::NotRunnable))
         .collect();
     if states.contains(&BinaryRunState::Missing) {
         return fail(plan, FFmpegStatusReason::Missing);
@@ -768,9 +792,21 @@ fn compute_status(plan: &StatusPlan) -> FFmpegStatus {
     }
 }
 
+/// The absolute executables a successful check accepted. Spawns and caches
+/// must use these paths, never `bundled_ffmpeg` or a bare name.
+#[derive(Clone, Debug)]
+pub(crate) struct EffectiveTools {
+    pub ffmpeg: PathBuf,
+    pub ffprobe: PathBuf,
+    /// Signature of the plan these paths were verified from; caches key on it.
+    pub plan_key: String,
+}
+
 struct StatusCacheEntry {
     key: String,
     status: FFmpegStatus,
+    /// Present exactly when `status.ok`: the paths that verdict accepted.
+    tools: Option<EffectiveTools>,
     expires_at: Instant,
 }
 
@@ -786,7 +822,7 @@ static STATUS_GATE_CHANGED: Condvar = Condvar::new();
 /// per binary signature for the TTL; concurrent callers share one
 /// verification. The gate is global rather than per-key: a waiter re-checks
 /// the cache after the in-flight computation stores its result.
-pub fn current_status() -> FFmpegStatus {
+fn evaluate_status() -> (FFmpegStatus, Option<EffectiveTools>) {
     let plan = resolve_plan();
     let key = plan_key(&plan);
     let mut guard = STATUS_GATE
@@ -802,7 +838,7 @@ pub fn current_status() -> FFmpegStatus {
             GateState::Idle(cache) => {
                 if let Some(entry) = cache.as_ref() {
                     if entry.key == key && Instant::now() < entry.expires_at {
-                        return entry.status.clone();
+                        return (entry.status.clone(), entry.tools.clone());
                     }
                 }
                 break;
@@ -813,12 +849,19 @@ pub fn current_status() -> FFmpegStatus {
     drop(guard);
 
     // A panic while hashing or spawning must not leave the gate Busy forever.
-    let status = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| compute_status(&plan)))
-        .unwrap_or(FFmpegStatus {
+    let (status, tools) = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let status = compute_status(&plan);
+        let tools = status.ok.then(|| plan.effective_tools(&key)).flatten();
+        (status, tools)
+    }))
+    .unwrap_or((
+        FFmpegStatus {
             ok: false,
             reason: FFmpegStatusReason::NotRunnable,
             using_bundled: plan.using_bundled,
-        });
+        },
+        None,
+    ));
 
     let mut guard = STATUS_GATE
         .lock()
@@ -826,10 +869,23 @@ pub fn current_status() -> FFmpegStatus {
     *guard = GateState::Idle(Some(StatusCacheEntry {
         key,
         status: status.clone(),
+        tools: tools.clone(),
         expires_at: Instant::now() + STATUS_CACHE_TTL,
     }));
     STATUS_GATE_CHANGED.notify_all();
-    status
+    (status, tools)
+}
+
+/// The renderer-facing verdict on the effective FFmpeg.
+pub fn current_status() -> FFmpegStatus {
+    evaluate_status().0
+}
+
+/// The executables whose status `current_status` accepted, from the same plan
+/// resolution. None whenever the status is not ok, including a missing system
+/// tool: callers must fail closed rather than spawn a bare name.
+pub(crate) fn effective_tools() -> Option<EffectiveTools> {
+    evaluate_status().1
 }
 
 /// v1's check-ffmpeg: the renderer-facing verdict on the effective FFmpeg.
@@ -935,7 +991,7 @@ mod tests {
             using_bundled: true,
             binaries: vec![BinaryPlan {
                 name: BinaryName::Ffmpeg,
-                effective: binary.clone(),
+                effective: Some(binary.clone()),
                 source: Some(binary.clone()),
             }],
         };
@@ -946,7 +1002,7 @@ mod tests {
             using_bundled: true,
             binaries: vec![BinaryPlan {
                 name: BinaryName::Ffmpeg,
-                effective: binary.clone(),
+                effective: Some(binary.clone()),
                 source: Some(binary),
             }],
         };
@@ -1214,7 +1270,7 @@ mod tests {
             using_bundled: true,
             binaries: vec![BinaryPlan {
                 name: BinaryName::Ffmpeg,
-                effective: temp_dir("compute").join("absent-ffmpeg"),
+                effective: Some(temp_dir("compute").join("absent-ffmpeg")),
                 source: None,
             }],
         };
@@ -1225,7 +1281,7 @@ mod tests {
             using_bundled: false,
             binaries: vec![BinaryPlan {
                 name: BinaryName::Ffmpeg,
-                effective: PathBuf::from("/usr/bin/true"),
+                effective: Some(PathBuf::from("/usr/bin/true")),
                 source: None,
             }],
         };
@@ -1238,7 +1294,7 @@ mod tests {
             using_bundled: false,
             binaries: vec![BinaryPlan {
                 name: BinaryName::Ffmpeg,
-                effective: PathBuf::from("/usr/bin/false"),
+                effective: Some(PathBuf::from("/usr/bin/false")),
                 source: None,
             }],
         };
@@ -1256,7 +1312,13 @@ mod tests {
         assert_eq!(plan.binaries.len(), 2);
         for binary in &plan.binaries {
             assert_eq!(
-                binary.effective.file_name().unwrap().to_string_lossy(),
+                binary
+                    .effective
+                    .as_ref()
+                    .unwrap()
+                    .file_name()
+                    .unwrap()
+                    .to_string_lossy(),
                 format!("{}{}", binary.name.sidecar(), EXE_SUFFIX)
             );
             assert!(binary.source.is_some());

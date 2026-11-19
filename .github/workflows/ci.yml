@@ -101,7 +101,8 @@ jobs:
       - run: npm ci --ignore-scripts
       - name: Validate the bundled FFmpeg payload
         env:
-          FFMPEG_DL_SERVER: ${{ secrets.FFMPEG_DL_SERVER }}
+          # Contributor code runs on pull_request; only trusted events see it.
+          FFMPEG_DL_SERVER: ${{ github.event_name != 'pull_request' && secrets.FFMPEG_DL_SERVER || '' }}
         run: node scripts/ci-ffmpeg.cjs
       - name: Strict Cargo license notices
         run: npm run licenses:cargo:strict
@@ -153,7 +154,8 @@ jobs:
       - run: npm run test:cov
       - name: Validate the bundled FFmpeg payload
         env:
-          FFMPEG_DL_SERVER: ${{ secrets.FFMPEG_DL_SERVER }}
+          # Contributor code runs on pull_request; only trusted events see it.
+          FFMPEG_DL_SERVER: ${{ github.event_name != 'pull_request' && secrets.FFMPEG_DL_SERVER || '' }}
         run: node scripts/ci-ffmpeg.cjs
       - run: npm run prepare:rust-tests
       - run: cargo clippy --locked --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings

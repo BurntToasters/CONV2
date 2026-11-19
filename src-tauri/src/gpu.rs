@@ -1,10 +1,12 @@
 //! GPU capability probing (v1 gpuCapabilities.ts + gpuEncoders.ts +
 //! hwProbeStore.ts + vaapiDevices.ts + gpuRecommendation.ts): a per-codec
 //! vendor availability matrix for the GPU panel plus the Auto recommendation.
-//! Probes spawn the bundled `conv2-ffmpeg` through process_util, so a
-//! hung probe is tree-killed, and results are cached in memory and in
-//! `<app data>/gpu-probe-cache.json` (7-day TTL, fingerprinted per binary).
+//! Probes spawn the ffmpeg that `ffmpeg_status` accepted through process_util,
+//! so a hung probe is tree-killed, and results are cached in memory and in
+//! `<app data>/gpu-probe-cache.json` (7-day TTL, fingerprinted per effective
+//! binary and status plan key).
 
+use crate::ffmpeg_status::EffectiveTools;
 use crate::fs_util;
 use crate::ipc::{self, FalliblePayload, IpcResult, INTERNAL_ERROR, VALIDATION_ERROR};
 use crate::process_util;
@@ -36,7 +38,8 @@ const AMD_VENDOR_ID: &str = "0x1002";
 // - a probe that hangs: the 8s timeout tree-kills it; timeouts stay
 //   session-only so a transient hang is retried next launch.
 // - a stale cache answering for a new binary: the fingerprint covers
-//   platform, arch, app version, and the binary's size and mtime.
+//   platform, arch, app version, the binary's size and mtime, and the
+//   ffmpeg status plan key.
 // - a listing that fails because the binary is not ok must not be cached as
 //   "absent" (status gate before any probe).
 // - a software MFT answering for Qualcomm hardware: the hardware-only cache
@@ -253,6 +256,24 @@ fn binary_fingerprint(path: &Path, app_version: &str) -> String {
     }
 }
 
+/// Cache identity for the status-accepted ffmpeg: its fingerprint plus the
+/// status plan key, so a cached result never answers for another binary.
+fn ffmpeg_identity(tools: Option<&EffectiveTools>) -> String {
+    match tools {
+        Some(tools) => format!(
+            "{}|{}",
+            binary_fingerprint(&tools.ffmpeg, env!("CARGO_PKG_VERSION")),
+            tools.plan_key
+        ),
+        None => format!(
+            "{}-{}|{}|unresolved",
+            node_platform(),
+            node_arch(),
+            env!("CARGO_PKG_VERSION")
+        ),
+    }
+}
+
 struct HwDiskCache {
     path: PathBuf,
     fingerprint: String,
@@ -344,19 +365,20 @@ impl HwDiskCache {
     }
 }
 
-fn with_disk_cache<R>(operation: impl FnOnce(&mut HwDiskCache) -> R) -> R {
+fn with_disk_cache<R>(identity: &str, operation: impl FnOnce(&mut HwDiskCache) -> R) -> R {
     let mut guard = HW_DISK_CACHE
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
-    if guard.is_none() {
+    // A settings flip or binary swap changes the identity: reload from disk so
+    // the new fingerprint cannot inherit the old binary's positives.
+    if guard
+        .as_ref()
+        .is_none_or(|cache| cache.fingerprint.as_str() != identity)
+    {
         let path = crate::app_state::data_dir().join(HW_CACHE_FILE);
-        let fingerprint = binary_fingerprint(
-            &crate::ffmpeg_status::bundled_ffmpeg(),
-            env!("CARGO_PKG_VERSION"),
-        );
         *guard = Some(HwDiskCache::load(
             path,
-            fingerprint,
+            identity.to_string(),
             crate::app_state::now_ms(),
         ));
     }
@@ -383,17 +405,13 @@ fn parse_encoder_line(line: &str) -> Option<String> {
 
 /// Cached `ffmpeg -encoders` names (v1 getAvailableEncoders). None means the
 /// listing failed and the next call retries; an empty set is cached, exactly
-/// like v1's close handler.
-fn list_encoders(ffmpeg: &Path) -> Option<Arc<BTreeSet<String>>> {
-    let identity = match std::fs::metadata(ffmpeg) {
-        Ok(meta) => format!("{}|{}|{:?}", ffmpeg.display(), meta.len(), meta.modified()),
-        Err(_) => format!("{}|absent", ffmpeg.display()),
-    };
+/// like v1's close handler. `identity` binds the listing to one binary.
+fn list_encoders(ffmpeg: &Path, identity: &str) -> Option<Arc<BTreeSet<String>>> {
     let mut cache = ENCODER_CACHE
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
     if let Some((cached_identity, cached)) = cache.as_ref() {
-        if *cached_identity == identity {
+        if cached_identity.as_str() == identity {
             return Some(Arc::clone(cached));
         }
     }
@@ -407,7 +425,7 @@ fn list_encoders(ffmpeg: &Path) -> Option<Arc<BTreeSet<String>>> {
                 .filter_map(parse_encoder_line)
                 .collect();
             let encoders = Arc::new(encoders);
-            *cache = Some((identity, Arc::clone(&encoders)));
+            *cache = Some((identity.to_string(), Arc::clone(&encoders)));
             Some(encoders)
         }
         Ok(_) => None,
@@ -416,8 +434,10 @@ fn list_encoders(ffmpeg: &Path) -> Option<Arc<BTreeSet<String>>> {
 }
 
 struct ProbeContext {
-    ffmpeg: PathBuf,
-    status_ok: bool,
+    /// The status-accepted ffmpeg; None gates every probe off.
+    tools: Option<EffectiveTools>,
+    /// Cache identity for `tools`; keys every result.
+    identity: String,
     encoders: Arc<BTreeSet<String>>,
 }
 
@@ -427,54 +447,58 @@ struct ProbeContext {
 fn probe_hw_encoder_available(ctx: &ProbeContext, encoder: &str, options: &HwProbeOptions) -> bool {
     // Failure mode: a probe that fails because the binary is not ok must not
     // be cached as "absent".
-    if !ctx.status_ok {
+    let Some(tools) = &ctx.tools else {
         return false;
-    }
+    };
     let key = options
         .cache_key
         .clone()
         .unwrap_or_else(|| encoder.to_string());
+    // Memory results are per binary too: a settings flip must not reuse them.
+    let memory_key = format!("{}|{key}", ctx.identity);
     if let Some(cached) = HW_MEMORY_CACHE
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner())
-        .get(&key)
+        .get(&memory_key)
         .copied()
     {
         return cached;
     }
-    if let Some(stored) = with_disk_cache(|cache| cache.get(&key)) {
+    if let Some(stored) = with_disk_cache(&ctx.identity, |cache| cache.get(&key)) {
         HW_MEMORY_CACHE
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .insert(key.clone(), stored);
+            .insert(memory_key.clone(), stored);
         return stored;
     }
     if !ctx.encoders.contains(encoder) {
         HW_MEMORY_CACHE
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .insert(key, false);
+            .insert(memory_key, false);
         return false;
     }
     let args = build_hw_probe_args(encoder, options, node_platform());
-    let mut command = process_util::command(&ctx.ffmpeg, &args, &[], true);
+    let mut command = process_util::command(&tools.ffmpeg, &args, &[], true);
     match process_util::run_with_timeout(&mut command, HW_PROBE_TIMEOUT, 4096, 4096) {
         Ok(output) if !output.timed_out => {
             let available = output.code == Some(0);
             // Only a real exit code is worth keeping across launches;
             // timeouts may be transient.
-            with_disk_cache(|cache| cache.set(&key, available, crate::app_state::now_ms()));
+            with_disk_cache(&ctx.identity, |cache| {
+                cache.set(&key, available, crate::app_state::now_ms())
+            });
             HW_MEMORY_CACHE
                 .lock()
                 .unwrap_or_else(|poisoned| poisoned.into_inner())
-                .insert(key, available);
+                .insert(memory_key, available);
             available
         }
         Ok(_) => {
             HW_MEMORY_CACHE
                 .lock()
                 .unwrap_or_else(|poisoned| poisoned.into_inner())
-                .insert(key, false);
+                .insert(memory_key, false);
             false
         }
         Err(error) => {
@@ -482,7 +506,7 @@ fn probe_hw_encoder_available(ctx: &ProbeContext, encoder: &str, options: &HwPro
             HW_MEMORY_CACHE
                 .lock()
                 .unwrap_or_else(|poisoned| poisoned.into_inner())
-                .insert(key, false);
+                .insert(memory_key, false);
             false
         }
     }
@@ -494,7 +518,8 @@ fn clear_hw_probe_results() {
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner())
         .clear();
-    with_disk_cache(|cache| cache.clear(crate::app_state::now_ms()));
+    let identity = ffmpeg_identity(crate::ffmpeg_status::effective_tools().as_ref());
+    with_disk_cache(&identity, |cache| cache.clear(crate::app_state::now_ms()));
 }
 
 // ---------------------------------------------------------------------------
@@ -713,23 +738,10 @@ fn build_payload_with(
     }
 }
 
-/// The real payload: status-gated, listing-aware probes over the bundled
-/// sidecar, with both caches.
+/// The real payload: status-gated, listing-aware probes over the accepted
+/// ffmpeg, with both caches.
 fn build_gpu_capabilities_payload(requested_codec: Option<GpuCodec>) -> GPUCapabilitiesPayload {
-    let ffmpeg = crate::ffmpeg_status::bundled_ffmpeg();
-    let status_ok = crate::ffmpeg_status::current_status().ok;
-    let encoders = if status_ok {
-        list_encoders(&ffmpeg).unwrap_or_default()
-    } else {
-        // A listing that fails because the binary is not ok must not be
-        // cached as "absent"; the status gate answers first.
-        Arc::new(BTreeSet::new())
-    };
-    let ctx = Arc::new(ProbeContext {
-        ffmpeg,
-        status_ok,
-        encoders,
-    });
+    let ctx = Arc::new(probe_context());
     let probe: ProbeFn = Arc::new(move |_codec, _vendor, encoder, options| {
         probe_hw_encoder_available(&ctx, encoder, options)
     });
@@ -805,16 +817,17 @@ fn encoder_unavailable(
 }
 
 fn probe_context() -> ProbeContext {
-    let status_ok = crate::ffmpeg_status::current_status().ok;
-    let ffmpeg = crate::ffmpeg_status::bundled_ffmpeg();
-    let encoders = if status_ok {
-        list_encoders(&ffmpeg).unwrap_or_default()
-    } else {
-        Arc::new(BTreeSet::new())
+    let tools = crate::ffmpeg_status::effective_tools();
+    let identity = ffmpeg_identity(tools.as_ref());
+    let encoders = match &tools {
+        Some(tools) => list_encoders(&tools.ffmpeg, &identity).unwrap_or_default(),
+        // A listing that fails because the binary is not ok must not be
+        // cached as "absent"; the status gate answers first.
+        None => Arc::new(BTreeSet::new()),
     };
     ProbeContext {
-        ffmpeg,
-        status_ok,
+        tools,
+        identity,
         encoders,
     }
 }
@@ -917,16 +930,13 @@ pub(crate) fn check_encoder_support(
 
 static DECODER_CACHE: Mutex<Option<(String, Arc<BTreeSet<String>>)>> = Mutex::new(None);
 
-fn list_decoders(ffmpeg: &Path) -> Option<Arc<BTreeSet<String>>> {
-    let identity = match std::fs::metadata(ffmpeg) {
-        Ok(meta) => format!("{}|{}|{:?}", ffmpeg.display(), meta.len(), meta.modified()),
-        Err(_) => format!("{}|absent", ffmpeg.display()),
-    };
+/// Cached `ffmpeg -decoders` names, bound to one binary identity.
+fn list_decoders(ffmpeg: &Path, identity: &str) -> Option<Arc<BTreeSet<String>>> {
     let mut cache = DECODER_CACHE
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
     if let Some((cached_identity, cached)) = cache.as_ref() {
-        if *cached_identity == identity {
+        if cached_identity.as_str() == identity {
             return Some(Arc::clone(cached));
         }
     }
@@ -940,7 +950,7 @@ fn list_decoders(ffmpeg: &Path) -> Option<Arc<BTreeSet<String>>> {
                 .filter_map(parse_encoder_line)
                 .collect();
             let decoders = Arc::new(decoders);
-            *cache = Some((identity, Arc::clone(&decoders)));
+            *cache = Some((identity.to_string(), Arc::clone(&decoders)));
             Some(decoders)
         }
         _ => None,
@@ -986,9 +996,11 @@ fn decoder_for(gpu: GpuVendor, codec: &str) -> Option<&'static str> {
 }
 
 fn decoder_listed(decoder: &str) -> bool {
-    crate::ffmpeg_status::current_status().ok
-        && list_decoders(&crate::ffmpeg_status::bundled_ffmpeg())
-            .is_some_and(|decoders| decoders.contains(decoder))
+    let Some(tools) = crate::ffmpeg_status::effective_tools() else {
+        return false;
+    };
+    let identity = ffmpeg_identity(Some(&tools));
+    list_decoders(&tools.ffmpeg, &identity).is_some_and(|decoders| decoders.contains(decoder))
 }
 
 /// v1 getHardwareDecodeArgs: the decode prefix for a conversion, or empty.
@@ -1063,15 +1075,16 @@ pub(crate) fn hardware_decode_args(gpu: GpuVendor, codec: Option<&str>) -> Vec<S
 // Tone-map support (v1 canTonemapHdr).
 // ---------------------------------------------------------------------------
 
-static FILTER_CACHE: Mutex<Option<Arc<BTreeSet<String>>>> = Mutex::new(None);
+static FILTER_CACHE: Mutex<Option<(String, Arc<BTreeSet<String>>)>> = Mutex::new(None);
 
-fn list_filters(ffmpeg: &Path) -> Arc<BTreeSet<String>> {
-    if let Some(cached) = FILTER_CACHE
+fn list_filters(ffmpeg: &Path, identity: &str) -> Arc<BTreeSet<String>> {
+    let mut cache = FILTER_CACHE
         .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
-        .as_ref()
-    {
-        return Arc::clone(cached);
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    if let Some((cached_identity, cached)) = cache.as_ref() {
+        if cached_identity.as_str() == identity {
+            return Arc::clone(cached);
+        }
     }
     let args = ["-hide_banner".to_string(), "-filters".to_string()];
     let mut command = process_util::command(ffmpeg, &args, &[], true);
@@ -1093,18 +1106,17 @@ fn list_filters(ffmpeg: &Path) -> Arc<BTreeSet<String>> {
             _ => Arc::new(BTreeSet::new()),
         };
     if !filters.is_empty() {
-        *FILTER_CACHE
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(Arc::clone(&filters));
+        *cache = Some((identity.to_string(), Arc::clone(&filters)));
     }
     filters
 }
 
 pub(crate) fn can_tonemap_hdr() -> bool {
-    if !crate::ffmpeg_status::current_status().ok {
+    let Some(tools) = crate::ffmpeg_status::effective_tools() else {
         return false;
-    }
-    let filters = list_filters(&crate::ffmpeg_status::bundled_ffmpeg());
+    };
+    let identity = ffmpeg_identity(Some(&tools));
+    let filters = list_filters(&tools.ffmpeg, &identity);
     filters.contains("zscale") && filters.contains("tonemap")
 }
 
@@ -1844,8 +1856,8 @@ mod tests {
     fn status_gate_short_circuits_probes_without_caching() {
         // Binary not ok: the probe answers false and never touches the caches.
         let ctx = ProbeContext {
-            ffmpeg: PathBuf::from("conv2-ffmpeg"),
-            status_ok: false,
+            tools: None,
+            identity: ffmpeg_identity(None),
             encoders: Arc::new(BTreeSet::new()),
         };
         assert!(!probe_hw_encoder_available(

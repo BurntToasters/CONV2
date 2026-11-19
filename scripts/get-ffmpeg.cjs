@@ -199,6 +199,16 @@ function download(url, destPath) {
       fs.rm(destPath, { force: true }, () => reject(error));
     };
 
+    // Never surface request URLs or raw Node messages: they can carry the
+    // secret-derived server base.
+    const requestFailure = (err) => {
+      const code =
+        typeof err?.code === "string" && /^[A-Z0-9_]+$/u.test(err.code)
+          ? ` (${err.code})`
+          : "";
+      return new Error(`Download request failed for ${payloadName}${code}`);
+    };
+
     /** @param {string} requestUrl @param {number} redirectCount */
     function doRequest(requestUrl, redirectCount) {
       let parsed;
@@ -222,83 +232,96 @@ function download(url, destPath) {
         return;
       }
 
-      const request = https.get(
-        parsed,
-        {
-          timeout: DOWNLOAD_TIMEOUT_MS,
-          headers: { "User-Agent": "CONV2-get-ffmpeg" },
-        },
-        (res) => {
-          if ([301, 302, 303, 307, 308].includes(res.statusCode)) {
-            const location = res.headers.location;
-            res.resume();
-            if (!location) {
-              fail(
-                new Error(
-                  `Redirect with no Location header while downloading ${payloadName}`,
-                ),
-              );
-              return;
-            }
-            doRequest(new URL(location, parsed).href, redirectCount + 1);
-            return;
-          }
-
-          if (res.statusCode !== 200) {
-            res.resume();
-            fail(new Error(`HTTP ${res.statusCode} for ${payloadName}`));
-            return;
-          }
-
-          const file = fs.createWriteStream(destPath);
-          let receivedBytes = 0;
-          const totalBytes = parseInt(res.headers["content-length"] || "0", 10);
-          let lastLoggedPercent = -1;
-
-          res.on("data", (chunk) => {
-            receivedBytes += chunk.length;
-            if (totalBytes > 0) {
-              const pct = Math.floor((receivedBytes / totalBytes) * 100);
-              if (pct !== lastLoggedPercent && pct % 10 === 0) {
-                process.stdout.write(`  ${pct}%\r`);
-                lastLoggedPercent = pct;
-              }
-            }
-          });
-          res.on("error", fail);
-          file.on("error", fail);
-          file.on("finish", () => {
-            file.close(() => {
-              if (settled) return;
-              if (receivedBytes === 0) {
-                fail(new Error(`Empty download response for ${payloadName}`));
+      let request;
+      try {
+        request = https.get(
+          parsed,
+          {
+            timeout: DOWNLOAD_TIMEOUT_MS,
+            headers: { "User-Agent": "CONV2-get-ffmpeg" },
+          },
+          (res) => {
+            if ([301, 302, 303, 307, 308].includes(res.statusCode)) {
+              const location = res.headers.location;
+              res.resume();
+              if (!location) {
+                fail(
+                  new Error(
+                    `Redirect with no Location header while downloading ${payloadName}`,
+                  ),
+                );
                 return;
               }
-              settled = true;
-              resolve();
-            });
-          });
-          res.pipe(file);
-        },
-      );
+              let redirectUrl;
+              try {
+                if (typeof location !== "string") throw new Error();
+                redirectUrl = new URL(location, parsed);
+              } catch {
+                fail(
+                  new Error(
+                    `Invalid redirect Location while downloading ${payloadName}`,
+                  ),
+                );
+                return;
+              }
+              doRequest(redirectUrl.href, redirectCount + 1);
+              return;
+            }
 
-      request.on("timeout", () =>
-        request.destroy(
-          new Error(`Download timed out after ${DOWNLOAD_TIMEOUT_MS}ms`),
-        ),
-      );
-      request.on("error", (err) => {
-        // Node network errors embed the request host; log the code instead.
-        if (err && err.code) {
-          fail(
-            new Error(
-              `Download request failed for ${payloadName} (${err.code})`,
-            ),
-          );
-          return;
-        }
-        fail(err);
+            if (res.statusCode !== 200) {
+              res.resume();
+              fail(new Error(`HTTP ${res.statusCode} for ${payloadName}`));
+              return;
+            }
+
+            const file = fs.createWriteStream(destPath);
+            let receivedBytes = 0;
+            const totalBytes = parseInt(
+              res.headers["content-length"] || "0",
+              10,
+            );
+            let lastLoggedPercent = -1;
+
+            res.on("data", (chunk) => {
+              receivedBytes += chunk.length;
+              if (totalBytes > 0) {
+                const pct = Math.floor((receivedBytes / totalBytes) * 100);
+                if (pct !== lastLoggedPercent && pct % 10 === 0) {
+                  process.stdout.write(`  ${pct}%\r`);
+                  lastLoggedPercent = pct;
+                }
+              }
+            });
+            res.on("error", (err) => fail(requestFailure(err)));
+            file.on("error", fail);
+            file.on("finish", () => {
+              file.close(() => {
+                if (settled) return;
+                if (receivedBytes === 0) {
+                  fail(new Error(`Empty download response for ${payloadName}`));
+                  return;
+                }
+                settled = true;
+                resolve();
+              });
+            });
+            res.pipe(file);
+          },
+        );
+      } catch {
+        fail(new Error(`Download request failed for ${payloadName}`));
+        return;
+      }
+
+      request.on("timeout", () => {
+        fail(
+          new Error(
+            `Download timed out after ${DOWNLOAD_TIMEOUT_MS}ms for ${payloadName}`,
+          ),
+        );
+        request.destroy();
       });
+      request.on("error", (err) => fail(requestFailure(err)));
     }
 
     doRequest(url, 0);
@@ -653,7 +676,10 @@ async function main() {
 
 if (require.main === module) {
   main().catch((err) => {
-    console.error("\nUnexpected error:", err);
+    console.error(
+      "\nUnexpected error:",
+      err instanceof Error ? err.message : String(err),
+    );
     process.exit(1);
   });
 }

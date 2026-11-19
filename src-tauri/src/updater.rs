@@ -21,7 +21,7 @@
 use crate::app_state;
 use crate::constants;
 use crate::ipc::{self, FalliblePayload, IpcResult, INTERNAL_ERROR, VALIDATION_ERROR};
-use crate::types::{AppSettings, UpdateChannel, UpdatePhase, UpdateStatePayload};
+use crate::types::{UpdateChannel, UpdatePhase, UpdateStatePayload};
 use std::sync::mpsc::{channel, Sender};
 use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
@@ -52,6 +52,8 @@ const DOWNLOAD_STOPPING_MESSAGE: &str =
 const INSTALL_ACTIVE_MESSAGE: &str = "This update is already being installed.";
 const DISABLED_MESSAGE: &str = "Auto-updates are disabled for this installation.";
 const CHANNEL_CHANGED_MESSAGE: &str = "Update channel changed.";
+const CHANNEL_WRITE_PENDING_MESSAGE: &str =
+    "An update channel change is in progress. Try again when it finishes.";
 const CHANNEL_NOT_SAVED: &str =
     "The selected update channel could not be saved before revalidation.";
 const DEV_MODE_MESSAGE: &str = "Update checking is not available in development mode.";
@@ -223,7 +225,9 @@ struct ActiveCheck {
 
 struct ActiveDownload {
     version: String,
-    /// The epoch the download started under; a channel switch invalidates it.
+    /// The channel and epoch the download started under; a switch invalidates
+    /// both.
+    channel: UpdateChannel,
     epoch: u64,
     cancelled: bool,
     started_at: Instant,
@@ -243,6 +247,9 @@ struct Candidates {
 struct DownloadedCandidate {
     update: Update,
     bytes: Arc<Vec<u8>>,
+    /// The channel and epoch this fetch belonged to.
+    channel: UpdateChannel,
+    epoch: u64,
 }
 
 enum FeedOutcome {
@@ -320,9 +327,16 @@ enum Command {
         reply: Sender<()>,
     },
     CancelDownload,
+    ReserveChannelWrite {
+        reply: Sender<bool>,
+    },
+    ReleaseChannelWrite,
     ChannelChanged {
         channel: UpdateChannel,
+        /// The channel on disk before this transaction persisted.
+        previous: UpdateChannel,
         saved: Result<(), String>,
+        reply: Sender<()>,
     },
     BeginInstall {
         reply: Sender<InstallStartReply>,
@@ -370,6 +384,14 @@ struct State {
     /// Version whose install already ran; restart retries use it.
     installed: Option<String>,
     installing: bool,
+    /// BeginInstall returned an update; the reserved install worker will
+    /// confirm next.
+    install_pending: bool,
+    /// A channel write holds the engine until its persistence and
+    /// ChannelChanged transition complete.
+    channel_reserved: bool,
+    /// A recheck must start after the in-flight channel write releases.
+    recheck_pending: bool,
     known_channel: Option<UpdateChannel>,
     channel_unsaved: bool,
     flatpak: bool,
@@ -388,6 +410,9 @@ impl Default for State {
             downloaded: None,
             installed: None,
             installing: false,
+            install_pending: false,
+            channel_reserved: false,
+            recheck_pending: false,
             known_channel: None,
             channel_unsaved: false,
             flatpak: false,
@@ -448,6 +473,14 @@ impl State {
         if let Some(_active) = &self.check {
             if manual {
                 self.send(UpdatePhase::AlreadyChecking, true, ALREADY_CHECKING_MESSAGE);
+            }
+            return CheckStart::Terminal;
+        }
+        if self.channel_reserved {
+            if manual {
+                self.send(UpdatePhase::Error, true, CHANNEL_WRITE_PENDING_MESSAGE);
+            } else {
+                self.recheck_pending = true;
             }
             return CheckStart::Terminal;
         }
@@ -562,6 +595,10 @@ impl State {
             self.send(UpdatePhase::Error, true, FLATPAK_REFUSAL);
             return DownloadGate::Terminal;
         }
+        if self.channel_reserved {
+            self.send(UpdatePhase::Error, true, CHANNEL_WRITE_PENDING_MESSAGE);
+            return DownloadGate::Terminal;
+        }
         let Some(version) = self.offer.clone() else {
             self.send(UpdatePhase::Error, true, NO_UPDATE_TO_DOWNLOAD);
             if let Some(downloaded) = self.downloaded.clone() {
@@ -578,13 +615,14 @@ impl State {
             self.send(UpdatePhase::Error, true, message);
             return DownloadGate::Terminal;
         }
-        if self.installing {
+        if self.installing || self.install_pending {
             self.send(UpdatePhase::Error, true, INSTALL_ACTIVE_MESSAGE);
             return DownloadGate::Terminal;
         }
         let epoch = self.epoch;
         self.download = Some(ActiveDownload {
             version,
+            channel: read_settings().0,
             epoch,
             cancelled: false,
             started_at: Instant::now(),
@@ -671,6 +709,8 @@ impl State {
                 candidates.downloaded = Some(DownloadedCandidate {
                     update,
                     bytes: Arc::new(bytes),
+                    channel: active.channel,
+                    epoch: active.epoch,
                 });
                 self.sync_menu();
                 self.send_downloaded(&active.version);
@@ -693,27 +733,27 @@ impl State {
 
     /// v1 channel-changed: bump the epoch, drop the offer and any downloaded
     /// update, fence the in-flight check, and revalidate. Returns whether a
-    /// silent recheck should spawn immediately.
+    /// silent recheck should start once the write reservation releases.
     fn channel_changed(
         &mut self,
         candidates: &mut Candidates,
         channel: UpdateChannel,
+        previous: UpdateChannel,
         saved: Result<(), String>,
     ) -> bool {
         let was_unsaved = self.channel_unsaved;
         self.channel_unsaved = saved.is_err();
-        // v1 seeded the channel from settings at launch (main.ts); the first
-        // change after engine start has no in-memory previous channel, and the
-        // file already holds the new one, so it counts as a real change.
-        let first = self.known_channel.is_none();
-        if first {
-            self.known_channel = Some(read_settings().0);
-        }
-        let changed =
-            first || self.known_channel != Some(channel) || (was_unsaved && saved.is_ok());
+        // Persistence already ran, so the first transition compares against
+        // the channel the caller read before writing.
+        let changed = match self.known_channel {
+            Some(known) => known != channel,
+            None => previous != channel,
+        };
         self.known_channel = Some(channel);
         if !changed {
-            return false;
+            // A retry that only completes a failed save must not invalidate a
+            // download fetched while the channel was unsaved.
+            return was_unsaved && saved.is_ok() && self.check.is_none();
         }
         self.epoch += 1;
         self.offer = None;
@@ -735,30 +775,82 @@ impl State {
 
     /// v1 'install': needs the downloaded update; the busy gate runs between
     /// this and confirm_install so a refusal leaves no state behind.
-    fn begin_install(&mut self) -> InstallGate {
+    fn begin_install(
+        &mut self,
+        candidates: &mut Candidates,
+        channel: UpdateChannel,
+    ) -> InstallGate {
         if self.flatpak {
             self.send(UpdatePhase::Error, true, FLATPAK_REFUSAL);
             return InstallGate::Terminal;
         }
-        if self.installing {
+        if self.channel_reserved {
+            self.send(UpdatePhase::Error, true, CHANNEL_WRITE_PENDING_MESSAGE);
+            return InstallGate::Terminal;
+        }
+        if self.installing || self.install_pending {
             return InstallGate::Terminal;
         }
         let Some(version) = self.downloaded.clone() else {
             self.send(UpdatePhase::Error, true, NO_DOWNLOADED_UPDATE);
             return InstallGate::Terminal;
         };
+        if !self.candidate_matches(candidates, &version, channel) {
+            self.discard_download(candidates);
+            self.send(UpdatePhase::Error, true, NO_DOWNLOADED_UPDATE);
+            return InstallGate::Terminal;
+        }
         InstallGate::Proceed {
             already_installed: self.installed.as_deref() == Some(version.as_str()),
             version,
         }
     }
 
+    /// A candidate belongs to the channel and epoch it was fetched under.
+    fn candidate_matches(
+        &self,
+        candidates: &Candidates,
+        version: &str,
+        channel: UpdateChannel,
+    ) -> bool {
+        candidates.downloaded.as_ref().is_some_and(|candidate| {
+            candidate.channel == channel
+                && candidate.epoch == self.epoch
+                && candidate.update.version == version
+        })
+    }
+
+    /// Clear a candidate that no longer matches the current channel/epoch.
+    fn discard_download(&mut self, candidates: &mut Candidates) {
+        let had_downloaded = self.downloaded.take().is_some();
+        let had_candidate = candidates.downloaded.take().is_some();
+        self.installed = None;
+        if had_downloaded || had_candidate {
+            self.sync_menu();
+        }
+    }
+
     /// Lock the install in and announce it. Pure so the busy gate can sit
     /// between begin and confirm without leaving installing state behind.
-    fn confirm_install(&mut self, version: &str) -> bool {
-        if self.downloaded.as_deref() != Some(version) {
+    fn confirm_install(
+        &mut self,
+        candidates: &mut Candidates,
+        version: &str,
+        channel: UpdateChannel,
+    ) -> bool {
+        if self.channel_reserved {
+            self.install_pending = false;
+            self.send(UpdatePhase::Error, true, CHANNEL_WRITE_PENDING_MESSAGE);
             return false;
         }
+        let matches = self.candidate_matches(candidates, version, channel);
+        if !matches {
+            self.install_pending = false;
+            self.discard_download(candidates);
+            self.send(UpdatePhase::Error, true, NO_DOWNLOADED_UPDATE);
+            return false;
+        }
+        self.install_pending = false;
         self.installing = true;
         self.sync_menu();
         self.send(UpdatePhase::Installing, true, INSTALLING_MESSAGE);
@@ -797,6 +889,7 @@ impl State {
             }
         }
         self.installing = false;
+        self.install_pending = false;
         self.sync_menu();
     }
 
@@ -845,24 +938,49 @@ impl State {
                 let _ = reply.send(());
             }
             Command::CancelDownload => self.cancel_download(),
-            Command::ChannelChanged { channel, saved } => {
-                return self.channel_changed(candidates, channel, saved);
+            Command::ReserveChannelWrite { reply } => {
+                let granted = !self.installing && !self.install_pending && !self.channel_reserved;
+                if granted {
+                    self.channel_reserved = true;
+                }
+                let _ = reply.send(granted);
+            }
+            Command::ReleaseChannelWrite => {
+                self.channel_reserved = false;
+                if self.recheck_pending {
+                    self.recheck_pending = false;
+                    return true;
+                }
+            }
+            Command::ChannelChanged {
+                channel,
+                previous,
+                saved,
+                reply,
+            } => {
+                if self.channel_changed(candidates, channel, previous, saved) {
+                    self.recheck_pending = true;
+                }
+                let _ = reply.send(());
             }
             Command::BeginInstall { reply } => {
-                let reply_value = match self.begin_install() {
+                let channel = read_settings().0;
+                let reply_value = match self.begin_install(candidates, channel) {
                     InstallGate::Proceed {
                         version,
                         already_installed,
                     } => {
-                        // v1's reject paths already emitted; a missing
-                        // candidate is an engine inconsistency and stays quiet.
+                        // begin_install already verified the candidate.
                         match candidates.downloaded.as_ref() {
-                            Some(downloaded) => InstallStartReply::Proceed {
-                                version,
-                                update: downloaded.update.clone(),
-                                bytes: downloaded.bytes.clone(),
-                                already_installed,
-                            },
+                            Some(downloaded) => {
+                                self.install_pending = true;
+                                InstallStartReply::Proceed {
+                                    version,
+                                    update: downloaded.update.clone(),
+                                    bytes: downloaded.bytes.clone(),
+                                    already_installed,
+                                }
+                            }
                             None => InstallStartReply::Terminal,
                         }
                     }
@@ -871,7 +989,8 @@ impl State {
                 let _ = reply.send(reply_value);
             }
             Command::ConfirmInstall { version, reply } => {
-                let _ = reply.send(self.confirm_install(&version));
+                let channel = read_settings().0;
+                let _ = reply.send(self.confirm_install(candidates, &version, channel));
             }
             Command::InstallWritten { version, reply } => {
                 let _ = reply.send(self.install_written(&version));
@@ -972,39 +1091,55 @@ fn current_payload() -> UpdateStatePayload {
 
 // ── settings access ────────────────────────────────────────────────────────
 
-fn settings_path() -> std::path::PathBuf {
-    app_state::data_dir().join("settings.json")
+/// A granted channel-write reservation. Dropping it releases the engine and
+/// starts any recheck the completed transition queued.
+pub struct ChannelWriteReservation {
+    _private: (),
 }
 
-/// (updateChannel, autoCheckUpdates) with v1 defaults for a missing file.
-/// settings.rs is a stub, so the updater reads the file it owns directly.
-fn read_settings() -> (UpdateChannel, bool) {
-    let Ok(text) = std::fs::read_to_string(settings_path()) else {
-        return (UpdateChannel::Auto, true);
-    };
-    if let Ok(settings) = serde_json::from_str::<AppSettings>(&text) {
-        return (settings.update_channel, settings.auto_check_updates);
+impl Drop for ChannelWriteReservation {
+    fn drop(&mut self) {
+        submit(Command::ReleaseChannelWrite);
     }
-    // A partial file still answers field by field, like v1's lenient loader.
-    let Ok(value) = serde_json::from_str::<serde_json::Value>(&text) else {
-        return (UpdateChannel::Auto, true);
-    };
-    let channel = value
-        .get("updateChannel")
-        .and_then(serde_json::Value::as_str)
-        .and_then(UpdateChannel::parse)
-        .unwrap_or(UpdateChannel::Auto);
-    let auto_check = value
-        .get("autoCheckUpdates")
-        .and_then(serde_json::Value::as_bool)
-        .unwrap_or(true);
-    (channel, auto_check)
 }
 
-/// Persist through the settings store so SAVE_LOCK serializes the write and
-/// the SETTINGS cache agrees with the file.
-fn persist_channel(channel: UpdateChannel) -> Result<(), String> {
-    crate::settings::set_update_channel(channel)
+/// Ask the engine for exclusive channel-write ownership. Refused while an
+/// install is in progress or another channel write holds it.
+pub fn reserve_channel_write() -> Option<ChannelWriteReservation> {
+    request(|reply| Command::ReserveChannelWrite { reply })
+        .filter(|granted| *granted)
+        .map(|_| ChannelWriteReservation { _private: () })
+}
+
+/// Report the persisted channel and wait for the engine's transition, then
+/// release. Callers hold settings::SAVE_LOCK across this so readers never see
+/// the file and the engine disagree.
+pub fn complete_channel_change(
+    reservation: ChannelWriteReservation,
+    next: UpdateChannel,
+    previous: UpdateChannel,
+    saved: Result<(), String>,
+) {
+    let (reply, answer) = channel();
+    if engine()
+        .send(Command::ChannelChanged {
+            channel: next,
+            previous,
+            saved,
+            reply,
+        })
+        .is_ok()
+    {
+        let _ = answer.recv();
+    }
+    drop(reservation);
+}
+
+/// (updateChannel, autoCheckUpdates) from the normalized settings cache.
+/// settings::init runs before the updater engine, so this never reads the file.
+fn read_settings() -> (UpdateChannel, bool) {
+    let settings = crate::settings::current();
+    (settings.update_channel, settings.auto_check_updates)
 }
 
 // ── platform answers (platform.rs exposes distribution_channel only) ──────
@@ -1342,6 +1477,11 @@ fn install_flow() -> InstallExit {
     let Some(app) = app_state::app().cloned() else {
         return InstallExit::Done(current_payload());
     };
+    // Held from BeginInstall through the restart so a queue claim cannot slip
+    // between the busy check and the confirm transition.
+    let Some(_reservation) = crate::conversion::reserve_install() else {
+        return InstallExit::Busy;
+    };
     let start = request(|reply| Command::BeginInstall { reply });
     let Some(InstallStartReply::Proceed {
         version,
@@ -1352,11 +1492,6 @@ fn install_flow() -> InstallExit {
     else {
         return InstallExit::Done(current_payload());
     };
-    // v1 stopped the queue here (main.ts prepareForUpdateInstall); the port
-    // refuses so the renderer can offer restart-after once conversions end.
-    if crate::conversion::is_active() {
-        return InstallExit::Busy;
-    }
     e2e_hold(|config| config.install_confirm_hold_ms);
     let confirmed = request(|reply| Command::ConfirmInstall {
         version: version.clone(),
@@ -1513,9 +1648,10 @@ pub async fn cancel_update_download() -> IpcResult<UpdateStatePayload> {
     }
 }
 
-/// `set-update-channel`: persists the choice, invalidates the current check
-/// epoch, and revalidates like v1's channel-changed transition. The answer is
-/// the engine's payload ("Update channel changed." when it switched).
+/// `set-update-channel`: reserves the engine, persists under the settings
+/// lock, and awaits the channel-changed transition before releasing. A
+/// reservation refusal answers INTERNAL_ERROR without touching the file. The
+/// answer is the engine's payload ("Update channel changed." when it switched).
 #[tauri::command]
 pub async fn set_update_channel(
     channel: FalliblePayload<UpdateChannel>,
@@ -1524,20 +1660,13 @@ pub async fn set_update_channel(
         Ok(channel) => channel,
         Err(error) => return ipc::from_error(error),
     };
-    let saved = tauri::async_runtime::spawn_blocking(move || persist_channel(channel))
-        .await
-        .unwrap_or_else(|error| Err(error.to_string()));
-    match tauri::async_runtime::spawn_blocking(move || {
-        submit(Command::ChannelChanged { channel, saved });
-        current_payload()
-    })
-    .await
-    {
-        Ok(payload) => ipc::ok(payload),
-        Err(error) => ipc::err(
-            INTERNAL_ERROR,
-            format!("Update channel switch stopped: {error}"),
-        ),
+    let saved =
+        tauri::async_runtime::spawn_blocking(move || crate::settings::set_update_channel(channel))
+            .await
+            .unwrap_or_else(|error| Err(error.to_string()));
+    match saved {
+        Ok(()) => ipc::ok(current_payload()),
+        Err(error) => ipc::err(INTERNAL_ERROR, error),
     }
 }
 
@@ -1767,7 +1896,12 @@ mod tests {
         state.check = Some(active_check(1));
 
         // The switch emits, drops the downloaded update, fences the check.
-        assert!(!state.channel_changed(&mut candidates, UpdateChannel::Beta, Ok(())));
+        assert!(!state.channel_changed(
+            &mut candidates,
+            UpdateChannel::Beta,
+            UpdateChannel::Auto,
+            Ok(())
+        ));
         assert_eq!(state.epoch, 1);
         assert!(state.downloaded.is_none());
         assert!(state.check.as_ref().is_some_and(|check| check.discard));
@@ -1868,6 +2002,7 @@ mod tests {
         let mut candidates = Candidates::default();
         state.download = Some(ActiveDownload {
             version: "2.1.0".into(),
+            channel: UpdateChannel::Auto,
             epoch: 0,
             cancelled: false,
             started_at: Instant::now(),

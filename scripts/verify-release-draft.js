@@ -51,6 +51,7 @@ const RETIRED_LINUX_PACKAGE_ASSET =
   /(?:\.(?:deb|rpm)(?:\.(?:asc|sig))?$|^latest-linux(?:-beta)?-[a-z0-9_]+-(?:deb|rpm)\.json$)/i;
 const WINDOWS_SETUP_ASSET = /^CONV2-Win-.+-Setup\.exe$/i;
 const WINDOWS_AUTHENTICODE_ATTESTATION = "windows-authenticode.json";
+const WINDOWS_AUTHENTICODE_SIGNATURE = `${WINDOWS_AUTHENTICODE_ATTESTATION}.asc`;
 const WINDOWS_AUTHENTICODE_SCHEMA = "conv2-windows-authenticode/v1";
 
 function readPackageVersion(repositoryRoot = root) {
@@ -343,21 +344,11 @@ export function validateWindowsAuthenticodeAttestation({
   }
 }
 
-async function loadWindowsAuthenticodeAttestation({
-  assetsByName,
-  downloadByName,
-}) {
-  if (assetsByName.has(WINDOWS_AUTHENTICODE_ATTESTATION)) {
-    const filePath = await downloadByName(WINDOWS_AUTHENTICODE_ATTESTATION);
-    return fs.readFileSync(filePath, "utf8");
-  }
-  // Fallback for hosts that ran the Windows build but did not upload the file.
-  const localPath = path.join(
-    root,
-    "release",
-    WINDOWS_AUTHENTICODE_ATTESTATION,
+async function loadWindowsAuthenticodeAttestation({ downloadByName }) {
+  return fs.readFileSync(
+    await downloadByName(WINDOWS_AUTHENTICODE_ATTESTATION),
+    "utf8",
   );
-  return fs.existsSync(localPath) ? fs.readFileSync(localPath, "utf8") : null;
 }
 
 function keyIdentifierMatches(identifier, keyId) {
@@ -507,6 +498,9 @@ export function requiredDraftAssetNames(options = {}) {
       ...requiredDraftBetaManifestNames({ requireLinuxAarch64 }),
       // CONV2 v1 reads these from the newest release (npm run release:legacy-v1-feed).
       ...LEGACY_FEED_FILES,
+      // Produced by the Windows signing build and GPG-signed beside the installers.
+      WINDOWS_AUTHENTICODE_ATTESTATION,
+      WINDOWS_AUTHENTICODE_SIGNATURE,
     ]),
   ).sort();
 }
@@ -545,13 +539,17 @@ export function assertDraftReleaseShape({
       `Release tag ${tag} resolves to commit ${tagCommit}, not HEAD ${headCommit}.`,
     );
   }
-  const present = new Set(assetNames);
-  const missing = requiredDraftAssetNames({ requireLinuxAarch64 }).filter(
-    (name) => !present.has(name),
-  );
-  if (missing.length > 0) {
+  const required = requiredDraftAssetNames({ requireLinuxAarch64 });
+  const allowed = new Set(required);
+  const present = new Set();
+  const duplicates = new Set();
+  for (const name of assetNames) {
+    if (present.has(name)) duplicates.add(name);
+    present.add(name);
+  }
+  if (duplicates.size > 0) {
     throw new Error(
-      `Draft ${tag} is missing required assets: ${missing.join(", ")}.`,
+      `Draft ${tag} contains duplicate assets: ${[...duplicates].sort().join(", ")}.`,
     );
   }
   const retired = assetNames.filter((name) =>
@@ -562,7 +560,73 @@ export function assertDraftReleaseShape({
       `Draft ${tag} contains retired DEB/RPM assets: ${retired.join(", ")}.`,
     );
   }
+  const missing = required.filter((name) => !present.has(name));
+  if (missing.length > 0) {
+    throw new Error(
+      `Draft ${tag} is missing required assets: ${missing.join(", ")}.`,
+    );
+  }
+  const unexpected = [...present].filter((name) => !allowed.has(name)).sort();
+  if (unexpected.length > 0) {
+    throw new Error(
+      `Draft ${tag} contains unexpected assets: ${unexpected.join(", ")}.`,
+    );
+  }
   return { tag, missing };
+}
+
+function normalizeDraftAssetIdentities(assets, label = "Draft") {
+  if (!Array.isArray(assets)) {
+    throw new Error(`${label} assets are not a list.`);
+  }
+  const names = new Set();
+  const ids = new Set();
+  const identities = assets.map((asset) => {
+    const name = asset?.name;
+    const id = asset?.id;
+    const size = asset?.size;
+    if (!isSafeAssetName(name)) {
+      throw new Error(`${label} has an unsafe or missing asset name.`);
+    }
+    if (!Number.isSafeInteger(id) || id <= 0) {
+      throw new Error(`${label} asset ${name} has no valid id.`);
+    }
+    if (!Number.isSafeInteger(size) || size < 0) {
+      throw new Error(`${label} asset ${name} has no valid size.`);
+    }
+    if (names.has(name) || ids.has(id)) {
+      throw new Error(`${label} repeats asset ${name}.`);
+    }
+    names.add(name);
+    ids.add(id);
+    return { name, id, size };
+  });
+  return identities.sort((left, right) =>
+    left.name < right.name ? -1 : left.name > right.name ? 1 : 0,
+  );
+}
+
+// Narrow proof consumed by publish-release.cjs immediately before un-drafting.
+function writeDraftVerificationProof({ releaseId, tag, headCommit, assets }) {
+  const proofPath = (process.env.CONV2_VERIFY_PROOF_FILE || "").trim();
+  if (!proofPath) return null;
+  if (!Number.isSafeInteger(releaseId) || releaseId <= 0) {
+    throw new Error(
+      "Cannot record draft verification proof without a release id.",
+    );
+  }
+  const proof = {
+    releaseId,
+    tag,
+    headCommit,
+    assets: normalizeDraftAssetIdentities(assets),
+  };
+  fs.writeFileSync(proofPath, `${JSON.stringify(proof, null, 2)}\n`, {
+    flag: "wx",
+    mode: 0o600,
+  });
+  fs.chmodSync(proofPath, 0o600);
+  return proofPath;
 }
 
 export function selectDraftRelease(releases, tag) {
@@ -844,6 +908,7 @@ async function verifyDraftGpgAndChecksums({
     ...requiredDraftSidecarNames(signedNames).filter((name) =>
       name.endsWith(".asc"),
     ),
+    WINDOWS_AUTHENTICODE_SIGNATURE,
     ...checksumNames.map((name) => `${name}.asc`),
   ];
   const signatureNames = listedAssets
@@ -912,6 +977,7 @@ async function verifyDraftGpgAndChecksums({
     }
     const requiredPayloadNames = [
       ...signedNames,
+      WINDOWS_AUTHENTICODE_ATTESTATION,
       ...requiredDraftStableManifestNames({ requireLinuxAarch64 }),
       ...requiredDraftBetaManifestNames({ requireLinuxAarch64 }),
     ];
@@ -933,33 +999,27 @@ async function verifyDraftGpgAndChecksums({
       });
     }
 
-    if (windowsInstallerNames.length > 0) {
-      const attestationText = await loadWindowsAuthenticodeAttestation({
-        assetsByName,
-        downloadByName,
-      });
-      if (!attestationText) {
-        throw new Error(
-          `Draft contains Windows installers (${windowsInstallerNames.join(", ")}) but no ${WINDOWS_AUTHENTICODE_ATTESTATION} attestation is available as a draft asset or in release/${WINDOWS_AUTHENTICODE_ATTESTATION}.`,
-        );
-      }
-      let attestation;
-      try {
-        attestation = JSON.parse(attestationText);
-      } catch {
+    let attestation;
+    try {
+      attestation = JSON.parse(
+        await loadWindowsAuthenticodeAttestation({ downloadByName }),
+      );
+    } catch (error) {
+      if (error instanceof SyntaxError) {
         throw new Error(
           `${WINDOWS_AUTHENTICODE_ATTESTATION} is not valid JSON.`,
         );
       }
-      const installerDigests = new Map();
-      for (const name of windowsInstallerNames) {
-        installerDigests.set(name, sha256Contents(await downloadByName(name)));
-      }
-      validateWindowsAuthenticodeAttestation({
-        attestation,
-        installerDigests,
-      });
+      throw error;
     }
+    const installerDigests = new Map();
+    for (const name of windowsInstallerNames) {
+      installerDigests.set(name, sha256Contents(await downloadByName(name)));
+    }
+    validateWindowsAuthenticodeAttestation({
+      attestation,
+      installerDigests,
+    });
   } finally {
     fs.rmSync(temporaryDirectory, { recursive: true, force: true });
   }
@@ -1152,6 +1212,12 @@ async function main() {
     repoName,
     listedAssets,
     requireLinuxAarch64,
+  });
+  writeDraftVerificationProof({
+    releaseId: release.id,
+    tag,
+    headCommit,
+    assets: listedAssets,
   });
   console.log(
     `verify-draft: ok (${tag}, draft, HEAD ${headCommit.slice(0, 12)}, ${assets.length} assets, prerelease=${isPrereleaseVersion(version)}, CONV2 v1 feed -> ${sourceTag})`,

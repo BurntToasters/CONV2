@@ -22,7 +22,7 @@ use crate::validation;
 use crate::video_pipeline;
 use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
 
@@ -37,6 +37,9 @@ const STOP_RETRY_WAIT: Duration = Duration::from_millis(1500);
 
 struct QueueState {
     active: bool,
+    /// An update install owns the filesystem/restart window; queue claims and
+    /// other installs are refused until its guard drops.
+    install_reserved: bool,
     run: u64,
     cancelled: bool,
     child: Option<Arc<ManagedChild>>,
@@ -44,6 +47,7 @@ struct QueueState {
 
 static STATE: Mutex<QueueState> = Mutex::new(QueueState {
     active: false,
+    install_reserved: false,
     run: 0,
     cancelled: false,
     child: None,
@@ -56,6 +60,32 @@ fn lock_state() -> std::sync::MutexGuard<'static, QueueState> {
     STATE
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+/// Reserves the queue against conversions for one update install. Released by
+/// Drop on success, failure, or a refused restart.
+pub struct InstallReservation {
+    _private: (),
+}
+
+impl Drop for InstallReservation {
+    fn drop(&mut self) {
+        {
+            let mut state = lock_state();
+            state.install_reserved = false;
+        }
+        IDLE.notify_all();
+    }
+}
+
+/// Atomically acquire the install reservation only while no batch runs.
+pub fn reserve_install() -> Option<InstallReservation> {
+    let mut state = lock_state();
+    if state.active || state.install_reserved {
+        return None;
+    }
+    state.install_reserved = true;
+    Some(InstallReservation { _private: () })
 }
 
 /// Initialize queue state at startup. v1 persisted no queue: every batch was
@@ -210,7 +240,7 @@ fn validate_and_claim(payload: &StartConversionQueuePayload) -> Validation {
         .cloned()
         .collect();
     let mut state = lock_state();
-    if state.active {
+    if state.active || state.install_reserved {
         let snapshot = reject_all(
             &input_paths,
             "busy",
@@ -535,41 +565,137 @@ fn remove_output(path: &Path) {
     }
 }
 
-/// Re-establishes the output claim right before FFmpeg's `-y` reopen: the
-/// leaf must be a regular file, never a symlink or other substituted entry.
-fn prepare_output_claim(output_path: &Path) -> Result<(), String> {
-    match std::fs::symlink_metadata(output_path) {
-        Ok(metadata) if metadata.file_type().is_file() => Ok(()),
-        Ok(_) => {
-            remove_output(output_path);
-            Err(format!(
-                "Output path was replaced before FFmpeg started: {}",
+/// A private staging area for one FFmpeg attempt. FFmpeg writes here only;
+/// the reserved public leaf is replaced atomically after a verified success.
+struct StagedOutput {
+    dir: PathBuf,
+    file: PathBuf,
+}
+
+impl StagedOutput {
+    fn create(output_path: &Path) -> Result<Self, String> {
+        let Some(parent) = output_path.parent() else {
+            return Err(format!(
+                "Could not stage output next to {}: no parent directory",
                 output_path.display()
-            ))
-        }
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            match std::fs::OpenOptions::new()
-                .write(true)
-                .create_new(true)
-                .open(output_path)
-            {
-                Ok(_) => Ok(()),
+            ));
+        };
+        let Some(name) = output_path.file_name() else {
+            return Err(format!(
+                "Could not stage output for {}: no file name",
+                output_path.display()
+            ));
+        };
+        static SEQUENCE: AtomicU64 = AtomicU64::new(0);
+        for _ in 0..64 {
+            let sequence = SEQUENCE.fetch_add(1, Ordering::Relaxed);
+            let dir = parent.join(format!(".conv2-stage-{}-{sequence}", std::process::id()));
+            match create_private_dir(&dir) {
+                Ok(()) => {
+                    return Ok(Self {
+                        file: dir.join(Path::new(name)),
+                        dir,
+                    })
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
                 Err(error) => {
-                    remove_output(output_path);
-                    Err(format!(
-                        "Could not reserve output path {}: {error}",
-                        output_path.display()
+                    return Err(format!(
+                        "Could not create staging directory {}: {error}",
+                        dir.display()
                     ))
                 }
             }
         }
+        Err(format!(
+            "Could not create a staging directory next to {}",
+            output_path.display()
+        ))
+    }
+
+    fn path(&self) -> &Path {
+        &self.file
+    }
+
+    /// Verify the staged result, then replace the reserved leaf atomically.
+    fn promote(self, output_path: &Path) -> Result<(), String> {
+        let metadata = std::fs::symlink_metadata(&self.file).map_err(|error| {
+            format!(
+                "Could not verify staged output {}: {error}",
+                self.file.display()
+            )
+        })?;
+        if !metadata.file_type().is_file() || metadata.len() == 0 {
+            return Err("FFmpeg reported success but produced no output file.".to_string());
+        }
+        replace_output_leaf(&self.file, output_path)
+    }
+}
+
+impl Drop for StagedOutput {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.dir);
+    }
+}
+
+/// Replace only the argv output operand with the staged path, preserving the
+/// output extension/format.
+fn replace_output_operand(args: &[String], staged: &Path) -> Option<Vec<String>> {
+    let mut next = args.to_vec();
+    let output = next.pop()?;
+    if output.is_empty() {
+        return None;
+    }
+    next.push(staged.to_string_lossy().into_owned());
+    Some(next)
+}
+
+fn create_private_dir(path: &Path) -> std::io::Result<()> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::DirBuilderExt;
+        std::fs::DirBuilder::new().mode(0o700).create(path)
+    }
+    #[cfg(not(unix))]
+    {
+        std::fs::create_dir(path)
+    }
+}
+
+/// Replace the leaf entry itself, never a symlink or hardlink target. Unix
+/// rename replaces the entry atomically; Windows refuses an existing
+/// destination, so unlink the occupant and retry once, failing safely if
+/// another entry appears.
+fn replace_output_leaf(staged: &Path, output_path: &Path) -> Result<(), String> {
+    match std::fs::rename(staged, output_path) {
+        Ok(()) => return Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
         Err(error) => {
-            remove_output(output_path);
-            Err(format!(
-                "Could not check output path {}: {error}",
+            return Err(format!(
+                "Could not finalize output {}: {error}",
                 output_path.display()
             ))
         }
+    }
+    match std::fs::remove_file(output_path) {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => {
+            return Err(format!(
+                "Could not replace output {}: {error}",
+                output_path.display()
+            ))
+        }
+    }
+    match std::fs::rename(staged, output_path) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => Err(format!(
+            "Output path was replaced before FFmpeg finished: {}",
+            output_path.display()
+        )),
+        Err(error) => Err(format!(
+            "Could not finalize output {}: {error}",
+            output_path.display()
+        )),
     }
 }
 
@@ -975,7 +1101,8 @@ fn run_attempts(
             retry_with_cpu_suggested: false,
         };
     }
-    remove_output(output_path);
+    // Keep the public leaf reserved across the software-decode retry; the next
+    // attempt stages privately and promotes over our own claim.
     if !decode_args.is_empty() && ffmpeg_failure::should_retry_with_software_decode(&attempt.stderr)
     {
         reporter.log("Hardware decode failed; retrying with software decode.\n");
@@ -991,6 +1118,7 @@ fn run_attempts(
             return cancelled_outcome(output_path);
         }
         if let Some(message) = attempt.failure_message {
+            remove_output(output_path);
             return Outcome {
                 success: false,
                 output_path: output_path.to_string_lossy().into_owned(),
@@ -1008,8 +1136,8 @@ fn run_attempts(
                 retry_with_cpu_suggested: false,
             };
         }
-        remove_output(output_path);
     }
+    remove_output(output_path);
     Outcome {
         success: false,
         output_path: output_path.to_string_lossy().into_owned(),
@@ -1216,6 +1344,15 @@ fn run_ffmpeg(
             stderr: String::new(),
         };
     }
+    let Some(tools) = ffmpeg_status::effective_tools() else {
+        let status = ffmpeg_status::current_status();
+        return Attempt {
+            code: None,
+            cancelled: false,
+            failure_message: Some(ffmpeg_unavailable_message(&status)),
+            stderr: String::new(),
+        };
+    };
     if is_cancelled(run) {
         return Attempt {
             code: None,
@@ -1224,18 +1361,34 @@ fn run_ffmpeg(
             stderr: String::new(),
         };
     }
-    // FFmpeg reopens the claimed name with `-y`; refuse a substituted leaf so
-    // a planted symlink cannot redirect the truncation.
-    if let Err(message) = prepare_output_claim(output_path) {
-        crate::logging::warn(&message);
-        return Attempt {
-            code: None,
-            cancelled: false,
-            failure_message: Some(message),
-            stderr: String::new(),
-        };
-    }
-    let mut command = process_util::command(ffmpeg_status::bundled_ffmpeg(), args, &[], true);
+    // FFmpeg writes only into a private staging directory; the reserved public
+    // leaf is replaced atomically after a verified success.
+    let stage = match StagedOutput::create(output_path) {
+        Ok(stage) => stage,
+        Err(message) => {
+            crate::logging::warn(&message);
+            remove_output(output_path);
+            return Attempt {
+                code: None,
+                cancelled: false,
+                failure_message: Some(message),
+                stderr: String::new(),
+            };
+        }
+    };
+    let staged_args = match replace_output_operand(args, stage.path()) {
+        Some(args) => args,
+        None => {
+            remove_output(output_path);
+            return Attempt {
+                code: None,
+                cancelled: false,
+                failure_message: Some("Internal error: preset has no output.".to_string()),
+                stderr: String::new(),
+            };
+        }
+    };
+    let mut command = process_util::command(&tools.ffmpeg, &staged_args, &[], true);
     let child = match process_util::spawn(&mut command) {
         Ok(child) => child,
         Err(error) => {
@@ -1306,11 +1459,25 @@ fn run_ffmpeg(
             state.child = None;
         }
     }
+    let code = exit.and_then(|status| status.code());
+    let cancelled = cancelled || is_cancelled(run);
+    let stderr = shared.stderr();
+    if !cancelled && code == Some(0) {
+        if let Err(message) = stage.promote(output_path) {
+            crate::logging::warn(&message);
+            return Attempt {
+                code: None,
+                cancelled: false,
+                failure_message: Some(message),
+                stderr,
+            };
+        }
+    }
     Attempt {
-        code: exit.and_then(|status| status.code()),
-        cancelled: cancelled || is_cancelled(run),
+        code,
+        cancelled,
         failure_message: None,
-        stderr: shared.stderr(),
+        stderr,
     }
 }
 

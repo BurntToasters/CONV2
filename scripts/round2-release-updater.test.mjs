@@ -572,13 +572,19 @@ test("direct release publication runs shared preflight after draft verification 
     path.join(root, "scripts", "publish-release.cjs"),
     "utf8",
   );
-  const mainStart = source.indexOf("async function main()");
-  assert.notEqual(mainStart, -1, "publisher main function must be inspectable");
-  const mainBody = source.slice(mainStart);
-  const verify = mainBody.indexOf("runVerifyDraft();");
-  const preflight = mainBody.indexOf("runReleasePreflight();");
-  const patch = mainBody.indexOf('"PATCH"');
+  const publishStart = source.indexOf("async function publishFromProof(");
+  assert.notEqual(publishStart, -1, "publisher flow must be inspectable");
+  const mainStart = source.indexOf("async function main()", publishStart);
+  assert.notEqual(mainStart, -1, "publisher entry point must be inspectable");
+  const publishBody = source.slice(publishStart, mainStart);
+  const verify = publishBody.indexOf("runVerifyDraft(proofPath);");
+  const preflight = publishBody.indexOf("runReleasePreflight();");
+  const patch = publishBody.indexOf('"PATCH"');
   assert.match(source, /release-preflight\.js/u);
-  assert.ok(verify >= 0 && verify < preflight);
-  assert.ok(preflight >= 0 && preflight < patch);
+  assert.ok(verify >= 0, "publisher must verify the draft with its proof path");
+  assert.ok(
+    preflight > verify,
+    "shared preflight must follow draft verification",
+  );
+  assert.ok(patch > preflight, "PATCH must follow shared preflight");
 });

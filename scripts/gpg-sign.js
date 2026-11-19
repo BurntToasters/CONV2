@@ -104,9 +104,14 @@ const REQUIRED_UPDATER_TARGETS = (
   process.env.REQUIRED_UPDATER_TARGETS || ""
 ).trim();
 
+const WINDOWS_AUTHENTICODE_ATTESTATION = "windows-authenticode.json";
+
 const ext = (e) => (n) => n.toLowerCase().endsWith(e);
 const rx = (r) => (n) => r.test(n);
 const exact = (f) => (n) => n === f;
+const isWindowsAuthenticodeAttestation = exact(
+  WINDOWS_AUTHENTICODE_ATTESTATION,
+);
 const isPerTargetManifest = rx(/^latest-[a-z0-9_-]+\.json$/i);
 const isChecksumTextName = rx(
   // Target keys include prerelease names such as darwin-beta-aarch64.
@@ -144,6 +149,7 @@ const SIGN_RULES = [
   rx(/^CONV2(?:-macOS-(?:universal|arm64|x64))?\.zip$/i),
   rx(/\.app\.tar\.gz$/i),
   rx(/\.app\.tar\.zst$/i),
+  isWindowsAuthenticodeAttestation,
 ];
 
 // hdiutil leaves a read-write `rw.<pid>.<name>.dmg` scratch image behind when a
@@ -225,6 +231,24 @@ function wasBuiltInSession(filePath, session) {
   } catch {
     return false;
   }
+}
+
+function currentWindowsAuthenticodeAttestation(buildSession) {
+  const filePath = path.join(releaseDir, WINDOWS_AUTHENTICODE_ATTESTATION);
+  let isFile = false;
+  try {
+    isFile = fs.statSync(filePath).isFile();
+  } catch {
+    return null;
+  }
+  if (!isFile) return null;
+  if (!wasBuiltInSession(filePath, buildSession)) {
+    console.warn(
+      `  ~ Skipped stale ${WINDOWS_AUTHENTICODE_ATTESTATION} in release/`,
+    );
+    return null;
+  }
+  return filePath;
 }
 
 function clearReleaseStaging() {
@@ -838,6 +862,11 @@ function collectArtifacts() {
       }
       collected.push(dest);
     }
+    const attestation = currentWindowsAuthenticodeAttestation(buildSession);
+    if (attestation) {
+      collected.push(attestation);
+      console.log(`  + ${WINDOWS_AUTHENTICODE_ATTESTATION}`);
+    }
     const manifests = generateUpdaterManifests(collected);
     return [...collected, ...manifests];
   }
@@ -871,8 +900,18 @@ function collectArtifacts() {
     `  Found ${currentStaged.length} current pre-staged artifact(s) in release/`,
   );
   const normalizedStaged = normalizePreStagedArtifacts(currentStaged);
+  const attestation = currentWindowsAuthenticodeAttestation(buildSession);
+  if (attestation) {
+    console.log(`  + ${WINDOWS_AUTHENTICODE_ATTESTATION}`);
+  }
   const manifests = generateUpdaterManifests(normalizedStaged);
-  return Array.from(new Set([...normalizedStaged, ...manifests]));
+  return Array.from(
+    new Set([
+      ...normalizedStaged,
+      ...(attestation ? [attestation] : []),
+      ...manifests,
+    ]),
+  );
 }
 
 function sha256(filePath) {
@@ -1626,7 +1665,11 @@ function buildUploadList({
     [...artifacts, ...checksumFiles].map((filePath) => path.resolve(filePath)),
   );
   const groups = [
-    [artifacts, (name) => isArtifact(name), "artifact or manifest"],
+    [
+      artifacts,
+      (name) => isArtifact(name) || isWindowsAuthenticodeAttestation(name),
+      "artifact, manifest, or Authenticode attestation",
+    ],
     [checksumFiles, (name) => isChecksumTextName(name), "checksum manifest"],
     [
       signatureFiles,

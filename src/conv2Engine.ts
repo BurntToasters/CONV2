@@ -2704,21 +2704,14 @@ const setupEventListeners = () => {
   elements.updateChannelSelect.addEventListener('change', async () => {
     const nextValue = elements.updateChannelSelect.value as AppSettings['updateChannel'];
     const previousValue = settings.updateChannel;
-    await persistSettingsChange(
-      () => {
-        settings.updateChannel = nextValue;
-      },
-      () => {
-        settings.updateChannel = previousValue;
-        elements.updateChannelSelect.value = previousValue;
-      },
-      { updateChannel: nextValue },
-      'Failed to save update channel',
-      () => {
-        // The updater engine reads its channel through this command.
-        void api.setUpdateChannel(nextValue).catch(() => undefined);
-      }
-    );
+    settings.updateChannel = nextValue;
+    try {
+      await api.setUpdateChannel(nextValue);
+    } catch (err) {
+      settings.updateChannel = previousValue;
+      elements.updateChannelSelect.value = previousValue;
+      showStatus('error', `Failed to save update channel: ${getErrorMessage(err)}`);
+    }
   });
 
   elements.useSystemFFmpegCheck.addEventListener('change', async () => {
@@ -3221,11 +3214,19 @@ const setupEventListeners = () => {
       Object.assign(settings, partial);
     },
     saveSettings: async (partial) => {
-      await api.saveSettings(partial as SaveSettingsPayload);
-      if (partial.updateChannel) {
-        // Keep the updater engine in sync with the wizard's channel choice.
-        void api.setUpdateChannel(partial.updateChannel).catch(() => undefined);
+      const { updateChannel, ...patch } = partial;
+      if (Object.keys(patch).length > 0) {
+        await api.saveSettings(patch as SaveSettingsPayload);
       }
+      if (updateChannel) {
+        await api.setUpdateChannel(updateChannel);
+      }
+    },
+    setUpdateChannel: async (channel) => {
+      await api.setUpdateChannel(channel);
+    },
+    reportError: (message) => {
+      showStatus('error', message);
     },
     applyTheme,
     applyGpuModeUi,

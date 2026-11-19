@@ -56,9 +56,15 @@ export interface Commands {
   set_update_channel: { args: { channel: Ipc.UpdateChannel }; result: void };
 }
 
-/** Partial settings patch, as v1's SaveSettingsPayload accepted. */
-export type SaveSettingsInput = Omit<Partial<Ipc.AppSettings>, 'uiPanels'> & {
+/** Partial settings patch, as v1's SaveSettingsPayload accepted. The update
+ * channel has its own command so the updater engine observes the transition. */
+export type SaveSettingsInput = Omit<
+  Partial<Ipc.AppSettings>,
+  'uiPanels' | 'updateChannel' | 'settingsSchemaVersion'
+> & {
   uiPanels?: Partial<Ipc.UIPanelSettings>;
+  /** Legacy v1 alias, normalized to useSystemFfmpeg by the backend. */
+  useSystemFFmpeg?: boolean;
 };
 
 export type CommandName = keyof Commands;

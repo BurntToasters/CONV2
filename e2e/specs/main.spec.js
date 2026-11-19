@@ -504,6 +504,36 @@ describe("CONV2 main window", () => {
     const reset = await api("resetSettings");
     assert.deepEqual(reset, defaults);
     assert.deepEqual(await api("getSettings"), defaults);
+
+    const settingsPath = path.join(DATA_DIR, "settings.json");
+    const settingsBackupPath = path.join(DATA_DIR, "settings.json.e2e-backup");
+    const previousChannel = defaults.updateChannel;
+    const nextChannel = previousChannel === "beta" ? "stable" : "beta";
+    assert.ok(fs.existsSync(settingsPath), "the profile settings file exists");
+    assert.ok(
+      !fs.existsSync(settingsBackupPath),
+      "the settings backup path is unused",
+    );
+    fs.renameSync(settingsPath, settingsBackupPath);
+    try {
+      fs.mkdirSync(settingsPath);
+      await assert.rejects(api("setUpdateChannel", nextChannel));
+      assert.equal(
+        (await api("getSettings")).updateChannel,
+        previousChannel,
+        "a failed channel save leaves the settings cache unchanged",
+      );
+    } finally {
+      fs.rmSync(settingsPath, { recursive: true, force: true });
+      fs.renameSync(settingsBackupPath, settingsPath);
+    }
+
+    await api("setUpdateChannel", nextChannel);
+    assert.equal((await api("getSettings")).updateChannel, nextChannel);
+    assert.equal(readSettingsFile().updateChannel, nextChannel);
+    await api("setUpdateChannel", previousChannel);
+    assert.equal((await api("getSettings")).updateChannel, previousChannel);
+
     await api("saveSettings", E2E_BASELINE);
     assert.equal((await api("getSettings")).outputDirectory, OUTPUT);
     record("settings-patch");

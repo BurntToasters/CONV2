@@ -2,7 +2,7 @@
 //! persistence in `<app data>/settings.json` at schema version 7 (v1's
 //! settingsStore.ts / settingsSchema.ts / advancedFormats.ts).
 
-use crate::ipc::{self, FalliblePayload, IpcResult, JsonObject, INTERNAL_ERROR};
+use crate::ipc::{self, FalliblePayload, IpcResult, JsonObject, INTERNAL_ERROR, VALIDATION_ERROR};
 use crate::types::{
     AdvancedFormatSettings, AppSettings, Av1AdvancedSettings, Av1TierSettings, AviAdvancedSettings,
     AviCodec, AviTierSettings, CustomThemeId, GifAdvancedSettings, GifDither, GifLoopMode,
@@ -35,7 +35,6 @@ const ALLOWED_SETTINGS_KEYS: &[&str] = &[
     "useSystemFFmpeg",
     "useCpuDecodingWhenGpu",
     "moveOriginalToTrashOnSuccess",
-    "updateChannel",
     "showAdvancedPresets",
     "removeSpacesFromFilenames",
     "showAllGpuVendors",
@@ -1025,15 +1024,21 @@ pub fn import_legacy(raw: Value) -> Result<(), String> {
 }
 
 /// Persist the updater's channel through the store so SETTINGS and the file
-/// agree; updater.rs rewires to this instead of writing the file itself.
-#[allow(dead_code)] // The updater rewire supplies the first caller.
+/// agree. The updater state reservation serializes the write, the on-disk
+/// update, and the ChannelChanged transition; a reservation refusal leaves
+/// both the file and the engine untouched.
 pub fn set_update_channel(channel: UpdateChannel) -> Result<(), String> {
+    let reservation = crate::updater::reserve_channel_write()
+        .ok_or_else(|| "An update install or channel change is already in progress.".to_string())?;
     let _save = SAVE_LOCK
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
     let mut next = current();
+    let previous = next.update_channel;
     next.update_channel = channel;
-    save_to_disk(&next)
+    let saved = save_to_disk(&next);
+    crate::updater::complete_channel_change(reservation, channel, previous, saved.clone());
+    saved
 }
 
 fn merge_patch(current: &AppSettings, patch: &Map<String, Value>) -> AppSettings {
@@ -1051,6 +1056,13 @@ fn merge_patch(current: &AppSettings, patch: &Map<String, Value>) -> AppSettings
     for (key, value) in patch {
         if ALLOWED_SETTINGS_KEYS.contains(&key.as_str()) {
             merged.insert(key.clone(), value.clone());
+        }
+    }
+    // The v1 renderer spelled the legacy key differently; the stored key and
+    // AppSettings field are canonical.
+    if !patch.contains_key("useSystemFfmpeg") {
+        if let Some(value) = patch.get("useSystemFFmpeg") {
+            merged.insert("useSystemFfmpeg".into(), value.clone());
         }
     }
     // Nested settings merge one level deeper than a plain overwrite.
@@ -1124,6 +1136,14 @@ pub fn save_settings(settings: FalliblePayload<JsonObject<Value>>) -> IpcResult<
             "Settings payload must be a JSON object.",
         );
     };
+    // The channel has its own reservation-backed writer so the updater engine
+    // can never miss a transition.
+    if patch.contains_key("updateChannel") {
+        return ipc::err(
+            VALIDATION_ERROR,
+            "Use set_update_channel to change the update channel.",
+        );
+    }
     let _save = SAVE_LOCK
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
@@ -1139,8 +1159,25 @@ pub fn save_settings(settings: FalliblePayload<JsonObject<Value>>) -> IpcResult<
 
 #[tauri::command(async)]
 pub fn reset_settings() -> IpcResult<AppSettings> {
+    let Some(reservation) = crate::updater::reserve_channel_write() else {
+        return ipc::err(
+            INTERNAL_ERROR,
+            "An update install or channel change is already in progress.",
+        );
+    };
+    let _save = SAVE_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     let defaults = default_settings();
-    match save_to_disk(&defaults) {
+    let previous = current().update_channel;
+    let saved = save_to_disk(&defaults);
+    crate::updater::complete_channel_change(
+        reservation,
+        defaults.update_channel,
+        previous,
+        saved.clone(),
+    );
+    match saved {
         Ok(()) => ipc::ok(defaults),
         Err(error) => {
             crate::logging::error(&format!("Failed to reset settings: {error}"));

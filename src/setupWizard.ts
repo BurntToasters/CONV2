@@ -18,6 +18,8 @@ export interface SetupWizardDeps {
   getSettings: () => SetupWizardSettingsSlice;
   patchSettings: (partial: Partial<SetupWizardSettingsSlice>) => void;
   saveSettings: (partial: Partial<SetupWizardSettingsSlice>) => Promise<void>;
+  setUpdateChannel: (channel: SetupWizardSettingsSlice['updateChannel']) => Promise<void>;
+  reportError: (message: string) => void;
   applyTheme: () => Promise<void>;
   applyGpuModeUi: () => void;
   persistGpuMode: (mode: GPUMode) => Promise<void>;
@@ -369,6 +371,7 @@ const persistStepPreferences = async (): Promise<void> => {
   }
   const settings = deps.getSettings();
   const partial: Partial<SetupWizardSettingsSlice> = {};
+  let channel: SetupWizardSettingsSlice['updateChannel'] | undefined;
 
   if (currentStep === 1) {
     partial.theme = settings.theme;
@@ -381,11 +384,14 @@ const persistStepPreferences = async (): Promise<void> => {
     partial.notifyOnConversionComplete = settings.notifyOnConversionComplete;
     partial.preventSleepWhileConverting = settings.preventSleepWhileConverting;
   } else if (currentStep === 5) {
-    partial.updateChannel = settings.updateChannel;
+    channel = settings.updateChannel;
   }
 
   if (Object.keys(partial).length > 0) {
     await deps.saveSettings(partial);
+  }
+  if (channel) {
+    await deps.setUpdateChannel(channel);
   }
 };
 
@@ -448,10 +454,25 @@ const bindWizardControls = (): void => {
   const channelSelect = overlay.querySelector<HTMLSelectElement>('#wizardUpdateChannelSelect');
   channelSelect?.addEventListener('change', () => {
     const value = channelSelect.value;
-    if (value === 'auto' || value === 'stable' || value === 'beta') {
-      deps?.patchSettings({ updateChannel: value });
-      void deps?.saveSettings({ updateChannel: value });
+    if (value !== 'auto' && value !== 'stable' && value !== 'beta') {
+      return;
     }
+    const wizardDeps = deps;
+    if (!wizardDeps) {
+      return;
+    }
+    const previous = wizardDeps.getSettings().updateChannel;
+    wizardDeps.patchSettings({ updateChannel: value });
+    void (async () => {
+      try {
+        await wizardDeps.setUpdateChannel(value);
+      } catch (error) {
+        wizardDeps.patchSettings({ updateChannel: previous });
+        syncWizardControlsFromSettings();
+        const message = error instanceof Error ? error.message : String(error);
+        wizardDeps.reportError(`Failed to save update channel: ${message}`);
+      }
+    })();
   });
 
   overlay.querySelector('#wizardChooseOutputBtn')?.addEventListener('click', () => {
@@ -512,6 +533,9 @@ const goNext = (): void => {
       currentStep += 1;
       updateStepUi();
       focusActiveWizardSurface();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      deps?.reportError(`Failed to save setup wizard settings: ${message}`);
     } finally {
       stepTransitionBusy = false;
     }

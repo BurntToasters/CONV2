@@ -1,6 +1,6 @@
 //! Metadata previews: the ffprobe projection behind the selected file list
-//! (v1 ffmpeg.ts runFFprobe + getVideoInfo). The probe runs through the
-//! bundled `conv2-ffprobe` sidecar only; v1's system ffprobe lookup is gone.
+//! (v1 ffmpeg.ts runFFprobe + getVideoInfo). Every probe runs the exact
+//! ffprobe `ffmpeg_status` accepted, whether bundled or pinned from PATH.
 //! Cancellation is single-slot replacement (TrackedSlot): a new request
 //! invalidates and terminates the previous one, matching v1's AbortSignal.
 
@@ -255,17 +255,13 @@ static CONVERSION_PROBE: TrackedSlot = TrackedSlot::new();
 
 /// v1 `getVideoInfo` for a conversion, cancellable with the batch.
 pub(crate) fn probe_for_conversion(path: &str) -> Result<VideoInfo, ProbeError> {
-    // v1's runFFprobe gated on the FFmpeg status before spawning.
-    if !ffmpeg_status::current_status().ok {
+    // v1's runFFprobe gated on the FFmpeg status before spawning; the gate
+    // returns the exact binary it accepted, so no bare-name spawn is possible.
+    let Some(tools) = ffmpeg_status::effective_tools() else {
         return Err(ProbeError::Failed);
-    }
+    };
     let reservation = CONVERSION_PROBE.reserve();
-    probe_file(
-        &CONVERSION_PROBE,
-        &ffmpeg_status::bundled_ffprobe(),
-        path,
-        reservation,
-    )
+    probe_file(&CONVERSION_PROBE, &tools.ffprobe, path, reservation)
 }
 
 /// Stop an in-flight conversion preflight probe.
@@ -276,9 +272,9 @@ pub(crate) fn cancel_conversion_probe() {
 /// v1 `getVideoDuration`: a second probe for containers whose format
 /// duration is missing or zero.
 pub(crate) fn probe_duration_for_conversion(path: &str) -> Result<f64, ProbeError> {
-    if !ffmpeg_status::current_status().ok {
+    let Some(tools) = ffmpeg_status::effective_tools() else {
         return Err(ProbeError::Failed);
-    }
+    };
     let reservation = CONVERSION_PROBE.reserve();
     if reservation.is_cancelled() {
         return Err(ProbeError::Cancelled);
@@ -297,7 +293,7 @@ pub(crate) fn probe_duration_for_conversion(path: &str) -> Result<f64, ProbeErro
     ]
     .map(str::to_string)
     .to_vec();
-    let command = crate::process_util::command(ffmpeg_status::bundled_ffprobe(), &args, &[], true);
+    let command = crate::process_util::command(&tools.ffprobe, &args, &[], true);
     match CONVERSION_PROBE.run_reserved_with(
         reservation,
         command,
@@ -327,11 +323,8 @@ fn fetch_file_info(path: String, reservation: TrackedReservation<'static>) -> Op
     // never a network-namespace path. A bad path stays a null probe result.
     let path = crate::validation::existing_file(&path)?;
     // v1's runFFprobe gated on the FFmpeg status before spawning.
-    if !ffmpeg_status::current_status().ok {
-        return None;
-    }
-    let ffprobe = ffmpeg_status::bundled_ffprobe();
-    let probed = probe_file(&FILE_INFO, &ffprobe, &path, reservation).ok();
+    let tools = ffmpeg_status::effective_tools()?;
+    let probed = probe_file(&FILE_INFO, &tools.ffprobe, &path, reservation).ok();
     // v1's handler replaced the probe's size with the actual file size.
     probed.map(|mut info| {
         if let Ok(meta) = std::fs::metadata(&path) {
