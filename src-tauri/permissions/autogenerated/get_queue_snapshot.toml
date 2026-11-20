@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-get-queue-snapshot"
+description = "Enables the get_queue_snapshot command without any pre-configured scope."
+commands.allow = ["get_queue_snapshot"]
+
+[[permission]]
+identifier = "deny-get-queue-snapshot"
+description = "Denies the get_queue_snapshot command without any pre-configured scope."
+commands.deny = ["get_queue_snapshot"]

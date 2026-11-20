@@ -1,11 +1,9 @@
 //! Output naming and FFmpeg argument surgery for conversions (v1 ffmpeg.ts):
-//! unique output claims, pipeline splicing, MP4 playback fixes, remux
+//! output file names, pipeline splicing, MP4 playback fixes, remux
 //! preflight, and the input protocol whitelist.
 
 use crate::command_builders::Preset;
 use regex::Regex;
-use std::io;
-use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
 /// Presets whose output needs a video stream from the input.
@@ -18,37 +16,40 @@ fn faststart_regex() -> &'static Regex {
     REGEX.get_or_init(|| Regex::new(r"\bfaststart\b").expect("valid regex"))
 }
 
-const MAX_OUTPUT_SUFFIX: u32 = 10_000;
+pub const MAX_OUTPUT_SUFFIX: u32 = 10_000;
+/// Filename component limit: 255 bytes (UTF-8 filesystems) or 255 UTF-16 units
+/// (NTFS).
+const MAX_NAME_UNITS: usize = 255;
 
-/// `<base>_converted[_N].<ext>`, claimed atomically with an exclusive create
-/// so two processes writing the same folder cannot pick the same name.
-pub fn resolve_unique_output_path(
-    output_dir: &Path,
-    output_base_name: &str,
-    extension: &str,
-) -> io::Result<PathBuf> {
-    for suffix in 0..=MAX_OUTPUT_SUFFIX {
-        let suffix_part = if suffix == 0 {
-            String::new()
-        } else {
-            format!("_{suffix}")
-        };
-        let candidate = output_dir.join(format!(
-            "{output_base_name}_converted{suffix_part}.{extension}"
-        ));
-        match std::fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&candidate)
-        {
-            Ok(_) => return Ok(candidate),
-            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => continue,
-            Err(error) => return Err(error),
-        }
+fn name_units(text: &str) -> usize {
+    if cfg!(windows) {
+        text.encode_utf16().count()
+    } else {
+        text.len()
     }
-    Err(io::Error::other(format!(
-        "Could not find unique output path after {MAX_OUTPUT_SUFFIX} attempts"
-    )))
+}
+
+/// `<base>_converted[_N].<ext>` with the stem cut at a char boundary so the
+/// whole name, suffix and extension included, fits one path component.
+pub fn output_file_name(output_base_name: &str, suffix: u32, extension: &str) -> String {
+    let suffix_part = if suffix == 0 {
+        String::new()
+    } else {
+        format!("_{suffix}")
+    };
+    let tail = format!("_converted{suffix_part}.{extension}");
+    let budget = MAX_NAME_UNITS.saturating_sub(name_units(&tail));
+    let mut stem = String::new();
+    let mut used = 0;
+    for character in output_base_name.chars() {
+        let width = name_units(character.encode_utf8(&mut [0; 4]));
+        if used + width > budget {
+            break;
+        }
+        used += width;
+        stem.push(character);
+    }
+    format!("{stem}{tail}")
 }
 
 /// Splices pipeline options before the output path. A flag the preset already
@@ -206,19 +207,18 @@ mod tests {
     }
 
     #[test]
-    fn output_names_increment_until_claimed() {
-        let dir = std::env::temp_dir().join(format!("conv2-out-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
-        let first = resolve_unique_output_path(&dir, "clip", "mp4").unwrap();
-        assert_eq!(first.file_name().unwrap(), "clip_converted.mp4");
-        std::fs::write(&first, b"x").unwrap();
-        let second = resolve_unique_output_path(&dir, "clip", "mp4").unwrap();
-        assert_eq!(second.file_name().unwrap(), "clip_converted_1.mp4");
-        std::fs::write(&second, b"x").unwrap();
-        let third = resolve_unique_output_path(&dir, "clip", "mp4").unwrap();
-        assert_eq!(third.file_name().unwrap(), "clip_converted_2.mp4");
-        let _ = std::fs::remove_dir_all(&dir);
+    fn output_names_increment_and_fit_one_component() {
+        assert_eq!(output_file_name("clip", 0, "mp4"), "clip_converted.mp4");
+        assert_eq!(output_file_name("clip", 2, "mp4"), "clip_converted_2.mp4");
+        let long = "é".repeat(300);
+        let name = output_file_name(&long, MAX_OUTPUT_SUFFIX, "webm");
+        let units = if cfg!(windows) {
+            name.encode_utf16().count()
+        } else {
+            name.len()
+        };
+        assert!(units <= 255);
+        assert!(name.ends_with("_converted_10000.webm"));
     }
 
     #[test]

@@ -34,6 +34,50 @@ fn production_integrations_enabled() -> bool {
     !cfg!(feature = "e2e")
 }
 
+/// File-path arguments from an "Open with" launch. The first argument is the
+/// executable and flags start with `-`; relative paths resolve against `cwd`
+/// (the second instance's directory); only existing regular files with UTF-8
+/// paths survive.
+fn open_with_paths<I>(args: I, cwd: Option<&std::path::Path>) -> Vec<String>
+where
+    I: IntoIterator<Item = std::ffi::OsString>,
+{
+    let mut paths: Vec<String> = Vec::new();
+    for arg in args.into_iter().skip(1) {
+        if arg.is_empty() || arg.to_string_lossy().starts_with('-') {
+            continue;
+        }
+        let mut path = std::path::PathBuf::from(arg);
+        if path.is_relative() {
+            match cwd {
+                Some(base) => path = base.join(path),
+                None => continue,
+            }
+        }
+        if !path.is_file() {
+            continue;
+        }
+        if let Some(text) = path.to_str() {
+            if !paths.iter().any(|known| known == text) {
+                paths.push(text.to_string());
+            }
+        }
+    }
+    paths
+}
+
+/// Focus the window and hand the files to the renderer (queued until ready).
+fn deliver_open_with(app: &tauri::AppHandle, paths: Vec<String>) {
+    if paths.is_empty() {
+        return;
+    }
+    app_menu::deliver(
+        app,
+        "open-files",
+        Some(serde_json::json!({ "paths": paths })),
+    );
+}
+
 /// Emit late conversion events so the E2E suite can prove the renderer
 /// ignores stale queue and progress traffic.
 #[cfg(feature = "e2e")]
@@ -99,6 +143,7 @@ macro_rules! generate_app_handler {
             settings::reset_settings,
             conversion::start_conversion_queue,
             conversion::cancel_conversion,
+            conversion::get_queue_snapshot,
             platform::select_output_directory,
             platform::select_input_files,
             media_info::get_file_info,
@@ -115,6 +160,7 @@ macro_rules! generate_app_handler {
             window::set_conversion_menu_state,
             logging::log_error,
             window::mark_main_window_ready,
+            window::notify_settings_flushed,
             updater::check_for_updates,
             updater::download_update,
             updater::install_update,
@@ -144,15 +190,23 @@ fn main() {
     #[cfg(not(any(target_os = "android", target_os = "ios")))]
     {
         if production_integrations_enabled() {
-            builder = builder.plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
+            builder = builder.plugin(tauri_plugin_single_instance::init(|app, argv, cwd| {
                 // Window work from the single-instance callback can deadlock
                 // WebView2 on Windows; dispatch after the callback returns.
+                let paths = open_with_paths(
+                    argv.into_iter().map(std::ffi::OsString::from),
+                    Some(std::path::Path::new(&cwd)),
+                );
                 let handle = app.clone();
                 std::thread::spawn(move || {
                     let main_thread = handle.clone();
                     let _ = handle.run_on_main_thread(move || {
-                        if let Err(error) = window::show_main_window(&main_thread) {
-                            logging::warn(&format!("Failed to focus main window: {error}"));
+                        if paths.is_empty() {
+                            if let Err(error) = window::show_main_window(&main_thread) {
+                                logging::warn(&format!("Failed to focus main window: {error}"));
+                            }
+                        } else {
+                            deliver_open_with(&main_thread, paths);
                         }
                     });
                 });
@@ -212,6 +266,11 @@ fn main() {
             }
             window::show_main_window(app.handle())
                 .map_err(|error| -> Box<dyn std::error::Error> { error.into() })?;
+            // Files passed on the command line ("Open with"); queued until ready.
+            deliver_open_with(
+                app.handle(),
+                open_with_paths(std::env::args_os(), std::env::current_dir().ok().as_deref()),
+            );
             Ok(())
         })
         .invoke_handler(invoke_handler)

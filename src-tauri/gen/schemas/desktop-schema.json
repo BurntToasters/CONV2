@@ -441,6 +441,12 @@
           "markdownDescription": "Enables the get_presets command without any pre-configured scope."
         },
         {
+          "description": "Enables the get_queue_snapshot command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-get-queue-snapshot",
+          "markdownDescription": "Enables the get_queue_snapshot command without any pre-configured scope."
+        },
+        {
           "description": "Enables the get_settings command without any pre-configured scope.",
           "type": "string",
           "const": "allow-get-settings",
@@ -469,6 +475,12 @@
           "type": "string",
           "const": "allow-mark-main-window-ready",
           "markdownDescription": "Enables the mark_main_window_ready command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the notify_settings_flushed command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-notify-settings-flushed",
+          "markdownDescription": "Enables the notify_settings_flushed command without any pre-configured scope."
         },
         {
           "description": "Enables the open_external command without any pre-configured scope.",
@@ -633,6 +645,12 @@
           "markdownDescription": "Denies the get_presets command without any pre-configured scope."
         },
         {
+          "description": "Denies the get_queue_snapshot command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-get-queue-snapshot",
+          "markdownDescription": "Denies the get_queue_snapshot command without any pre-configured scope."
+        },
+        {
           "description": "Denies the get_settings command without any pre-configured scope.",
           "type": "string",
           "const": "deny-get-settings",
@@ -661,6 +679,12 @@
           "type": "string",
           "const": "deny-mark-main-window-ready",
           "markdownDescription": "Denies the mark_main_window_ready command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the notify_settings_flushed command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-notify-settings-flushed",
+          "markdownDescription": "Denies the notify_settings_flushed command without any pre-configured scope."
         },
         {
           "description": "Denies the open_external command without any pre-configured scope.",

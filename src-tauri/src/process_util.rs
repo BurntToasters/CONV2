@@ -56,6 +56,29 @@ const ENV_ALLOWLIST: &[&str] = &[
     "DISPLAY",
     "WAYLAND_DISPLAY",
     "DBUS_SESSION_BUS_ADDRESS",
+    // GPU/driver selection v1 inherited: VAAPI/VDPAU/Mesa/NVIDIA drivers and
+    // Flatpak GL-extension driver paths. Without these, hwaccel silently
+    // falls back to CPU.
+    "LIBVA_DRIVER_NAME",
+    "LIBVA_DRIVERS_PATH",
+    "LIBVA_MESSAGING_LEVEL",
+    "LD_LIBRARY_PATH",
+    "DRI_PRIME",
+    "VDPAU_DRIVER",
+    "VDPAU_DRIVER_PATH",
+    "CUDA_VISIBLE_DEVICES",
+    "NVIDIA_VISIBLE_DEVICES",
+    "NVIDIA_DRIVER_CAPABILITIES",
+    "MESA_LOADER_DRIVER_OVERRIDE",
+    "LIBGL_DRIVERS_PATH",
+    "__GLX_VENDOR_LIBRARY_NAME",
+    "__NV_PRIME_RENDER_OFFLOAD",
+    "__VK_LAYER_NV_optimus",
+    "VK_ICD_FILENAMES",
+    "VK_DRIVER_FILES",
+    "DRI_DRIVERS_PATH",
+    "GBM_BACKENDS_PATH",
+    "XDG_DATA_DIRS",
 ];
 
 const PIPE_DRAIN_TIMEOUT: Duration = Duration::from_secs(2);
@@ -76,11 +99,13 @@ fn env_path(name: &str) -> PathBuf {
 pub fn enhanced_path() -> std::ffi::OsString {
     let current = std::env::var_os("PATH").unwrap_or_default();
     let mut entries: Vec<PathBuf> = if cfg!(windows) {
-        // Store-installed CLI shims (winget user installs) live here; the
+        // winget links portable-package CLIs (such as FFmpeg) here; the
         // inherited PATH only covers processes started after installation.
+        // WindowsApps holds only Store app-execution aliases, so it is omitted.
         vec![env_path("LOCALAPPDATA")
             .join("Microsoft")
-            .join("WindowsApps")]
+            .join("WinGet")
+            .join("Links")]
     } else {
         vec![
             PathBuf::from("/opt/homebrew/bin"),
@@ -135,13 +160,8 @@ pub fn command<P: AsRef<OsStr>>(
     }
     #[cfg(unix)]
     {
-        // Known gap: release builds use `panic = "abort"`, so a CONV2 abort
-        // skips every cleanup path. On Linux and macOS the helpers (FFmpeg,
-        // ffprobe) can then outlive CONV2. Windows is covered by the
-        // kill-on-close job. Linux PR_SET_PDEATHSIG is the planned fix, but
-        // it tracks the spawning thread and so needs a process-lifetime
-        // spawner thread. Deferred until a Linux build can verify it; macOS
-        // has no equivalent.
+        // Linux children also get PR_SET_PDEATHSIG (see `spawn_child`); macOS
+        // has no equivalent, so an aborted CONV2 can still orphan helpers there.
         use std::os::unix::process::CommandExt;
         if new_group {
             command.process_group(0);
@@ -382,7 +402,101 @@ fn child_exit_observed(pid: u32) -> std::io::Result<bool> {
     }
 }
 
+/// One spawn request for the `conv2-spawner` thread. The sender blocks on
+/// `reply` until the spawner has finished with `command`.
+#[cfg(target_os = "linux")]
+struct SpawnJob {
+    command: *mut Command,
+    reply: mpsc::Sender<std::io::Result<SharedChild>>,
+}
+
+// SAFETY: `spawn_child` sends a job and then blocks on its reply, so the
+// `&mut Command` behind `command` stays valid and is used by only the spawner
+// until it sends the reply. The pointer is never used after that reply.
+#[cfg(target_os = "linux")]
+unsafe impl Send for SpawnJob {}
+
+/// Sender to the process-lifetime `conv2-spawner` thread, or None when it could
+/// not start. PDEATHSIG fires when the thread that forked the child exits, so
+/// children must be forked from a thread that lives as long as CONV2.
+#[cfg(target_os = "linux")]
+fn spawner() -> Option<&'static mpsc::Sender<SpawnJob>> {
+    static SPAWNER: std::sync::OnceLock<Option<mpsc::Sender<SpawnJob>>> =
+        std::sync::OnceLock::new();
+    SPAWNER
+        .get_or_init(|| {
+            let (sender, receiver) = mpsc::channel::<SpawnJob>();
+            std::thread::Builder::new()
+                .name("conv2-spawner".into())
+                .spawn(move || {
+                    for job in receiver {
+                        // SAFETY: see `unsafe impl Send for SpawnJob`.
+                        let result = spawn_with_death_signal(unsafe { &mut *job.command });
+                        let _ = job.reply.send(result);
+                    }
+                })
+                .ok()
+                .map(|_| sender)
+        })
+        .as_ref()
+}
+
+/// Forks `command` with PR_SET_PDEATHSIG(SIGKILL) so the child dies with CONV2,
+/// including when CONV2 aborts without cleanup. Runs on the spawner thread.
+#[cfg(target_os = "linux")]
+fn spawn_with_death_signal(command: &mut Command) -> std::io::Result<SharedChild> {
+    use std::os::unix::process::CommandExt;
+
+    // SAFETY: getpid has no preconditions.
+    let parent = unsafe { libc::getpid() };
+    // SAFETY: the hook runs in the forked child before exec and makes only
+    // async-signal-safe calls: prctl, getppid, and building an error from errno.
+    unsafe {
+        command.pre_exec(move || {
+            // prctl is variadic; the kernel reads this argument as unsigned long.
+            if libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL as libc::c_ulong) != 0 {
+                return Err(std::io::Error::last_os_error());
+            }
+            // CONV2 may have died before prctl took effect: fail the spawn.
+            if libc::getppid() != parent {
+                return Err(std::io::Error::from_raw_os_error(libc::ESRCH));
+            }
+            Ok(())
+        });
+    }
+    SharedChild::spawn(command)
+}
+
+/// Spawns through the spawner thread so the child gets PDEATHSIG; falls back to
+/// the calling thread (no hook) if the spawner is unavailable.
+#[cfg(target_os = "linux")]
+fn spawn_child(command: &mut Command) -> std::io::Result<SharedChild> {
+    let Some(sender) = spawner() else {
+        return SharedChild::spawn(command);
+    };
+    let (reply, result) = mpsc::channel();
+    let job = SpawnJob {
+        command: std::ptr::from_mut(&mut *command),
+        reply,
+    };
+    if let Err(mpsc::SendError(_unsent)) = sender.send(job) {
+        // The job was never taken, so `command` is still exclusively ours.
+        return SharedChild::spawn(command);
+    }
+    // Blocking keeps `command` borrowed until the spawner replies. A closed
+    // reply channel means the spawner panicked after taking the job and the
+    // child may exist, so report an error rather than spawn a second one.
+    result.recv().unwrap_or_else(|_| {
+        Err(std::io::Error::other(
+            "conv2-spawner stopped before reporting the child process",
+        ))
+    })
+}
+
 pub fn spawn(command: &mut Command) -> std::io::Result<Arc<ManagedChild>> {
+    #[cfg(target_os = "linux")]
+    let child = spawn_child(command)?;
+    #[cfg(not(target_os = "linux"))]
     let child = SharedChild::spawn(command)?;
     #[cfg(windows)]
     let job = match assign_windows_job(child.id()) {
@@ -563,7 +677,8 @@ fn receive_drain(
 pub struct Output {
     pub code: Option<i32>,
     pub stdout: String,
-    /// Drained to keep the pipe from filling; callers read stdout only.
+    /// Drained to keep the pipe from filling; only some callers read it
+    /// (`codesign -dv` reports on stderr).
     #[allow(dead_code)]
     pub stderr: String,
     pub timed_out: bool,

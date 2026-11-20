@@ -2,7 +2,7 @@
 Type=Application
 Name=CONV2
 Comment=Cross-platform FFMPEG GUI for quick video conversion
-Exec=conv2
+Exec=conv2 %F
 Icon=run.rosie.conv2
 Terminal=false
 Categories=AudioVideo;Video;AudioVideoEditing;

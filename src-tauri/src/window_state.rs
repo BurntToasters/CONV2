@@ -1,5 +1,10 @@
-//! Main window bounds persistence (v1 `windowState.ts`). Stored in logical
-//! (DIP) units so a v1 `windowState.json` imports unchanged.
+//! Main window bounds persistence (v1 `windowState.ts`). On Windows, saved in
+//! physical pixels plus the window's scale, so mixed-DPI setups restore
+//! exactly. On macOS and Linux, saved in logical (DIP) units because tao
+//! converts physical values with each window's or monitor's own scale there
+//! (no global physical space). A file without `scale` is logical (v1 files
+//! import unchanged); a file with `scale` is physical and is converted to
+//! logical on those platforms.
 //!
 //! Failure modes, written before the code:
 //! 1. File missing, unreadable, oversized, or not JSON: use defaults.
@@ -13,6 +18,9 @@
 //!    those bounds.
 //! 9. Disk write fails or the app is killed mid-write: atomic write, log only.
 //! 10. No monitor list available: keep size, skip position.
+//! 11. Windows, monitors with different scales: compare physical rects, never
+//!     divide by a per-monitor scale.
+//! 12. Other platforms, a physical file: convert to logical by its own scale.
 
 use serde::Serialize;
 use serde_json::Value;
@@ -32,6 +40,7 @@ const TITLE_BAR_CLEARANCE: f64 = 64.0;
 #[derive(Clone, Copy, Debug, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct WindowState {
+    /// Physical pixels when `scale` is set; v1 logical units otherwise.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub x: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -39,6 +48,9 @@ pub struct WindowState {
     pub width: f64,
     pub height: f64,
     pub is_maximized: bool,
+    /// Window scale when saved; its presence marks the values as physical.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub scale: Option<f64>,
 }
 
 impl Default for WindowState {
@@ -49,11 +61,16 @@ impl Default for WindowState {
             width: DEFAULT_WIDTH,
             height: DEFAULT_HEIGHT,
             is_maximized: false,
+            scale: None,
         }
     }
 }
 
-/// A display in logical units.
+/// Windows persists physical pixels; elsewhere physical coordinates are not
+/// one global space, so logical units are used.
+const PHYSICAL: bool = cfg!(windows);
+
+/// A display, in physical pixels on Windows and logical units elsewhere.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Rect {
     pub x: f64,
@@ -62,7 +79,7 @@ pub struct Rect {
     pub height: f64,
 }
 
-/// What to apply to a freshly built (hidden) window.
+/// What to apply to a freshly built (hidden) window, in the `Rect` units.
 #[derive(Debug, PartialEq)]
 pub struct Plan {
     pub width: f64,
@@ -81,53 +98,67 @@ pub fn parse(text: &str) -> WindowState {
     let Ok(Value::Object(data)) = serde_json::from_str::<Value>(text) else {
         return defaults;
     };
+    let scale = data
+        .get("scale")
+        .and_then(finite)
+        .filter(|scale| (0.1..=16.0).contains(scale));
+    // Limits and defaults are logical; physical files carry them times scale.
+    let unit = scale.unwrap_or(1.0);
     let width = data
         .get("width")
         .and_then(finite)
-        .filter(|width| *width >= MIN_WIDTH)
-        .unwrap_or(DEFAULT_WIDTH);
+        .filter(|width| *width >= MIN_WIDTH * unit)
+        .unwrap_or(DEFAULT_WIDTH * unit);
     let height = data
         .get("height")
         .and_then(finite)
-        .filter(|height| *height >= MIN_HEIGHT)
-        .unwrap_or(DEFAULT_HEIGHT);
+        .filter(|height| *height >= MIN_HEIGHT * unit)
+        .unwrap_or(DEFAULT_HEIGHT * unit);
     WindowState {
         x: data.get("x").and_then(finite),
         y: data.get("y").and_then(finite),
         width,
         height,
         is_maximized: data.get("isMaximized").and_then(Value::as_bool) == Some(true),
+        scale,
     }
 }
 
-pub fn is_on_screen(x: f64, y: f64, width: f64, displays: &[Rect]) -> bool {
+/// All values physical; `clearance` is the title-bar strip that must show.
+pub fn is_on_screen(x: f64, y: f64, width: f64, clearance: f64, displays: &[Rect]) -> bool {
     displays.iter().any(|bounds| {
         x + width > bounds.x
             && x < bounds.x + bounds.width
-            && y + TITLE_BAR_CLEARANCE > bounds.y
+            && y + clearance > bounds.y
             && y < bounds.y + bounds.height
     })
 }
 
-pub fn plan(state: &WindowState, displays: &[Rect]) -> Plan {
-    let mut width = state.width;
-    let mut height = state.height;
+/// `legacy_scale` converts a v1 logical file once; physical files ignore it.
+pub fn plan(state: &WindowState, displays: &[Rect], legacy_scale: f64) -> Plan {
+    let unit = state.scale.unwrap_or(legacy_scale.max(0.1));
+    let to_physical = if state.scale.is_some() { 1.0 } else { unit };
+    let mut width = state.width * to_physical;
+    let mut height = state.height * to_physical;
     if let Some(widest) = displays
         .iter()
         .map(|display| display.width)
         .reduce(f64::max)
     {
-        width = width.min(widest).max(MIN_WIDTH.min(widest));
+        width = width.min(widest).max((MIN_WIDTH * unit).min(widest));
     }
     if let Some(tallest) = displays
         .iter()
         .map(|display| display.height)
         .reduce(f64::max)
     {
-        height = height.min(tallest).max(MIN_HEIGHT.min(tallest));
+        height = height.min(tallest).max((MIN_HEIGHT * unit).min(tallest));
     }
     let position = match (state.x, state.y) {
-        (Some(x), Some(y)) if is_on_screen(x, y, width, displays) => Some((x, y)),
+        (Some(x), Some(y)) => {
+            let (x, y) = (x * to_physical, y * to_physical);
+            is_on_screen(x, y, width, TITLE_BAR_CLEARANCE * unit, displays).then_some((x, y))
+        }
         _ => None,
     };
     Plan {
@@ -142,10 +173,30 @@ fn state_path() -> PathBuf {
     crate::app_state::data_dir().join(FILE_NAME)
 }
 
+/// Logical platforms: turn a physical file (has `scale`) into logical values.
+fn into_logical(state: WindowState) -> WindowState {
+    match state.scale {
+        Some(scale) => WindowState {
+            x: state.x.map(|x| x / scale),
+            y: state.y.map(|y| y / scale),
+            width: state.width / scale,
+            height: state.height / scale,
+            scale: None,
+            ..state
+        },
+        None => state,
+    }
+}
+
 pub fn load() -> WindowState {
-    match crate::fs_util::read_bounded(&state_path(), MAX_FILE_BYTES) {
+    let state = match crate::fs_util::read_bounded(&state_path(), MAX_FILE_BYTES) {
         Ok(Some(text)) => parse(&text),
         _ => WindowState::default(),
+    };
+    if PHYSICAL {
+        state
+    } else {
+        into_logical(state)
     }
 }
 
@@ -157,7 +208,11 @@ fn displays(app: &AppHandle) -> Vec<Rect> {
         .unwrap_or_default()
         .iter()
         .map(|monitor| {
-            let scale = monitor.scale_factor().max(0.1);
+            let scale = if PHYSICAL {
+                1.0
+            } else {
+                monitor.scale_factor().max(0.1)
+            };
             let position = monitor.position();
             let size = monitor.size();
             Rect {
@@ -174,14 +229,43 @@ fn displays(app: &AppHandle) -> Vec<Rect> {
 /// configured `center` cannot override the restored position.
 pub fn restore(app: &AppHandle, window: &WebviewWindow) {
     let state = load();
-    let plan = plan(&state, &displays(app));
-    let _ = window.set_size(tauri::LogicalSize::new(plan.width, plan.height));
-    match plan.position {
-        Some((x, y)) => {
-            let _ = window.set_position(tauri::LogicalPosition::new(x, y));
+    // Only a Windows v1 logical file needs converting; elsewhere all is logical.
+    let legacy_scale = if PHYSICAL {
+        app.primary_monitor()
+            .ok()
+            .flatten()
+            .map(|monitor| monitor.scale_factor())
+            .or_else(|| window.scale_factor().ok())
+            .unwrap_or(1.0)
+    } else {
+        1.0
+    };
+    let plan = plan(&state, &displays(app), legacy_scale);
+    if PHYSICAL {
+        let size = tauri::PhysicalSize::new(plan.width.round() as u32, plan.height.round() as u32);
+        match plan.position {
+            Some((x, y)) => {
+                // Move first so a monitor with another scale settles before sizing.
+                let _ = window.set_position(tauri::PhysicalPosition::new(
+                    x.round() as i32,
+                    y.round() as i32,
+                ));
+                let _ = window.set_size(size);
+            }
+            None => {
+                let _ = window.set_size(size);
+                let _ = window.center();
+            }
         }
-        None => {
-            let _ = window.center();
+    } else {
+        let _ = window.set_size(tauri::LogicalSize::new(plan.width, plan.height));
+        match plan.position {
+            Some((x, y)) => {
+                let _ = window.set_position(tauri::LogicalPosition::new(x, y));
+            }
+            None => {
+                let _ = window.center();
+            }
         }
     }
     if let Ok(mut slot) = NORMAL_BOUNDS.lock() {
@@ -191,6 +275,9 @@ pub fn restore(app: &AppHandle, window: &WebviewWindow) {
             width: plan.width,
             height: plan.height,
             is_maximized: false,
+            scale: PHYSICAL
+                .then(|| window.scale_factor().ok().map(|scale| scale.max(0.1)))
+                .flatten(),
         });
     }
     if plan.maximize {
@@ -214,13 +301,20 @@ pub fn track(window: &WebviewWindow) {
         return;
     };
     let scale = scale.max(0.1);
+    // Physical on Windows (keeps `scale`); logical elsewhere (no `scale`).
+    let (divisor, saved_scale) = if PHYSICAL {
+        (1.0, Some(scale))
+    } else {
+        (scale, None)
+    };
     if let Ok(mut slot) = NORMAL_BOUNDS.lock() {
         *slot = Some(WindowState {
-            x: Some(f64::from(position.x) / scale),
-            y: Some(f64::from(position.y) / scale),
-            width: f64::from(size.width) / scale,
-            height: f64::from(size.height) / scale,
+            x: Some(f64::from(position.x) / divisor),
+            y: Some(f64::from(position.y) / divisor),
+            width: f64::from(size.width) / divisor,
+            height: f64::from(size.height) / divisor,
             is_maximized: false,
+            scale: saved_scale,
         });
     }
 }
@@ -293,19 +387,19 @@ mod tests {
             y: Some(100.0),
             ..WindowState::default()
         };
-        assert_eq!(plan(&off, &[SCREEN]).position, None);
+        assert_eq!(plan(&off, &[SCREEN], 1.0).position, None);
         let below = WindowState {
             x: Some(100.0),
             y: Some(1080.0),
             ..WindowState::default()
         };
-        assert_eq!(plan(&below, &[SCREEN]).position, None);
+        assert_eq!(plan(&below, &[SCREEN], 1.0).position, None);
         let above = WindowState {
             x: Some(100.0),
             y: Some(-900.0),
             ..WindowState::default()
         };
-        assert_eq!(plan(&above, &[SCREEN]).position, None);
+        assert_eq!(plan(&above, &[SCREEN], 1.0).position, None);
     }
 
     #[test]
@@ -315,7 +409,7 @@ mod tests {
             y: Some(-20.0),
             ..WindowState::default()
         };
-        assert_eq!(plan(&state, &[SCREEN]).position, Some((-500.0, -20.0)));
+        assert_eq!(plan(&state, &[SCREEN], 1.0).position, Some((-500.0, -20.0)));
     }
 
     #[test]
@@ -325,7 +419,7 @@ mod tests {
             height: 2000.0,
             ..WindowState::default()
         };
-        let planned = plan(&state, &[SCREEN]);
+        let planned = plan(&state, &[SCREEN], 1.0);
         assert_eq!((planned.width, planned.height), (1920.0, 1080.0));
     }
 
@@ -336,7 +430,7 @@ mod tests {
             y: Some(10.0),
             ..WindowState::default()
         };
-        let planned = plan(&state, &[]);
+        let planned = plan(&state, &[], 1.0);
         assert_eq!(planned.position, None);
         assert_eq!(planned.width, DEFAULT_WIDTH);
     }
@@ -347,6 +441,6 @@ mod tests {
             is_maximized: true,
             ..WindowState::default()
         };
-        assert!(plan(&state, &[SCREEN]).maximize);
+        assert!(plan(&state, &[SCREEN], 1.0).maximize);
     }
 }

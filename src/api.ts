@@ -29,6 +29,8 @@ export interface Conv2RendererApi {
   getFileInfo: (filePath: string) => Promise<Ipc.VideoInfo | null>;
   startConversionQueue: (payload: Ipc.StartConversionQueuePayload) => Promise<Ipc.QueueSnapshot>;
   cancelConversion: (force?: boolean) => Promise<void>;
+  /** Latest snapshot of the running batch; null when idle (used after a reload). */
+  getQueueSnapshot: () => Promise<Ipc.QueueSnapshot | null>;
   onConversionProgress: (callback: (progress: Ipc.ConversionProgress) => void) => () => void;
   onConversionLog: (callback: (message: string) => void) => () => void;
   onConversionQueueUpdated: (callback: (snapshot: Ipc.QueueSnapshot) => void) => () => void;
@@ -57,6 +59,10 @@ export interface Conv2RendererApi {
   revealPath: (path: string) => Promise<void>;
   openExternal: (url: string) => Promise<void>;
   restartApp: () => Promise<void>;
+  /** Native asks for a settings flush before closing; answer with notifySettingsFlushed. */
+  onPrepareForClose: (callback: (generation: number) => void) => () => void;
+  /** Confirms pending settings are saved; the window then closes. */
+  notifySettingsFlushed: (generation: number) => Promise<void>;
   setConversionMenuState: (state: Ipc.ConversionMenuStatePayload) => Promise<void>;
   logError: (message: string) => void;
   onAppMenuAction: (callback: (event: AppMenuActionEvent) => void) => () => void;
@@ -74,7 +80,11 @@ function reportBridgeError(context: string, error: unknown): void {
   console.error(`[conv2] ${context}: ${message}`);
 }
 
-function subscribe<T>(event: string, callback: (payload: T) => void): () => void {
+/** Like `subscribe`, but `ready` settles once the native listener is registered. */
+function subscribeReady<T>(
+  event: string,
+  callback: (payload: T) => void
+): { unsubscribe: () => void; ready: Promise<void> } {
   let disposed = false;
   let unlisten: UnlistenFn | null = null;
   const registration = listen<T>(event, (message) => {
@@ -89,11 +99,18 @@ function subscribe<T>(event: string, callback: (payload: T) => void): () => void
       throw error;
     });
   void registration.catch(() => {});
-  return () => {
-    disposed = true;
-    unlisten?.();
-    unlisten = null;
+  return {
+    ready: registration,
+    unsubscribe: () => {
+      disposed = true;
+      unlisten?.();
+      unlisten = null;
+    },
   };
+}
+
+function subscribe<T>(event: string, callback: (payload: T) => void): () => void {
+  return subscribeReady(event, callback).unsubscribe;
 }
 
 /** Wraps a promise-based Tauri subscription so dispose works before resolve. */
@@ -152,6 +169,7 @@ export const api: Conv2RendererApi = {
   getFileInfo: (filePath) => call('get_file_info', { filePath }),
   startConversionQueue: (payload) => call('start_conversion_queue', { payload }),
   cancelConversion: (force) => call('cancel_conversion', { force: force === true }),
+  getQueueSnapshot: () => call('get_queue_snapshot'),
   onConversionProgress: (callback) => subscribe('conversion-progress', callback),
   onConversionLog: (callback) => subscribe('conversion-log', callback),
   onConversionQueueUpdated: (callback) => subscribe('conversion-queue-updated', callback),
@@ -187,6 +205,8 @@ export const api: Conv2RendererApi = {
   revealPath: (path) => call('reveal_path', { filePath: path }),
   openExternal: (url) => call('open_external', { url }),
   restartApp: () => call('restart_app'),
+  onPrepareForClose: (callback) => subscribe('prepare-for-close', callback),
+  notifySettingsFlushed: (generation) => call('notify_settings_flushed', { generation }),
   setConversionMenuState: (state) => call('set_conversion_menu_state', { state }),
   logError: (message) => fire('log_error', { message }),
   onAppMenuAction: (callback) => subscribe('app-menu-action', callback),
@@ -229,13 +249,33 @@ export const api: Conv2RendererApi = {
     ),
 };
 
-/** Dependency credits ship as the public licenses.json asset; null = absent. */
-export async function fetchLicenses(): Promise<Record<string, unknown> | null> {
+/** Resolves with the unsubscribe once the listener is registered; no event is missed after. */
+export async function listenConversionQueueUpdated(
+  callback: (snapshot: Ipc.QueueSnapshot) => void
+): Promise<() => void> {
+  const { unsubscribe, ready } = subscribeReady('conversion-queue-updated', callback);
+  await ready;
+  return unsubscribe;
+}
+
+async function fetchLicenseFile(path: string): Promise<Record<string, unknown> | null> {
   try {
-    const response = await fetch('./licenses.json');
+    const response = await fetch(path);
     if (!response.ok) return null;
     return (await response.json()) as Record<string, unknown>;
   } catch {
     return null;
   }
+}
+
+/** Credits ship as public licenses.json (npm) and licenses-cargo.json (Rust); null = absent. */
+export async function fetchLicenses(): Promise<{
+  npm: Record<string, unknown> | null;
+  cargo: Record<string, unknown> | null;
+}> {
+  const [npm, cargo] = await Promise.all([
+    fetchLicenseFile('./licenses.json'),
+    fetchLicenseFile('./licenses-cargo.json'),
+  ]);
+  return { npm, cargo };
 }

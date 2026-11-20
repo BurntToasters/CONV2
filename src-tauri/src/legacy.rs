@@ -72,20 +72,49 @@ fn candidate_dirs(app: &AppHandle) -> Vec<PathBuf> {
     if let Some(dir) = std::env::var_os("CONV2_E2E_LEGACY_V1_DIR").filter(|dir| !dir.is_empty()) {
         return vec![PathBuf::from(dir)];
     }
-    let dirs: Vec<PathBuf> = app
+    let mut dirs: Vec<PathBuf> = app
         .path()
         .config_dir()
         .map(|dir| dir.join(LEGACY_FOLDER))
         .into_iter()
         .collect();
+    if let Ok(home) = app.path().home_dir() {
+        dirs.extend(sandbox_dirs(&home));
+    }
     #[cfg(windows)]
-    let dirs = {
-        let mut dirs = dirs;
-        if let Ok(local) = app.path().local_data_dir() {
-            dirs.extend(store_package_dirs(&local));
+    if let Ok(local) = app.path().local_data_dir() {
+        dirs.extend(store_package_dirs(&local));
+    }
+    let mut seen = Vec::new();
+    dirs.retain(|dir| {
+        let new = !seen.contains(dir);
+        if new {
+            seen.push(dir.clone());
         }
-        dirs
-    };
+        new
+    });
+    dirs
+}
+
+/// v2's sandboxed `config_dir` can miss v1 data: the v1 Flatpak
+/// (`com.burnttoasters.conv2`), the host `~/.config`, and the v1 Mac App Store
+/// container (v1's `mas` target kept the appId). Resolved from the real home.
+#[allow(unused_variables, unused_mut)]
+fn sandbox_dirs(home: &Path) -> Vec<PathBuf> {
+    let mut dirs = Vec::new();
+    #[cfg(target_os = "linux")]
+    {
+        dirs.push(
+            home.join(".var/app/com.burnttoasters.conv2/config")
+                .join(LEGACY_FOLDER),
+        );
+        dirs.push(home.join(".config").join(LEGACY_FOLDER));
+    }
+    #[cfg(target_os = "macos")]
+    dirs.push(
+        home.join("Library/Containers/com.burnttoasters.conv2/Data/Library/Application Support")
+            .join(LEGACY_FOLDER),
+    );
     dirs
 }
 
@@ -249,16 +278,17 @@ fn import_from(source: &Path, data: &Path, carry: Carry, settings_exist: bool) -
                 });
                 continue;
             }
+            // Only destination failures retry; a bad source would fail forever.
             let outcome = if occupied(&destination) {
                 marker.retry_files.push((*name).to_string());
                 Err(BLOCKED_REASON.into())
             } else {
                 match read_json(&path, *max_bytes) {
-                    Some(value @ Value::Object(_)) => write_json(&destination, &value),
-                    Some(_) => Err("not a JSON object".to_string()),
-                    None => Err("could not be read".to_string()),
+                    Some(value @ Value::Object(_)) => write_json(&destination, &value)
+                        .inspect_err(|_| marker.retry_files.push((*name).to_string())),
+                    Some(_) => Err("The CONV2 1 file is not a JSON object.".to_string()),
+                    None => Err("The CONV2 1 file could not be read or parsed.".to_string()),
                 }
-                .inspect_err(|_| marker.retry_files.push((*name).to_string()))
             };
             match outcome {
                 Ok(()) => marker.imported.push((*name).to_string()),

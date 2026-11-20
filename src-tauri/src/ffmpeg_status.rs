@@ -5,7 +5,7 @@
 //!
 //! Resolution (v2, simplified from v1's ffmpegPath.ts): bundled sidecars
 //! (`conv2-ffmpeg` / `conv2-ffprobe`, Tauri externalBin) live next to the
-//! executable; when `useSystemFFmpeg` is set in settings.json, absolute
+//! executable; when `useSystemFFmpeg` is set in the settings store, absolute
 //! binaries are pinned from PATH instead. v1's private temp copies and dev
 //! overrides are dropped: the sidecar directory is the only bundled source.
 //! A system lookup that resolves nothing stays missing; a bare `ffmpeg` name
@@ -15,7 +15,7 @@
 use crate::fs_util::{self, Sha256Stream};
 use crate::ipc::{self, IpcResult, INTERNAL_ERROR};
 use crate::process_util;
-use crate::types::{AppSettings, FFmpegStatus, FFmpegStatusReason};
+use crate::types::{FFmpegStatus, FFmpegStatusReason};
 use crate::types_ffmpeg::{node_arch, node_platform, ChecksumsManifest};
 use std::path::{Path, PathBuf};
 use std::sync::{Condvar, Mutex};
@@ -26,6 +26,9 @@ pub const FFPROBE_SIDECAR: &str = "conv2-ffprobe";
 const EXE_SUFFIX: &str = std::env::consts::EXE_SUFFIX;
 
 const BINARY_CHECK_TIMEOUT: Duration = Duration::from_secs(10);
+/// Longer second `-version` attempt for a binary not yet verified: the first
+/// execution of a ~100 MB exe can sit behind an antivirus scan for over 10 s.
+const FIRST_RUN_RETRY_TIMEOUT: Duration = Duration::from_secs(15);
 const STATUS_CACHE_TTL: Duration = Duration::from_secs(30);
 /// v1 read at most this many header bytes of a PE file for Authenticode.
 const PE_HEADER_READ_BYTES: u64 = 4096;
@@ -36,8 +39,6 @@ const PE_PAD_MAX_BYTES: u64 = 7;
 const MACH_FAT_MAGIC: u32 = 0xcafe_babe;
 const MACH_FAT64_MAGIC: u32 = 0xcafe_babf;
 const MACH_FAT_MAX_ARCHES: usize = 16;
-/// Largest settings.json this gate will trust (defensive cap).
-const SETTINGS_READ_LIMIT: u64 = 1024 * 1024;
 const MANIFEST_READ_LIMIT: u64 = 1024 * 1024;
 
 // Failure modes (ported from v1 ffmpegIntegrity.ts):
@@ -106,35 +107,51 @@ fn resolve_from_path(name: &str) -> Option<PathBuf> {
         .filter(|directory| directory.is_absolute())
     {
         let candidate = directory.join(name);
-        if candidate.is_file() {
-            return candidate.canonicalize().ok();
+        if is_executable_file(&candidate) {
+            // A dangling or unreadable entry must not end the whole search.
+            if let Ok(path) = candidate.canonicalize() {
+                return Some(path);
+            }
+            continue;
         }
         #[cfg(windows)]
         if candidate.extension().is_none() {
             let with_exe = candidate.with_extension("exe");
-            if with_exe.is_file() {
-                return with_exe.canonicalize().ok();
+            if is_executable_file(&with_exe) {
+                if let Ok(path) = with_exe.canonicalize() {
+                    return Some(path);
+                }
             }
         }
     }
     None
 }
 
-/// Tiny local settings reader: the settings store itself lands with the
-/// settings port. Only `useSystemFFmpeg` matters here; any read or parse
-/// failure means the bundled sidecars.
-fn use_system_ffmpeg_setting() -> bool {
-    let path = crate::app_state::data_dir().join("settings.json");
-    let Ok(meta) = std::fs::metadata(&path) else {
-        return false;
-    };
-    if meta.len() > SETTINGS_READ_LIMIT {
+/// A regular file the current user may execute; non-executable PATH entries
+/// are skipped rather than pinned and then failing at spawn.
+fn is_executable_file(path: &Path) -> bool {
+    if !std::fs::metadata(path).is_ok_and(|meta| meta.is_file()) {
         return false;
     }
-    std::fs::read_to_string(&path)
-        .ok()
-        .and_then(|text| serde_json::from_str::<AppSettings>(&text).ok())
-        .is_some_and(|settings| settings.use_system_ffmpeg)
+    #[cfg(unix)]
+    {
+        use std::os::unix::ffi::OsStrExt;
+        let Ok(c_path) = std::ffi::CString::new(path.as_os_str().as_bytes()) else {
+            return false;
+        };
+        // SAFETY: c_path is a valid NUL-terminated string for the call.
+        unsafe { libc::access(c_path.as_ptr(), libc::X_OK) == 0 }
+    }
+    #[cfg(not(unix))]
+    {
+        true
+    }
+}
+
+/// The normalized in-memory setting, so a lenient-loaded file (unknown enum,
+/// wrong type, newer schema) agrees with what the UI shows.
+fn use_system_ffmpeg_setting() -> bool {
+    crate::settings::current().use_system_ffmpeg
 }
 
 #[derive(Clone, Debug)]
@@ -664,23 +681,149 @@ fn verify_bundled_binary_checksum(
     false
 }
 
+// Failure modes (ported from v1 ffmpegMacSignature.ts):
+// - tauri re-signs externalBin sidecars with the app's Developer ID, so no
+//   manifest digest can match a notarized .app; the signature is checked
+//   instead.
+// - tampered bytes fail `codesign --verify --strict`.
+// - a binary re-signed ad hoc or by another team fails the leaf-OU check.
+// - the requirement pins no identifier: Tauri may rename the sidecar
+//   (`conv2-ffmpeg-<triple>`), and the team pin already limits signers.
+// - an unsigned or ad-hoc app has no team, so the manifest path decides.
+// - a missing codesign, spawn error, or timeout fails closed.
+#[cfg(target_os = "macos")]
+mod mac_signature {
+    use crate::process_util;
+    use std::path::{Component, Path, PathBuf};
+    use std::sync::OnceLock;
+    use std::time::Duration;
+
+    const CODESIGN: &str = "/usr/bin/codesign";
+    const DESCRIBE_TIMEOUT: Duration = Duration::from_secs(10);
+    /// Verification reads the whole binary, so it gets more room.
+    const VERIFY_TIMEOUT: Duration = Duration::from_secs(30);
+    const OUTPUT_LIMIT: usize = 64 * 1024;
+
+    pub struct HostSigning {
+        root: PathBuf,
+        team: String,
+    }
+
+    /// Outermost `*.app` directory containing `path`.
+    fn app_bundle_root(path: &Path) -> Option<PathBuf> {
+        let parts: Vec<Component> = path.components().collect();
+        let mut root = PathBuf::new();
+        for (index, part) in parts.iter().enumerate() {
+            root.push(part);
+            let is_app = part
+                .as_os_str()
+                .to_str()
+                .is_some_and(|name| name.ends_with(".app"));
+            let before_contents = parts
+                .get(index + 1)
+                .is_some_and(|next| next.as_os_str().to_str() == Some("Contents"));
+            if is_app && before_contents {
+                return Some(root);
+            }
+        }
+        None
+    }
+
+    fn is_team_id(value: &str) -> bool {
+        value.len() == 10
+            && value
+                .bytes()
+                .all(|byte| byte.is_ascii_uppercase() || byte.is_ascii_digit())
+    }
+
+    /// Runs codesign with the scrubbed environment; Some only on a clean exit 0.
+    fn run_codesign(args: &[String], timeout: Duration) -> Option<process_util::Output> {
+        let mut command = process_util::command(CODESIGN, args, &[], true);
+        let output =
+            process_util::run_with_timeout(&mut command, timeout, OUTPUT_LIMIT, OUTPUT_LIMIT)
+                .ok()?;
+        (output.code == Some(0) && !output.timed_out).then_some(output)
+    }
+
+    /// `codesign -dv` reports on stderr; None for unsigned or team-less
+    /// (ad-hoc) code.
+    fn read_team_id(path: &Path) -> Option<String> {
+        let args = ["-dv".to_string(), path.to_string_lossy().into_owned()];
+        let output = run_codesign(&args, DESCRIBE_TIMEOUT)?;
+        let team = output
+            .stderr
+            .lines()
+            .find_map(|line| line.strip_prefix("TeamIdentifier="))?
+            .trim();
+        is_team_id(team).then(|| team.to_string())
+    }
+
+    /// The running app's bundle and TeamID, cached once found; a failed read is
+    /// retried by the next check rather than remembered.
+    fn host_signing() -> Option<&'static HostSigning> {
+        static HOST: OnceLock<HostSigning> = OnceLock::new();
+        if let Some(host) = HOST.get() {
+            return Some(host);
+        }
+        let exe = std::env::current_exe().ok()?;
+        let root = app_bundle_root(&exe)?;
+        let team = read_team_id(&exe)?;
+        Some(HOST.get_or_init(|| HostSigning { root, team }))
+    }
+
+    /// None when the sidecar is not inside a team-signed bundle of the running
+    /// app (manifest path); otherwise whether its signature verifies.
+    pub fn verify_sidecar(binary: &Path) -> Option<bool> {
+        let host = host_signing()?;
+        if app_bundle_root(binary).as_ref() != Some(&host.root) {
+            return None;
+        }
+        // `-R=` marks literal requirement text; the team was validated on read.
+        let requirement = format!(
+            "-R=anchor apple generic and certificate leaf[subject.OU] = \"{}\"",
+            host.team
+        );
+        let args = [
+            "--verify".to_string(),
+            "--strict".to_string(),
+            requirement,
+            binary.to_string_lossy().into_owned(),
+        ];
+        Some(run_codesign(&args, VERIFY_TIMEOUT).is_some())
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn signed_bundle_verdict(path: &Path) -> Option<bool> {
+    mac_signature::verify_sidecar(path)
+}
+
+#[cfg(not(target_os = "macos"))]
+fn signed_bundle_verdict(_path: &Path) -> Option<bool> {
+    None
+}
+
 fn verify_bundled_binary(binary: &BinaryPlan, manifest: Option<&Path>, packaged: bool) -> bool {
     // compute_status already failed Missing when no absolute bundled path
     // resolved; verification never falls back to the -version spawn.
     let Some(source) = &binary.source else {
         return false;
     };
-    let verified = verify_bundled_binary_checksum(
-        source,
-        binary.name,
-        node_platform(),
-        node_arch(),
-        manifest,
-        packaged,
-    );
+    // Inside a team-signed macOS bundle the signature decides; otherwise the
+    // manifest digest does.
+    let verified = signed_bundle_verdict(source).unwrap_or_else(|| {
+        verify_bundled_binary_checksum(
+            source,
+            binary.name,
+            node_platform(),
+            node_arch(),
+            manifest,
+            packaged,
+        )
+    });
     if !verified {
         crate::logging::warn(&format!(
-            "Bundled {} failed its checksum verification at {}.",
+            "Bundled {} failed its integrity verification at {}.",
             binary.name.manifest_key(),
             source.display()
         ));
@@ -695,29 +838,45 @@ enum BinaryRunState {
     NotRunnable,
 }
 
-/// v1's runVersionCheck: `-version`, ten seconds, exit code 0 means ok. A
-/// spawn failure for a missing binary is `missing`; anything else (including
-/// a timeout) is `not-runnable`.
-fn run_version_check(binary: &Path) -> BinaryRunState {
+/// One `-version` attempt; the flag says the attempt timed out.
+fn version_check(binary: &Path, timeout: Duration) -> (BinaryRunState, bool) {
     let args = ["-version".to_string()];
     let mut command = process_util::command(binary, &args, &[], true);
     match process_util::run_with_timeout(
         &mut command,
-        BINARY_CHECK_TIMEOUT,
+        timeout,
         512,
         crate::constants::MAX_ERROR_BUFFER,
     ) {
         Ok(output) => {
             if output.timed_out {
-                BinaryRunState::NotRunnable
+                (BinaryRunState::NotRunnable, true)
             } else if output.code == Some(0) {
-                BinaryRunState::Ok
+                (BinaryRunState::Ok, false)
             } else {
-                BinaryRunState::NotRunnable
+                (BinaryRunState::NotRunnable, false)
             }
         }
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => BinaryRunState::Missing,
-        Err(_) => BinaryRunState::NotRunnable,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            (BinaryRunState::Missing, false)
+        }
+        Err(_) => (BinaryRunState::NotRunnable, false),
+    }
+}
+
+/// v1's runVersionCheck: `-version`, ten seconds, exit code 0 means ok. A
+/// spawn failure for a missing binary is `missing`; anything else (including
+/// a timeout) is `not-runnable`.
+fn run_version_check(binary: &Path) -> BinaryRunState {
+    version_check(binary, BINARY_CHECK_TIMEOUT).0
+}
+
+/// The check for a binary not yet verified: a timeout is retried once with a
+/// longer limit, since the first run can include an antivirus scan.
+fn run_first_version_check(binary: &Path) -> BinaryRunState {
+    match version_check(binary, BINARY_CHECK_TIMEOUT) {
+        (BinaryRunState::NotRunnable, true) => version_check(binary, FIRST_RUN_RETRY_TIMEOUT).0,
+        (state, _) => state,
     }
 }
 
@@ -738,11 +897,14 @@ fn fail(plan: &StatusPlan, reason: FFmpegStatusReason) -> FFmpegStatus {
     }
 }
 
-fn compute_status(plan: &StatusPlan) -> FFmpegStatus {
+/// `previously_verified`: these exact files (same path, size, mtime) already
+/// passed, so the expensive integrity check is skipped and `-version` runs
+/// with the normal timeout only.
+fn compute_status(plan: &StatusPlan, previously_verified: bool) -> FFmpegStatus {
     if plan.binaries.iter().any(is_missing_binary) {
         return fail(plan, FFmpegStatusReason::Missing);
     }
-    if plan.using_bundled {
+    if plan.using_bundled && !previously_verified {
         let manifest = checksums_manifest_path();
         let packaged = is_packaged();
         let probes: Vec<_> = plan
@@ -769,7 +931,8 @@ fn compute_status(plan: &StatusPlan) -> FFmpegStatus {
         .map(|binary| {
             let effective = binary.effective.clone();
             std::thread::spawn(move || match effective {
-                Some(path) => run_version_check(&path),
+                Some(path) if previously_verified => run_version_check(&path),
+                Some(path) => run_first_version_check(&path),
                 None => BinaryRunState::Missing,
             })
         })
@@ -845,12 +1008,23 @@ fn evaluate_status() -> (FFmpegStatus, Option<EffectiveTools>) {
             }
         }
     }
+    // A binary already verified under this exact key (same path, size, mtime)
+    // is not re-hashed or re-signature-checked on TTL expiry, so a transient
+    // read or codesign failure cannot downgrade it; nor is it downgraded by a
+    // later transient NotRunnable (e.g. a timeout under load mid-batch). A real
+    // change alters the key or goes Missing.
+    let verified_before = match &*guard {
+        GateState::Idle(Some(entry)) if entry.key == key && entry.status.ok => {
+            Some((entry.status.clone(), entry.tools.clone()))
+        }
+        _ => None,
+    };
     *guard = GateState::Busy;
     drop(guard);
 
     // A panic while hashing or spawning must not leave the gate Busy forever.
     let (status, tools) = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        let status = compute_status(&plan);
+        let status = compute_status(&plan, verified_before.is_some());
         let tools = status.ok.then(|| plan.effective_tools(&key)).flatten();
         (status, tools)
     }))
@@ -863,6 +1037,15 @@ fn evaluate_status() -> (FFmpegStatus, Option<EffectiveTools>) {
         None,
     ));
 
+    let (status, tools) = match verified_before {
+        Some(previous)
+            if !status.ok && matches!(status.reason, FFmpegStatusReason::NotRunnable) =>
+        {
+            crate::logging::warn("FFmpeg re-check failed transiently; keeping verified status.");
+            previous
+        }
+        _ => (status, tools),
+    };
     let mut guard = STATUS_GATE
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
@@ -1274,7 +1457,10 @@ mod tests {
                 source: None,
             }],
         };
-        assert_eq!(compute_status(&plan).reason, FFmpegStatusReason::Missing);
+        assert_eq!(
+            compute_status(&plan, false).reason,
+            FFmpegStatusReason::Missing
+        );
 
         // System binaries that run: ok without verification.
         let plan = StatusPlan {
@@ -1285,7 +1471,7 @@ mod tests {
                 source: None,
             }],
         };
-        let status = compute_status(&plan);
+        let status = compute_status(&plan, false);
         assert!(status.ok);
         assert_eq!(status.reason, FFmpegStatusReason::Ok);
 
@@ -1299,7 +1485,7 @@ mod tests {
             }],
         };
         assert_eq!(
-            compute_status(&plan).reason,
+            compute_status(&plan, false).reason,
             FFmpegStatusReason::NotRunnable
         );
     }

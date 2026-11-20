@@ -12,6 +12,8 @@ interface Collected {
   menuActions: AppMenuActionEvent[];
   /** The resolved value of the last detached start, or null while running. */
   startResult: Ipc.QueueSnapshot | null;
+  /** The message of a rejected detached start, so a spec fails at once. */
+  startError: string | null;
 }
 
 type HelperFn = (...args: never[]) => unknown;
@@ -39,6 +41,7 @@ export async function installE2eHookIfEnabled(): Promise<void> {
     gpuErrors: [],
     menuActions: [],
     startResult: null,
+    startError: null,
   };
   api.onConversionQueueUpdated((snapshot) => collected.snapshots.push(snapshot));
   api.onConversionProgress((progress) => collected.progress.push(progress));
@@ -59,6 +62,7 @@ export async function installE2eHookIfEnabled(): Promise<void> {
       collected.gpuErrors.length = 0;
       collected.menuActions.length = 0;
       collected.startResult = null;
+      collected.startError = null;
     },
     /**
      * Starts a queue without waiting: the command resolves only when the batch
@@ -66,9 +70,15 @@ export async function installE2eHookIfEnabled(): Promise<void> {
      */
     startQueueDetached: (payload: Ipc.StartConversionQueuePayload): void => {
       collected.startResult = null;
-      void api.startConversionQueue(payload).then((snapshot) => {
-        collected.startResult = snapshot;
-      });
+      collected.startError = null;
+      api.startConversionQueue(payload).then(
+        (snapshot) => {
+          collected.startResult = snapshot;
+        },
+        (error: unknown) => {
+          collected.startError = error instanceof Error ? error.message : String(error);
+        }
+      );
     },
     /** File dialogs answer with `paths` (empty means cancelled). */
     stubInputFiles: (paths: string[]): void => {

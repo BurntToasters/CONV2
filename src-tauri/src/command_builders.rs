@@ -5,8 +5,9 @@ use crate::gpu::{resolve_encoder, uses_vaapi};
 use crate::ipc::{self, IpcResult};
 use crate::settings::default_advanced_format_settings;
 use crate::types::{
-    AdvancedFormatSettings, Av1TierSettings, AviTierSettings, GifTierSettings, GpuCodec, GpuVendor,
-    H264TierSettings, H265TierSettings, RendererPreset, VideoPreset, WebpTierSettings,
+    AdvancedFormatSettings, Av1TierSettings, AviTierCollection, AviTierSettings, GifTierSettings,
+    GpuCodec, GpuVendor, H264TierSettings, H265TierSettings, RendererPreset, VideoPreset,
+    WebpTierSettings,
 };
 
 /// Stream layout of the input, probed before arguments are built.
@@ -40,7 +41,77 @@ pub struct Preset {
     pub category: &'static str,
     pub extension: &'static str,
     pub gpu_codec: Option<GpuCodec>,
-    pub avi_tier: Option<&'static str>,
+    pub tier: Option<PresetTier>,
+}
+
+/// Quality tier a tiered preset resolves to. Each codec has its own tier type,
+/// so a preset can only name a tier its codec supports, and every per-codec
+/// lookup matches exhaustively at compile time.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PresetTier {
+    Av1(Av1Tier),
+    H264(H264Tier),
+    H265(H265Tier),
+    Avi(AviTier),
+    Gif(GifTier),
+    Webp(WebpTier),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Av1Tier {
+    Balanced,
+    Quality,
+    BestQuality,
+    BestCompression,
+    Compression,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum H264Tier {
+    Fast,
+    Quality,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum H265Tier {
+    Balanced,
+    Quality,
+    BestQuality,
+    BestCompression,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AviTier {
+    Balanced,
+    BestQuality,
+    BestCompression,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum GifTier {
+    Balanced,
+    Quality,
+    BestQuality,
+    BestCompression,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WebpTier {
+    Balanced,
+    Quality,
+    BestQuality,
+    BestCompression,
+}
+
+impl AviTier {
+    /// The renderer's AVI tier name.
+    fn key(self) -> &'static str {
+        match self {
+            AviTier::Balanced => "balanced",
+            AviTier::BestQuality => "bestQuality",
+            AviTier::BestCompression => "bestCompression",
+        }
+    }
 }
 
 const PRESET_CATEGORY_ORDER: &[&str] = &[
@@ -97,7 +168,7 @@ const WEBP_BALANCED: &str = "webp-balanced";
 const WEBP_BEST_COMPRESSION: &str = "webp-best-compression";
 
 macro_rules! preset {
-    ($id:expr, $name:literal, $description:literal, $category:literal, $extension:literal $(, gpu: $gpu:ident)? $(, tier: $tier:literal)?) => {
+    ($id:expr, $name:literal, $description:literal, $category:literal, $extension:literal $(, gpu: $gpu:ident)? $(, tier: $family:ident($tier:expr))?) => {
         Preset {
             id: $id,
             name: $name,
@@ -105,85 +176,93 @@ macro_rules! preset {
             category: $category,
             extension: $extension,
             gpu_codec: preset!(@gpu $($gpu)?),
-            avi_tier: preset!(@tier $($tier)?),
+            tier: preset!(@tier $($family($tier))?),
         }
     };
     (@gpu) => { None };
     (@gpu $gpu:ident) => { Some(GpuCodec::$gpu) };
     (@tier) => { None };
-    (@tier $tier:literal) => { Some($tier) };
+    (@tier $family:ident($tier:expr)) => { Some(PresetTier::$family($tier)) };
 }
 
 pub static PRESETS: &[Preset] = &[
-    preset!(AV1_BALANCED, "AV1 - Balanced", "Good balance between quality and file size", "av1", "mp4", gpu: Av1),
-    preset!(AV1_QUALITY, "AV1 - Quality", "High quality AV1 encoding", "av1", "mp4", gpu: Av1),
-    preset!(AV1_BEST_QUALITY, "AV1 - Best Quality", "Maximum quality, 10-bit, with strong compression", "av1", "mp4", gpu: Av1),
-    preset!(AV1_BEST_COMPRESSION, "AV1 - Best Compression", "Smallest file size with comparable quality", "av1", "mp4", gpu: Av1),
-    preset!(AV1_COMPRESSION, "AV1 - Small File", "Smaller file size, faster encoding", "av1", "mp4", gpu: Av1),
-    preset!(H264_FAST, "H.264 - Fast", "Quick encoding, universal compatibility", "h264", "mp4", gpu: H264),
-    preset!(H264_QUALITY, "H.264 - Quality", "Better quality H.264 encoding", "h264", "mp4", gpu: H264),
-    preset!(H265_BALANCED, "H.265/HEVC - Balanced", "Good compression with wide device support", "h265", "mp4", gpu: H265),
-    preset!(H265_QUALITY, "H.265/HEVC - Quality", "High quality HEVC encoding", "h265", "mp4", gpu: H265),
-    preset!(H265_BEST_QUALITY, "H.265/HEVC - Best Quality", "Maximum quality with best compression", "h265", "mp4", gpu: H265),
-    preset!(H265_BEST_COMPRESSION, "H.265/HEVC - Best Compression", "Smallest file size, some quality sacrificed", "h265", "mp4", gpu: H265),
-    preset!(AVI_BEST_QUALITY, "AVI - Best Quality", "AVI container with H.264 best quality encoding", "avi", "avi", gpu: H264, tier: "bestQuality"),
-    preset!(AVI_BEST_COMPRESSION, "AVI - Best Compression", "AVI container with H.264 best compression", "avi", "avi", gpu: H264, tier: "bestCompression"),
-    preset!(AVI_BALANCED, "AVI - Balanced", "AVI container with H.264 balanced encoding", "avi", "avi", gpu: H264, tier: "balanced"),
+    preset!(AV1_BALANCED, "AV1 - Balanced", "Good balance between quality and file size", "av1", "mp4", gpu: Av1, tier: Av1(Av1Tier::Balanced)),
+    preset!(AV1_QUALITY, "AV1 - Quality", "High quality AV1 encoding", "av1", "mp4", gpu: Av1, tier: Av1(Av1Tier::Quality)),
+    preset!(AV1_BEST_QUALITY, "AV1 - Best Quality", "Maximum quality, 10-bit, with strong compression", "av1", "mp4", gpu: Av1, tier: Av1(Av1Tier::BestQuality)),
+    preset!(AV1_BEST_COMPRESSION, "AV1 - Best Compression", "Smallest file size with comparable quality", "av1", "mp4", gpu: Av1, tier: Av1(Av1Tier::BestCompression)),
+    preset!(AV1_COMPRESSION, "AV1 - Small File", "Smaller file size, faster encoding", "av1", "mp4", gpu: Av1, tier: Av1(Av1Tier::Compression)),
+    preset!(H264_FAST, "H.264 - Fast", "Quick encoding, universal compatibility", "h264", "mp4", gpu: H264, tier: H264(H264Tier::Fast)),
+    preset!(H264_QUALITY, "H.264 - Quality", "Better quality H.264 encoding", "h264", "mp4", gpu: H264, tier: H264(H264Tier::Quality)),
+    preset!(H265_BALANCED, "H.265/HEVC - Balanced", "Good compression with wide device support", "h265", "mp4", gpu: H265, tier: H265(H265Tier::Balanced)),
+    preset!(H265_QUALITY, "H.265/HEVC - Quality", "High quality HEVC encoding", "h265", "mp4", gpu: H265, tier: H265(H265Tier::Quality)),
+    preset!(H265_BEST_QUALITY, "H.265/HEVC - Best Quality", "Maximum quality with best compression", "h265", "mp4", gpu: H265, tier: H265(H265Tier::BestQuality)),
+    preset!(H265_BEST_COMPRESSION, "H.265/HEVC - Best Compression", "Smallest file size, some quality sacrificed", "h265", "mp4", gpu: H265, tier: H265(H265Tier::BestCompression)),
+    preset!(AVI_BEST_QUALITY, "AVI - Best Quality", "AVI container with H.264 best quality encoding", "avi", "avi", gpu: H264, tier: Avi(AviTier::BestQuality)),
+    preset!(AVI_BEST_COMPRESSION, "AVI - Best Compression", "AVI container with H.264 best compression", "avi", "avi", gpu: H264, tier: Avi(AviTier::BestCompression)),
+    preset!(AVI_BALANCED, "AVI - Balanced", "AVI container with H.264 balanced encoding", "avi", "avi", gpu: H264, tier: Avi(AviTier::Balanced)),
     preset!(
         GIF_BEST_QUALITY,
         "GIF - Best Quality",
         "Maximum GIF quality with highest color detail",
         "gif",
-        "gif"
+        "gif",
+        tier: Gif(GifTier::BestQuality)
     ),
     preset!(
         GIF_QUALITY,
         "GIF - Quality",
         "High quality GIF with smaller file size",
         "gif",
-        "gif"
+        "gif",
+        tier: Gif(GifTier::Quality)
     ),
     preset!(
         GIF_BALANCED,
         "GIF - Balanced",
         "Balanced GIF output for quality and compression",
         "gif",
-        "gif"
+        "gif",
+        tier: Gif(GifTier::Balanced)
     ),
     preset!(
         GIF_BEST_COMPRESSION,
         "GIF - Best Compression",
         "Smallest GIF size with comparable quality",
         "gif",
-        "gif"
+        "gif",
+        tier: Gif(GifTier::BestCompression)
     ),
     preset!(
         WEBP_BEST_QUALITY,
         "WebP - Best Quality",
         "Maximum animated WebP quality with highest detail",
         "webp",
-        "webp"
+        "webp",
+        tier: Webp(WebpTier::BestQuality)
     ),
     preset!(
         WEBP_QUALITY,
         "WebP - Quality",
         "High quality animated WebP with smaller file size",
         "webp",
-        "webp"
+        "webp",
+        tier: Webp(WebpTier::Quality)
     ),
     preset!(
         WEBP_BALANCED,
         "WebP - Balanced",
         "Balanced animated WebP for quality and compression",
         "webp",
-        "webp"
+        "webp",
+        tier: Webp(WebpTier::Balanced)
     ),
     preset!(
         WEBP_BEST_COMPRESSION,
         "WebP - Best Compression",
         "Smallest animated WebP size with comparable quality",
         "webp",
-        "webp"
+        "webp",
+        tier: Webp(WebpTier::BestCompression)
     ),
     preset!(
         "remux-mp4",
@@ -245,7 +324,10 @@ pub fn map_presets_for_renderer() -> Vec<RendererPreset> {
             category_order: category_order(preset.category),
             is_advanced: is_advanced(preset.category),
             extension: preset.extension.to_string(),
-            avi_tier: preset.avi_tier.map(str::to_string),
+            avi_tier: match preset.tier {
+                Some(PresetTier::Avi(tier)) => Some(tier.key().to_string()),
+                _ => None,
+            },
         })
         .collect()
 }
@@ -477,18 +559,15 @@ pub fn effective_conversion_gpu(
 
 /// The codec a preset will encode with, used to check GPU support first.
 pub fn preset_gpu_codec(preset: &Preset, advanced: &AdvancedFormatSettings) -> Option<GpuCodec> {
-    if matches!(preset.category, "av1" | "h264" | "h265") {
-        return GpuCodec::parse(preset.category);
+    match preset.tier {
+        Some(PresetTier::Av1(_)) => Some(GpuCodec::Av1),
+        Some(PresetTier::H264(_)) => Some(GpuCodec::H264),
+        Some(PresetTier::H265(_)) => Some(GpuCodec::H265),
+        Some(PresetTier::Avi(tier)) => Some(avi_gpu_codec(
+            avi_tier_settings(&advanced.avi.tiers, tier).codec,
+        )),
+        Some(PresetTier::Gif(_) | PresetTier::Webp(_)) | None => preset.gpu_codec,
     }
-    if preset.category == "avi" {
-        let tier = preset.avi_tier.unwrap_or("balanced");
-        return Some(avi_gpu_codec(match tier {
-            "bestQuality" => advanced.avi.tiers.best_quality.codec,
-            "bestCompression" => advanced.avi.tiers.best_compression.codec,
-            _ => advanced.avi.tiers.balanced.codec,
-        }));
-    }
-    preset.gpu_codec
 }
 
 // ── argument builders ──────────────────────────────────────────────────────
@@ -500,63 +579,65 @@ fn advanced(context: PresetContext<'_>) -> AdvancedFormatSettings {
         .unwrap_or_else(default_advanced_format_settings)
 }
 
-fn gif_tier(tier: &str, context: PresetContext<'_>) -> GifTierSettings {
-    let settings = advanced(context);
+fn gif_tier(tier: GifTier, context: PresetContext<'_>) -> GifTierSettings {
+    let tiers = advanced(context).gif.tiers;
     match tier {
-        "bestQuality" => settings.gif.tiers.best_quality,
-        "quality" => settings.gif.tiers.quality,
-        "balanced" => settings.gif.tiers.balanced,
-        _ => settings.gif.tiers.best_compression,
+        GifTier::BestQuality => tiers.best_quality,
+        GifTier::Quality => tiers.quality,
+        GifTier::Balanced => tiers.balanced,
+        GifTier::BestCompression => tiers.best_compression,
     }
 }
 
-fn webp_tier(tier: &str, context: PresetContext<'_>) -> WebpTierSettings {
-    let settings = advanced(context);
+fn webp_tier(tier: WebpTier, context: PresetContext<'_>) -> WebpTierSettings {
+    let tiers = advanced(context).webp.tiers;
     match tier {
-        "bestQuality" => settings.webp.tiers.best_quality,
-        "quality" => settings.webp.tiers.quality,
-        "balanced" => settings.webp.tiers.balanced,
-        _ => settings.webp.tiers.best_compression,
+        WebpTier::BestQuality => tiers.best_quality,
+        WebpTier::Quality => tiers.quality,
+        WebpTier::Balanced => tiers.balanced,
+        WebpTier::BestCompression => tiers.best_compression,
     }
 }
 
-fn av1_tier(tier: &str, context: PresetContext<'_>) -> Av1TierSettings {
-    let settings = advanced(context);
+fn av1_tier(tier: Av1Tier, context: PresetContext<'_>) -> Av1TierSettings {
+    let tiers = advanced(context).av1.tiers;
     match tier {
-        "bestQuality" => settings.av1.tiers.best_quality,
-        "quality" => settings.av1.tiers.quality,
-        "balanced" => settings.av1.tiers.balanced,
-        "bestCompression" => settings.av1.tiers.best_compression,
-        _ => settings.av1.tiers.compression,
+        Av1Tier::BestQuality => tiers.best_quality,
+        Av1Tier::Quality => tiers.quality,
+        Av1Tier::Balanced => tiers.balanced,
+        Av1Tier::BestCompression => tiers.best_compression,
+        Av1Tier::Compression => tiers.compression,
     }
 }
 
-fn h264_tier(tier: &str, context: PresetContext<'_>) -> H264TierSettings {
-    let settings = advanced(context);
-    if tier == "fast" {
-        settings.h264.tiers.fast
-    } else {
-        settings.h264.tiers.quality
+fn h264_tier(tier: H264Tier, context: PresetContext<'_>) -> H264TierSettings {
+    let tiers = advanced(context).h264.tiers;
+    match tier {
+        H264Tier::Fast => tiers.fast,
+        H264Tier::Quality => tiers.quality,
     }
 }
 
-fn h265_tier(tier: &str, context: PresetContext<'_>) -> H265TierSettings {
-    let settings = advanced(context);
+fn h265_tier(tier: H265Tier, context: PresetContext<'_>) -> H265TierSettings {
+    let tiers = advanced(context).h265.tiers;
     match tier {
-        "bestQuality" => settings.h265.tiers.best_quality,
-        "quality" => settings.h265.tiers.quality,
-        "balanced" => settings.h265.tiers.balanced,
-        _ => settings.h265.tiers.best_compression,
+        H265Tier::BestQuality => tiers.best_quality,
+        H265Tier::Quality => tiers.quality,
+        H265Tier::Balanced => tiers.balanced,
+        H265Tier::BestCompression => tiers.best_compression,
     }
 }
 
-fn avi_tier(tier: &str, context: PresetContext<'_>) -> AviTierSettings {
-    let settings = advanced(context);
+fn avi_tier_settings(tiers: &AviTierCollection, tier: AviTier) -> AviTierSettings {
     match tier {
-        "bestQuality" => settings.avi.tiers.best_quality,
-        "bestCompression" => settings.avi.tiers.best_compression,
-        _ => settings.avi.tiers.balanced,
+        AviTier::BestQuality => tiers.best_quality,
+        AviTier::BestCompression => tiers.best_compression,
+        AviTier::Balanced => tiers.balanced,
     }
+}
+
+fn avi_tier(tier: AviTier, context: PresetContext<'_>) -> AviTierSettings {
+    avi_tier_settings(&advanced(context).avi.tiers, tier)
 }
 
 /// v1's AviCodec is a subset of the GPU codecs, so argument helpers take the
@@ -597,7 +678,7 @@ fn multichannel_bitrate_args(base_kbps: u32, context: PresetContext<'_>) -> Vec<
     args
 }
 
-fn gif_args(input: &str, output: &str, tier: &str, context: PresetContext<'_>) -> Vec<String> {
+fn gif_args(input: &str, output: &str, tier: GifTier, context: PresetContext<'_>) -> Vec<String> {
     let settings = gif_tier(tier, context);
     let loop_arg = if advanced(context).gif.loop_mode == crate::types::GifLoopMode::Once {
         "-1"
@@ -633,7 +714,7 @@ fn gif_args(input: &str, output: &str, tier: &str, context: PresetContext<'_>) -
     .to_vec()
 }
 
-fn webp_args(input: &str, output: &str, tier: &str, context: PresetContext<'_>) -> Vec<String> {
+fn webp_args(input: &str, output: &str, tier: WebpTier, context: PresetContext<'_>) -> Vec<String> {
     let settings = webp_tier(tier, context);
     let loop_arg = if advanced(context).webp.loop_mode == crate::types::GifLoopMode::Once {
         "1"
@@ -672,7 +753,7 @@ fn av1_args(
     input: &str,
     output: &str,
     gpu: GpuVendor,
-    tier: &str,
+    tier: Av1Tier,
     context: PresetContext<'_>,
 ) -> Vec<String> {
     let settings = av1_tier(tier, context);
@@ -724,7 +805,7 @@ fn h264_args(
     input: &str,
     output: &str,
     gpu: GpuVendor,
-    tier: &str,
+    tier: H264Tier,
     context: PresetContext<'_>,
 ) -> Vec<String> {
     let settings = h264_tier(tier, context);
@@ -773,7 +854,7 @@ fn h265_args(
     input: &str,
     output: &str,
     gpu: GpuVendor,
-    tier: &str,
+    tier: H265Tier,
     context: PresetContext<'_>,
 ) -> Vec<String> {
     let settings = h265_tier(tier, context);
@@ -832,7 +913,7 @@ fn avi_args(
     input: &str,
     output: &str,
     gpu: GpuVendor,
-    tier: &str,
+    tier: AviTier,
     context: PresetContext<'_>,
 ) -> Vec<String> {
     let settings = avi_tier(tier, context);
@@ -968,46 +1049,18 @@ pub fn build_args(
     gpu: GpuVendor,
     context: PresetContext<'_>,
 ) -> Vec<String> {
-    let category = preset.category;
-    match category {
-        "av1" => av1_args(
-            input,
-            output,
-            gpu,
-            preset.id.trim_start_matches("av1-"),
-            context,
-        ),
-        "h264" => h264_args(
-            input,
-            output,
-            gpu,
-            preset.id.trim_start_matches("h264-"),
-            context,
-        ),
-        "h265" => h265_args(
-            input,
-            output,
-            gpu,
-            preset.id.trim_start_matches("h265-"),
-            context,
-        ),
-        "avi" => avi_args(
-            input,
-            output,
-            gpu,
-            preset.avi_tier.unwrap_or("balanced"),
-            context,
-        ),
-        "gif" => gif_args(input, output, preset.id.trim_start_matches("gif-"), context),
-        "webp" => webp_args(
-            input,
-            output,
-            preset.id.trim_start_matches("webp-"),
-            context,
-        ),
-        "remux" => remux_args(input, output, preset.extension, context),
-        "audio" => audio_args(preset, input, output),
-        _ => Vec::new(),
+    match preset.tier {
+        Some(PresetTier::Av1(tier)) => av1_args(input, output, gpu, tier, context),
+        Some(PresetTier::H264(tier)) => h264_args(input, output, gpu, tier, context),
+        Some(PresetTier::H265(tier)) => h265_args(input, output, gpu, tier, context),
+        Some(PresetTier::Avi(tier)) => avi_args(input, output, gpu, tier, context),
+        Some(PresetTier::Gif(tier)) => gif_args(input, output, tier, context),
+        Some(PresetTier::Webp(tier)) => webp_args(input, output, tier, context),
+        None => match preset.category {
+            "remux" => remux_args(input, output, preset.extension, context),
+            "audio" => audio_args(preset, input, output),
+            _ => Vec::new(),
+        },
     }
 }
 

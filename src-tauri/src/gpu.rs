@@ -9,7 +9,7 @@
 use crate::ffmpeg_status::EffectiveTools;
 use crate::fs_util;
 use crate::ipc::{self, FalliblePayload, IpcResult, INTERNAL_ERROR, VALIDATION_ERROR};
-use crate::process_util;
+use crate::process_util::{self, ManagedChild};
 use crate::types::{
     GPUCapabilitiesPayload, GPUCapabilityStatus, GPUEncoderError, GpuCodec, GpuVendor,
 };
@@ -403,33 +403,127 @@ fn parse_encoder_line(line: &str) -> Option<String> {
     rest.split_whitespace().next().map(str::to_string)
 }
 
+type ListingCache = Mutex<Option<(String, Arc<BTreeSet<String>>)>>;
+
+fn cached_listing(cache: &ListingCache, identity: &str) -> Option<Arc<BTreeSet<String>>> {
+    let guard = cache
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    match guard.as_ref() {
+        Some((cached_identity, cached)) if cached_identity.as_str() == identity => {
+            Some(Arc::clone(cached))
+        }
+        _ => None,
+    }
+}
+
+fn store_listing(cache: &ListingCache, identity: &str, listing: &Arc<BTreeSet<String>>) {
+    *cache
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner()) =
+        Some((identity.to_string(), Arc::clone(listing)));
+}
+
+/// Set by `begin_cancel_probes`, cleared when a batch starts or ends, so a
+/// batch probe begun just after Cancel never runs to completion. Panel probes
+/// (Settings UI) ignore it.
+static PROBES_CANCELLED: AtomicBool = AtomicBool::new(false);
+/// Batch-owned probe children only.
+static ACTIVE_PROBES: Mutex<Vec<Arc<ManagedChild>>> = Mutex::new(Vec::new());
+
+/// Refuse new batch probes until `reset_probe_cancel` and return the in-flight
+/// ones. Non-blocking, so callers may hold a lock; pass the handles to
+/// `kill_probes` only after releasing it.
+pub(crate) fn begin_cancel_probes() -> Vec<Arc<ManagedChild>> {
+    PROBES_CANCELLED.store(true, Ordering::SeqCst);
+    ACTIVE_PROBES
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .clone()
+}
+
+/// Kill handles from `begin_cancel_probes`. Can block: hold no lock.
+pub(crate) fn kill_probes(children: Vec<Arc<ManagedChild>>) {
+    for child in children {
+        process_util::kill_tree(&child);
+    }
+}
+
+pub(crate) fn reset_probe_cancel() {
+    PROBES_CANCELLED.store(false, Ordering::SeqCst);
+}
+
+enum ProbeRun {
+    Done(process_util::Output),
+    /// Cancelled mid-flight: callers must not cache anything from it.
+    Cancelled,
+    Failed(std::io::Error),
+}
+
+/// Runs one probe child. A `batch` probe is killed via `begin_cancel_probes`;
+/// a panel probe is never cancelled. The caller must hold no cache lock: the
+/// wait can last up to the probe timeout.
+fn run_probe(
+    mut command: std::process::Command,
+    batch: bool,
+    timeout: Duration,
+    max_stdout: usize,
+    max_stderr: usize,
+) -> ProbeRun {
+    if batch && PROBES_CANCELLED.load(Ordering::SeqCst) {
+        return ProbeRun::Cancelled;
+    }
+    let child = match process_util::spawn(&mut command) {
+        Ok(child) => child,
+        Err(error) => return ProbeRun::Failed(error),
+    };
+    if batch {
+        ACTIVE_PROBES
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .push(Arc::clone(&child));
+        // Re-check after registering: a cancel racing the spawn missed this child.
+        if PROBES_CANCELLED.load(Ordering::SeqCst) {
+            process_util::kill_tree(&child);
+        }
+    }
+    let result = process_util::wait_with_output(&child, timeout, max_stdout, max_stderr);
+    if batch {
+        ACTIVE_PROBES
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .retain(|active| !Arc::ptr_eq(active, &child));
+        if PROBES_CANCELLED.load(Ordering::SeqCst) {
+            return ProbeRun::Cancelled;
+        }
+    }
+    match result {
+        Ok(output) => ProbeRun::Done(output),
+        Err(error) => ProbeRun::Failed(error),
+    }
+}
+
 /// Cached `ffmpeg -encoders` names (v1 getAvailableEncoders). None means the
 /// listing failed and the next call retries; an empty set is cached, exactly
 /// like v1's close handler. `identity` binds the listing to one binary.
-fn list_encoders(ffmpeg: &Path, identity: &str) -> Option<Arc<BTreeSet<String>>> {
-    let mut cache = ENCODER_CACHE
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
-    if let Some((cached_identity, cached)) = cache.as_ref() {
-        if cached_identity.as_str() == identity {
-            return Some(Arc::clone(cached));
-        }
+fn list_encoders(ffmpeg: &Path, identity: &str, batch: bool) -> Option<Arc<BTreeSet<String>>> {
+    if let Some(cached) = cached_listing(&ENCODER_CACHE, identity) {
+        return Some(cached);
     }
     let args = ["-encoders".to_string(), "-hide_banner".to_string()];
-    let mut command = process_util::command(ffmpeg, &args, &[], true);
-    match process_util::run_with_timeout(&mut command, ENCODER_LIST_TIMEOUT, 512 * 1024, 4096) {
-        Ok(output) if !output.timed_out => {
+    let command = process_util::command(ffmpeg, &args, &[], true);
+    match run_probe(command, batch, ENCODER_LIST_TIMEOUT, 512 * 1024, 4096) {
+        ProbeRun::Done(output) if !output.timed_out => {
             let encoders: BTreeSet<String> = output
                 .stdout
                 .lines()
                 .filter_map(parse_encoder_line)
                 .collect();
             let encoders = Arc::new(encoders);
-            *cache = Some((identity.to_string(), Arc::clone(&encoders)));
+            store_listing(&ENCODER_CACHE, identity, &encoders);
             Some(encoders)
         }
-        Ok(_) => None,
-        Err(_) => None,
+        _ => None,
     }
 }
 
@@ -438,7 +532,10 @@ struct ProbeContext {
     tools: Option<EffectiveTools>,
     /// Cache identity for `tools`; keys every result.
     identity: String,
-    encoders: Arc<BTreeSet<String>>,
+    /// None: the listing failed or was cancelled, so availability is unknown.
+    encoders: Option<Arc<BTreeSet<String>>>,
+    /// Batch probes are cancellable; panel probes are not.
+    batch: bool,
 }
 
 /// v1's probeHwEncoderAvailable: memory cache, disk store, listing check,
@@ -471,7 +568,11 @@ fn probe_hw_encoder_available(ctx: &ProbeContext, encoder: &str, options: &HwPro
             .insert(memory_key.clone(), stored);
         return stored;
     }
-    if !ctx.encoders.contains(encoder) {
+    // Unknown (listing failed or cancelled) is not "absent": cache nothing.
+    let Some(encoders) = &ctx.encoders else {
+        return false;
+    };
+    if !encoders.contains(encoder) {
         HW_MEMORY_CACHE
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
@@ -479,9 +580,9 @@ fn probe_hw_encoder_available(ctx: &ProbeContext, encoder: &str, options: &HwPro
         return false;
     }
     let args = build_hw_probe_args(encoder, options, node_platform());
-    let mut command = process_util::command(&tools.ffmpeg, &args, &[], true);
-    match process_util::run_with_timeout(&mut command, HW_PROBE_TIMEOUT, 4096, 4096) {
-        Ok(output) if !output.timed_out => {
+    let command = process_util::command(&tools.ffmpeg, &args, &[], true);
+    match run_probe(command, ctx.batch, HW_PROBE_TIMEOUT, 4096, 4096) {
+        ProbeRun::Done(output) if !output.timed_out => {
             let available = output.code == Some(0);
             // Only a real exit code is worth keeping across launches;
             // timeouts may be transient.
@@ -494,19 +595,18 @@ fn probe_hw_encoder_available(ctx: &ProbeContext, encoder: &str, options: &HwPro
                 .insert(memory_key, available);
             available
         }
-        Ok(_) => {
+        // A cancelled probe says nothing about the encoder: cache nothing.
+        ProbeRun::Cancelled => false,
+        ProbeRun::Done(_) => {
             HW_MEMORY_CACHE
                 .lock()
                 .unwrap_or_else(|poisoned| poisoned.into_inner())
                 .insert(memory_key, false);
             false
         }
-        Err(error) => {
+        // A spawn failure is no verdict on the encoder: cache nothing.
+        ProbeRun::Failed(error) => {
             crate::logging::warn(&format!("Failed to spawn GPU probe ({encoder}): {error}"));
-            HW_MEMORY_CACHE
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner())
-                .insert(memory_key, false);
             false
         }
     }
@@ -741,7 +841,7 @@ fn build_payload_with(
 /// The real payload: status-gated, listing-aware probes over the accepted
 /// ffmpeg, with both caches.
 fn build_gpu_capabilities_payload(requested_codec: Option<GpuCodec>) -> GPUCapabilitiesPayload {
-    let ctx = Arc::new(probe_context());
+    let ctx = Arc::new(probe_context(false));
     let probe: ProbeFn = Arc::new(move |_codec, _vendor, encoder, options| {
         probe_hw_encoder_available(&ctx, encoder, options)
     });
@@ -816,25 +916,25 @@ fn encoder_unavailable(
     }
 }
 
-fn probe_context() -> ProbeContext {
+fn probe_context(batch: bool) -> ProbeContext {
     let tools = crate::ffmpeg_status::effective_tools();
     let identity = ffmpeg_identity(tools.as_ref());
-    let encoders = match &tools {
-        Some(tools) => list_encoders(&tools.ffmpeg, &identity).unwrap_or_default(),
-        // A listing that fails because the binary is not ok must not be
-        // cached as "absent"; the status gate answers first.
-        None => Arc::new(BTreeSet::new()),
-    };
+    // A failed or cancelled listing stays None; the status gate answers first
+    // when the binary is not ok.
+    let encoders = tools
+        .as_ref()
+        .and_then(|tools| list_encoders(&tools.ffmpeg, &identity, batch));
     ProbeContext {
         tools,
         identity,
         encoders,
+        batch,
     }
 }
 
 /// v1 checkGPUEncoderSupport: platform gates, VAAPI render node, then a probe.
-/// Cancellation is only observed between probes; an in-flight probe is bounded
-/// by its own 8s timeout.
+/// Cancellation is observed between probes, and `begin_cancel_probes` lets
+/// the caller kill one in flight.
 pub(crate) fn check_encoder_support(
     gpu: GpuVendor,
     codec: GpuCodec,
@@ -893,7 +993,7 @@ pub(crate) fn check_encoder_support(
         );
     }
     if !cancelled.load(Ordering::SeqCst)
-        && probe_hw_encoder_available(&probe_context(), &encoder, &options)
+        && probe_hw_encoder_available(&probe_context(true), &encoder, &options)
     {
         return EncoderSupport {
             available: true,
@@ -932,25 +1032,20 @@ static DECODER_CACHE: Mutex<Option<(String, Arc<BTreeSet<String>>)>> = Mutex::ne
 
 /// Cached `ffmpeg -decoders` names, bound to one binary identity.
 fn list_decoders(ffmpeg: &Path, identity: &str) -> Option<Arc<BTreeSet<String>>> {
-    let mut cache = DECODER_CACHE
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
-    if let Some((cached_identity, cached)) = cache.as_ref() {
-        if cached_identity.as_str() == identity {
-            return Some(Arc::clone(cached));
-        }
+    if let Some(cached) = cached_listing(&DECODER_CACHE, identity) {
+        return Some(cached);
     }
     let args = ["-decoders".to_string(), "-hide_banner".to_string()];
-    let mut command = process_util::command(ffmpeg, &args, &[], true);
-    match process_util::run_with_timeout(&mut command, ENCODER_LIST_TIMEOUT, 512 * 1024, 4096) {
-        Ok(output) if !output.timed_out => {
+    let command = process_util::command(ffmpeg, &args, &[], true);
+    match run_probe(command, true, ENCODER_LIST_TIMEOUT, 512 * 1024, 4096) {
+        ProbeRun::Done(output) if !output.timed_out => {
             let decoders: BTreeSet<String> = output
                 .stdout
                 .lines()
                 .filter_map(parse_encoder_line)
                 .collect();
             let decoders = Arc::new(decoders);
-            *cache = Some((identity.to_string(), Arc::clone(&decoders)));
+            store_listing(&DECODER_CACHE, identity, &decoders);
             Some(decoders)
         }
         _ => None,
@@ -1078,35 +1173,27 @@ pub(crate) fn hardware_decode_args(gpu: GpuVendor, codec: Option<&str>) -> Vec<S
 static FILTER_CACHE: Mutex<Option<(String, Arc<BTreeSet<String>>)>> = Mutex::new(None);
 
 fn list_filters(ffmpeg: &Path, identity: &str) -> Arc<BTreeSet<String>> {
-    let mut cache = FILTER_CACHE
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
-    if let Some((cached_identity, cached)) = cache.as_ref() {
-        if cached_identity.as_str() == identity {
-            return Arc::clone(cached);
-        }
+    if let Some(cached) = cached_listing(&FILTER_CACHE, identity) {
+        return cached;
     }
     let args = ["-hide_banner".to_string(), "-filters".to_string()];
-    let mut command = process_util::command(ffmpeg, &args, &[], true);
-    let filters =
-        match process_util::run_with_timeout(&mut command, ENCODER_LIST_TIMEOUT, 1024 * 1024, 4096)
-        {
-            Ok(output) if !output.timed_out => {
-                let regex =
-                    Regex::new(r"^\s*[TSC.|]{2,3}\s+(\S+)\s+\S+->\S+").expect("valid regex");
-                let names: BTreeSet<String> = output
-                    .stdout
-                    .lines()
-                    .filter_map(|line| regex.captures(line))
-                    .filter_map(|captures| captures.get(1))
-                    .map(|value| value.as_str().to_string())
-                    .collect();
-                Arc::new(names)
-            }
-            _ => Arc::new(BTreeSet::new()),
-        };
+    let command = process_util::command(ffmpeg, &args, &[], true);
+    let filters = match run_probe(command, true, ENCODER_LIST_TIMEOUT, 1024 * 1024, 4096) {
+        ProbeRun::Done(output) if !output.timed_out => {
+            let regex = Regex::new(r"^\s*[TSC.|]{2,3}\s+(\S+)\s+\S+->\S+").expect("valid regex");
+            let names: BTreeSet<String> = output
+                .stdout
+                .lines()
+                .filter_map(|line| regex.captures(line))
+                .filter_map(|captures| captures.get(1))
+                .map(|value| value.as_str().to_string())
+                .collect();
+            Arc::new(names)
+        }
+        _ => Arc::new(BTreeSet::new()),
+    };
     if !filters.is_empty() {
-        *cache = Some((identity.to_string(), Arc::clone(&filters)));
+        store_listing(&FILTER_CACHE, identity, &filters);
     }
     filters
 }
@@ -1858,7 +1945,8 @@ mod tests {
         let ctx = ProbeContext {
             tools: None,
             identity: ffmpeg_identity(None),
-            encoders: Arc::new(BTreeSet::new()),
+            encoders: Some(Arc::new(BTreeSet::new())),
+            batch: false,
         };
         assert!(!probe_hw_encoder_available(
             &ctx,

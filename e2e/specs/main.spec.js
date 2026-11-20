@@ -95,6 +95,8 @@ async function waitForQueueEnd(timeout = 180_000) {
   await browser.waitUntil(
     async () => {
       collected = await helper("collected");
+      // A rejected start never publishes a snapshot; stop waiting for one.
+      if (collected.startError) return true;
       const last = collected.snapshots.at(-1);
       // The command's own answer must agree with the last published snapshot.
       return Boolean(
@@ -111,6 +113,11 @@ async function waitForQueueEnd(timeout = 180_000) {
       timeoutMsg: "the conversion queue never reached a terminal state",
     },
   );
+  if (collected.startError) {
+    throw new Error(
+      `the conversion queue failed to start: ${collected.startError}`,
+    );
+  }
   const final = collected.snapshots.at(-1);
   assert.deepEqual(
     collected.startResult.items.map((item) => item.status),
@@ -122,6 +129,42 @@ async function waitForQueueEnd(timeout = 180_000) {
 
 function listOutputs(dir) {
   return fs.readdirSync(dir).sort();
+}
+
+/** Decoded video frame count; ffprobe reads every frame, so use it on short clips. */
+function countVideoFrames(file) {
+  const run = spawnSync(
+    FFPROBE,
+    [
+      "-v",
+      "error",
+      "-count_frames",
+      "-select_streams",
+      "v:0",
+      "-show_entries",
+      "stream=nb_read_frames",
+      "-of",
+      "default=nokey=1:noprint_wrappers=1",
+      file,
+    ],
+    { encoding: "utf8", windowsHide: true },
+  );
+  if (run.status !== 0) {
+    throw new Error(`ffprobe failed for ${file}: ${run.stderr}`);
+  }
+  return Number(run.stdout.trim());
+}
+
+/** The FFmpeg command line the app logged for the last attempt of a batch. */
+function loggedFfmpegCommand(logs) {
+  const lines = logs.filter((line) => line.includes("Running command: ffmpeg"));
+  assert.ok(lines.length > 0, "the app logged its FFmpeg command");
+  return lines.at(-1);
+}
+
+/** The value after `flag` in a logged command line, or null. */
+function flagValue(command, flag) {
+  return new RegExp(String.raw`\s${flag}\s+(\S+)`).exec(command)?.[1] ?? null;
 }
 
 const DATA_DIR = path.join(env.CONV2_E2E_PROFILE ?? "", "app-data");
@@ -461,6 +504,201 @@ describe("CONV2 main window", () => {
     record("output-naming");
   });
 
+  it("sweeps stale staging folders of dead processes before a batch", async () => {
+    const out = freshOutput("stage-sweep");
+    // 2000000000 fits a signed pid_t and exceeds every OS pid limit, so the
+    // app's liveness check reads it as dead on every platform.
+    const stale = ".conv2-stage-2000000000-0";
+    // A live process keeps its staging folder, and so does a folder that holds
+    // anything but plain files (the sweep never recurses into a surprise).
+    const live = `.conv2-stage-${process.pid}-0`;
+    const nested = ".conv2-stage-2000000001-0";
+    fs.mkdirSync(path.join(out, stale));
+    fs.writeFileSync(path.join(out, stale, "x"), "left by a crashed run");
+    fs.mkdirSync(path.join(out, live));
+    fs.writeFileSync(path.join(out, live, "x"), "owned by a live process");
+    fs.mkdirSync(path.join(out, nested, "sub"), { recursive: true });
+
+    const { final } = await runQueue({
+      inputs: ["source.mp4", "video-only.mp4"],
+      presetId: "remux-mp4",
+      outputDirectory: out,
+    });
+    assert.deepEqual(
+      final.items.map((item) => item.status),
+      ["done", "done"],
+    );
+    assert.ok(!fs.existsSync(path.join(out, stale)), "the dead pid's stage");
+    assert.ok(fs.existsSync(path.join(out, live, "x")), "a live pid's stage");
+    assert.ok(fs.existsSync(path.join(out, nested, "sub")), "a nested stage");
+    const names = listOutputs(out);
+    assert.deepEqual(
+      names.filter((name) => name.startsWith(".conv2-stage-")).sort(),
+      [live, nested].sort(),
+      "only the seeded live and nested stage folders remain; the app's own are gone",
+    );
+    assert.deepEqual(
+      names.filter((name) => !name.startsWith(".conv2-stage-")),
+      ["source_converted.mp4", "video-only_converted.mp4"],
+    );
+    for (const item of final.items) {
+      assert.ok(
+        probe(item.outputPath).streams.some(
+          (stream) => stream.codec_type === "video",
+        ),
+        item.outputPath,
+      );
+    }
+    fs.rmSync(path.join(out, live), { recursive: true, force: true });
+    fs.rmSync(path.join(out, nested), { recursive: true, force: true });
+    record("stale-stage-sweep", { swept: stale, kept: [live, nested] });
+  });
+
+  it("applies the advanced-format tier each preset names", async function () {
+    this.timeout(600_000);
+    const advanced = (await api("getSettings")).advancedFormatSettings;
+    // Each case reads the tier the preset must use from the live settings,
+    // so a preset wired to a neighbouring tier shows up as a different value.
+    // "key" is the tier field that tells the tiers apart.
+    const cases = [
+      {
+        id: "av1-best-quality",
+        format: "av1",
+        tier: "bestQuality",
+        key: "quality",
+      },
+      {
+        id: "av1-best-compression",
+        format: "av1",
+        tier: "bestCompression",
+        key: "quality",
+      },
+      {
+        id: "h265-best-quality",
+        format: "h265",
+        tier: "bestQuality",
+        key: "quality",
+      },
+      {
+        id: "gif-best-quality",
+        format: "gif",
+        tier: "bestQuality",
+        key: "fps",
+      },
+      {
+        id: "webp-best-quality",
+        format: "webp",
+        tier: "bestQuality",
+        key: "quality",
+      },
+    ];
+    const rows = [];
+    for (const { id, format, tier, key } of cases) {
+      const tiers = advanced[format].tiers;
+      const wanted = tiers[tier];
+      const others = Object.entries(tiers)
+        .filter(([name]) => name !== tier)
+        .map(([, value]) => value[key]);
+      assert.ok(
+        !others.includes(wanted[key]),
+        `${id}: the ${tier} ${key} must differ from the other tiers for this check`,
+      );
+
+      const out = freshOutput(`tier-${id}`);
+      const { final, logs } = await runQueue({
+        inputs: ["source.mp4"],
+        presetId: id,
+        outputDirectory: out,
+        showDebugOutput: true,
+      });
+      const item = final.items[0];
+      assert.equal(item.status, "done", `${id}: ${item.error ?? ""}`);
+      const command = loggedFfmpegCommand(logs);
+      const media = probe(item.outputPath);
+      const video = media.streams.find(
+        (stream) => stream.codec_type === "video",
+      );
+      const facts = { id, tier };
+
+      if (format === "av1" || format === "h265") {
+        assert.equal(
+          Number(flagValue(command, "-crf")),
+          wanted.quality,
+          `${id} crf`,
+        );
+        assert.equal(
+          flagValue(command, "-b:a"),
+          `${wanted.audioBitrateKbps}k`,
+          `${id} audio`,
+        );
+        const preset = format === "av1" ? wanted.cpuPreset : wanted.preset;
+        assert.equal(
+          flagValue(command, "-preset"),
+          String(preset),
+          `${id} preset`,
+        );
+        facts.crf = wanted.quality;
+        facts.preset = preset;
+      }
+      if (format === "h265") {
+        // The advanced x265 parameters also switch the output to 10-bit.
+        assert.equal(
+          command.includes(" -x265-params "),
+          wanted.useAdvancedParams,
+          id,
+        );
+        assert.equal(
+          video.pix_fmt,
+          wanted.useAdvancedParams ? "yuv420p10le" : "yuv420p",
+          `${id} pixel format`,
+        );
+        facts.pixFmt = video.pix_fmt;
+      }
+      if (format === "gif" || format === "webp") {
+        assert.ok(
+          command.includes(`min(source_fps,${wanted.fps})`),
+          `${id} fps`,
+        );
+        assert.ok(
+          command.includes(`'min(${wanted.maxDimension},iw)'`),
+          `${id} size`,
+        );
+        // The 320x240 source is never upscaled.
+        assert.equal(
+          video.width,
+          Math.min(wanted.maxDimension, 320),
+          `${id} width`,
+        );
+        facts.fps = wanted.fps;
+      }
+      if (format === "gif") {
+        assert.ok(
+          command.includes(`max_colors=${wanted.maxColors}`),
+          `${id} colors`,
+        );
+        // The source runs at 15 fps for 2 s: the tier's cap sets the frame count.
+        const frames = countVideoFrames(item.outputPath);
+        const expected = 2 * Math.min(15, wanted.fps);
+        assert.ok(
+          Math.abs(frames - expected) <= 2,
+          `${id}: ${frames} frames, expected about ${expected}`,
+        );
+        facts.frames = frames;
+      }
+      if (format === "webp") {
+        assert.equal(
+          flagValue(command, "-quality"),
+          String(wanted.quality),
+          `${id} quality`,
+        );
+        assert.ok(["webp", "webp_anim"].includes(video.codec_name), id);
+        facts.quality = wanted.quality;
+      }
+      rows.push(facts);
+    }
+    record("preset-tier-args", { presets: rows });
+  });
+
   it("merges, validates, persists and resets settings", async () => {
     const before = await api("getSettings");
     await api("saveSettings", { theme: "light" });
@@ -656,11 +894,16 @@ describe("CONV2 main window", () => {
     mode("preset-search-empty-state");
 
     // 10. A corrupt file fails with a friendly status and offers details.
+    let openedH264 = false;
     for (const parent of await $$(".preset-parent-btn")) {
       if ((await parent.$(".preset-parent-label").getText()) === "H.264") {
         await parent.click();
+        openedH264 = true;
+        // The click re-renders the list, so the remaining elements are stale.
+        break;
       }
     }
+    assert.ok(openedH264, "the H.264 preset group was found and opened");
     await $('.preset-card[data-preset-id="h264-fast"]').click();
     const waitIdle = () =>
       browser.waitUntil(
@@ -919,5 +1162,104 @@ describe("CONV2 main window", () => {
       });
     }
     record("ui-screenshots", { shots });
+  });
+
+  it("blocks reload shortcuts and the page menu outside text fields", async () => {
+    // The guard is an init script of the main window. A reload would drop the
+    // renderer's view of a running batch while FFmpeg keeps going.
+    const outcome = await browser.execute(() => {
+      // A text selection keeps the native menu; start without one.
+      window.getSelection()?.removeAllRanges();
+      const dispatch = (target, event) => {
+        target.dispatchEvent(event);
+        return event.defaultPrevented;
+      };
+      const key = (init) =>
+        dispatch(
+          document.body,
+          new KeyboardEvent("keydown", {
+            bubbles: true,
+            cancelable: true,
+            ...init,
+          }),
+        );
+      const menu = (target) =>
+        dispatch(
+          target,
+          new MouseEvent("contextmenu", { bubbles: true, cancelable: true }),
+        );
+      return {
+        installed: window.__CONV2_WEBVIEW_GUARD__ === true,
+        f5: key({ key: "F5" }),
+        ctrlR: key({ key: "r", ctrlKey: true }),
+        metaR: key({ key: "R", metaKey: true }),
+        ctrlP: key({ key: "p", ctrlKey: true }),
+        // Alt changes the meaning of the chord, so the guard leaves it alone.
+        ctrlAltR: key({ key: "r", ctrlKey: true, altKey: true }),
+        pageMenu: menu(document.getElementById("dropZone")),
+        searchMenu: menu(document.getElementById("presetSearch")),
+      };
+    });
+    assert.equal(outcome.installed, true, "the guard script ran");
+    assert.equal(outcome.f5, true, "F5 is blocked");
+    assert.equal(outcome.ctrlR, true, "Ctrl+R is blocked");
+    assert.equal(outcome.metaR, true, "Cmd+R is blocked");
+    assert.equal(outcome.ctrlP, true, "Ctrl+P is blocked");
+    assert.equal(outcome.ctrlAltR, false, "Ctrl+Alt+R is not a reload chord");
+    assert.equal(outcome.pageMenu, true, "the page context menu is blocked");
+    assert.equal(
+      outcome.searchMenu,
+      false,
+      "a text field keeps its Cut, Copy and Paste menu",
+    );
+    record("reload-guard", outcome);
+  });
+
+  it("flushes a pending settings save before the main window closes", async () => {
+    const before = readSettingsFile();
+    const target = !before.removeSpacesFromFilenames;
+    const logFile = path.join(DATA_DIR, "logs", "conv2.log");
+    // Only lines written from here on count; earlier closes cannot satisfy this.
+    const logStart = fs.existsSync(logFile) ? fs.statSync(logFile).size : 0;
+    const readNewLog = () =>
+      fs.existsSync(logFile)
+        ? fs.readFileSync(logFile).subarray(logStart).toString("utf8")
+        : "";
+    // The wdio teardown reads this: after the close there is no webview left
+    // to ask for an exit, and on Windows and Linux no WebDriver server either.
+    globalThis.conv2MainWindowClosed = true;
+    const closeAt = Date.now();
+    // The change handler queues its save on the settings save queue; closing in
+    // the same turn means the close flow, not the page, has to drain it.
+    await browser.execute((checked) => {
+      const box = document.getElementById("removeSpacesCheck");
+      box.checked = checked;
+      box.dispatchEvent(new Event("change", { bubbles: true }));
+      void window.__TAURI__.window.getCurrentWindow().close();
+    }, target);
+    await browser.waitUntil(
+      () => readNewLog().includes("Settings flushed; closing main window."),
+      {
+        timeout: 20_000,
+        interval: 250,
+        timeoutMsg: "the close never reported a settings flush",
+      },
+    );
+    const closeMs = Date.now() - closeAt;
+    const log = readNewLog();
+    assert.doesNotMatch(
+      log,
+      /Renderer did not confirm its settings flush/,
+      "the renderer acknowledged the flush in time",
+    );
+    assert.equal(
+      readSettingsFile().removeSpacesFromFilenames,
+      target,
+      "the pending setting reached disk before the window closed",
+    );
+    record("close-settings-flush", {
+      flushedSetting: "removeSpacesFromFilenames",
+      closeMs,
+    });
   });
 });

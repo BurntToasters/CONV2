@@ -50,6 +50,16 @@ const ALLOWED_SETTINGS_KEYS: &[&str] = &[
 static SETTINGS: Mutex<Option<AppSettings>> = Mutex::new(None);
 /// Serializes read-modify-write saves so two patches cannot lose one another.
 static SAVE_LOCK: Mutex<()> = Mutex::new(());
+/// Set when the stored file must not be overwritten this session (unreadable
+/// or written by a newer CONV2); holds the error saves return.
+static WRITE_BLOCK: Mutex<Option<String>> = Mutex::new(None);
+
+fn block_writes(message: String) {
+    crate::logging::warn(&message);
+    *WRITE_BLOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(message);
+}
 
 fn settings_path() -> std::path::PathBuf {
     crate::app_state::data_dir().join("settings.json")
@@ -935,22 +945,29 @@ fn back_up_corrupt(settings_path: &std::path::Path) {
 }
 
 /// Read + normalize the file. Corrupt files are backed up; an outdated schema
-/// is normalized and re-persisted.
+/// is normalized and re-persisted. Unreadable or newer-version files load
+/// without persisting and block saves.
 fn read_settings_file() -> (AppSettings, bool) {
+    use crate::fs_util::BoundedReadError;
     let path = settings_path();
     let _ = std::fs::remove_file(path.with_extension("json.tmp"));
-    let raw = match std::fs::read_to_string(&path) {
-        Ok(raw) if raw.len() as u64 <= MAX_SETTINGS_FILE_BYTES => raw,
-        Ok(_) => {
+    let raw = match crate::fs_util::read_bounded_typed(&path, MAX_SETTINGS_FILE_BYTES) {
+        Ok(Some(raw)) => raw,
+        Ok(None) => return (default_settings(), false),
+        Err(BoundedReadError::TooLarge(_)) => {
             crate::logging::warn("settings.json is larger than 2 MB; using defaults");
             back_up_corrupt(&path);
             return (default_settings(), true);
         }
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            return (default_settings(), false)
+        Err(BoundedReadError::InvalidUtf8) => {
+            crate::logging::warn("settings.json is not valid UTF-8; using defaults");
+            back_up_corrupt(&path);
+            return (default_settings(), true);
         }
-        Err(error) => {
-            crate::logging::warn(&format!("Could not read settings.json: {error}"));
+        Err(BoundedReadError::Io(error)) => {
+            block_writes(format!(
+                "Could not read settings.json ({error}); it will not be overwritten."
+            ));
             return (default_settings(), false);
         }
     };
@@ -966,6 +983,17 @@ fn read_settings_file() -> (AppSettings, bool) {
         back_up_corrupt(&path);
         return (default_settings(), true);
     };
+    let newer = incoming
+        .get("settingsSchemaVersion")
+        .and_then(Value::as_f64)
+        .is_some_and(|version| version > f64::from(CURRENT_SETTINGS_VERSION));
+    if newer {
+        block_writes(
+            "Settings were written by a newer CONV2 version; this version will not overwrite them."
+                .to_string(),
+        );
+        return (normalize_settings(&Value::Object(incoming)), false);
+    }
     let stored_version = stored_settings_version(&incoming);
     incoming = migrate_legacy_tiers_if_needed(incoming);
     let outdated = stored_version != Some(f64::from(CURRENT_SETTINGS_VERSION));
@@ -973,6 +1001,13 @@ fn read_settings_file() -> (AppSettings, bool) {
 }
 
 fn write_settings_atomic(settings: &AppSettings) -> Result<(), String> {
+    if let Some(message) = WRITE_BLOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .clone()
+    {
+        return Err(message);
+    }
     let serialized = serde_json::to_vec_pretty(settings).map_err(|error| error.to_string())?;
     crate::fs_util::atomic_write(&settings_path(), &serialized).map_err(|error| error.to_string())
 }
@@ -1080,20 +1115,17 @@ fn merge_patch(current: &AppSettings, patch: &Map<String, Value>) -> AppSettings
                 .unwrap_or(Value::Null),
         );
     }
-    // A GPU vendor without a mode means manual, as in v1.
+    // Only the legacy `gpu` key alone implies manual; a vendor-only patch
+    // keeps the stored mode and an explicit gpuMode always wins.
     if patch.contains_key("gpuManualVendor") || patch.contains_key("gpu") {
-        merged.insert(
-            "gpuMode".into(),
-            Value::String(
-                if patch.contains_key("gpuMode") {
-                    normalize_gpu_mode(patch.get("gpuMode"))
-                } else {
-                    GpuMode::Manual
-                }
-                .as_str()
-                .to_string(),
-            ),
-        );
+        let mode = if patch.contains_key("gpuMode") {
+            normalize_gpu_mode(patch.get("gpuMode"))
+        } else if patch.contains_key("gpuManualVendor") {
+            current.gpu_mode
+        } else {
+            GpuMode::Manual
+        };
+        merged.insert("gpuMode".into(), Value::String(mode.as_str().to_string()));
         let vendor = normalize_gpu(
             patch
                 .get("gpuManualVendor")

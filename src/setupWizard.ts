@@ -17,6 +17,7 @@ export interface SetupWizardSettingsSlice {
 export interface SetupWizardDeps {
   getSettings: () => SetupWizardSettingsSlice;
   patchSettings: (partial: Partial<SetupWizardSettingsSlice>) => void;
+  /** On failure, restores the last saved values in memory (unless superseded) and rejects. */
   saveSettings: (partial: Partial<SetupWizardSettingsSlice>) => Promise<void>;
   setUpdateChannel: (channel: SetupWizardSettingsSlice['updateChannel']) => Promise<void>;
   reportError: (message: string) => void;
@@ -29,6 +30,8 @@ export interface SetupWizardDeps {
   isFfmpegInstalled: () => boolean;
   prepareAppTourSpotlight: (targetId: string) => void;
   clearAppTourSpotlight: () => void;
+  /** Runs after the wizard closes, so other screens can resync from settings. */
+  onClosed?: () => void;
 }
 
 let deps: SetupWizardDeps | null = null;
@@ -345,6 +348,31 @@ const closeWizard = (): void => {
     returnFocus.focus();
   }
   returnFocus = null;
+  deps?.onClosed?.();
+};
+
+const errorMessage = (error: unknown): string =>
+  error instanceof Error ? error.message : String(error);
+
+// Patches memory, then saves; a failed save is reported and the controls resynced.
+const saveWizardChange = async (
+  partial: Partial<SetupWizardSettingsSlice>,
+  failurePrefix: string,
+  afterPatch?: () => void
+): Promise<void> => {
+  const wizardDeps = deps;
+  if (!wizardDeps) {
+    return;
+  }
+  wizardDeps.patchSettings(partial);
+  afterPatch?.();
+  syncWizardControlsFromSettings();
+  try {
+    await wizardDeps.saveSettings(partial);
+  } catch (error) {
+    syncWizardControlsFromSettings();
+    wizardDeps.reportError(`${failurePrefix}: ${errorMessage(error)}`);
+  }
 };
 
 const completeWizard = async (): Promise<void> => {
@@ -356,12 +384,8 @@ const completeWizard = async (): Promise<void> => {
     closeWizard();
     return;
   }
-  deps.patchSettings({ setupWizardCompleted: true });
-  try {
-    await deps.saveSettings({ setupWizardCompleted: true });
-  } catch {
-    // still close; flag may retry on next launch
-  }
+  // Still closes on failure; the flag is restored, so setup shows again next launch.
+  await saveWizardChange({ setupWizardCompleted: true }, 'Failed to save setup progress');
   closeWizard();
 };
 
@@ -406,10 +430,9 @@ const bindWizardControls = (): void => {
       if (!theme) {
         return;
       }
-      deps?.patchSettings({ theme });
-      void deps?.applyTheme();
-      void deps?.saveSettings({ theme });
-      syncWizardControlsFromSettings();
+      void saveWizardChange({ theme }, 'Failed to save theme', () => {
+        void deps?.applyTheme();
+      });
     });
   });
 
@@ -419,36 +442,48 @@ const bindWizardControls = (): void => {
       if (style !== 'glass' && style !== 'flat') {
         return;
       }
-      deps?.patchSettings({ interfaceStyle: style });
-      void deps?.applyTheme();
-      void deps?.saveSettings({ interfaceStyle: style });
-      syncWizardControlsFromSettings();
+      void saveWizardChange({ interfaceStyle: style }, 'Failed to save interface style', () => {
+        void deps?.applyTheme();
+      });
     });
   });
+
+  const resyncAfterGpuMode = async (mode: GPUMode): Promise<void> => {
+    try {
+      await deps?.persistGpuMode(mode);
+    } catch (error) {
+      deps?.reportError(`Failed to save GPU mode: ${errorMessage(error)}`);
+    }
+    syncWizardControlsFromSettings();
+  };
 
   const gpuAuto = overlay.querySelector<HTMLInputElement>('#wizardGpuModeAuto');
   const gpuManual = overlay.querySelector<HTMLInputElement>('#wizardGpuModeManual');
   gpuAuto?.addEventListener('change', () => {
     if (gpuAuto.checked) {
-      void deps?.persistGpuMode('auto');
+      void resyncAfterGpuMode('auto');
     }
   });
   gpuManual?.addEventListener('change', () => {
     if (gpuManual.checked) {
-      void deps?.persistGpuMode('manual');
+      void resyncAfterGpuMode('manual');
     }
   });
 
   const notifyCheck = overlay.querySelector<HTMLInputElement>('#wizardNotifyCheck');
   notifyCheck?.addEventListener('change', () => {
-    deps?.patchSettings({ notifyOnConversionComplete: notifyCheck.checked });
-    void deps?.saveSettings({ notifyOnConversionComplete: notifyCheck.checked });
+    void saveWizardChange(
+      { notifyOnConversionComplete: notifyCheck.checked },
+      'Failed to save notification setting'
+    );
   });
 
   const sleepCheck = overlay.querySelector<HTMLInputElement>('#wizardPreventSleepCheck');
   sleepCheck?.addEventListener('change', () => {
-    deps?.patchSettings({ preventSleepWhileConverting: sleepCheck.checked });
-    void deps?.saveSettings({ preventSleepWhileConverting: sleepCheck.checked });
+    void saveWizardChange(
+      { preventSleepWhileConverting: sleepCheck.checked },
+      'Failed to save prevent-sleep setting'
+    );
   });
 
   const channelSelect = overlay.querySelector<HTMLSelectElement>('#wizardUpdateChannelSelect');
@@ -457,39 +492,20 @@ const bindWizardControls = (): void => {
     if (value !== 'auto' && value !== 'stable' && value !== 'beta') {
       return;
     }
-    const wizardDeps = deps;
-    if (!wizardDeps) {
-      return;
-    }
-    const previous = wizardDeps.getSettings().updateChannel;
-    wizardDeps.patchSettings({ updateChannel: value });
-    void (async () => {
-      try {
-        await wizardDeps.setUpdateChannel(value);
-      } catch (error) {
-        wizardDeps.patchSettings({ updateChannel: previous });
-        syncWizardControlsFromSettings();
-        const message = error instanceof Error ? error.message : String(error);
-        wizardDeps.reportError(`Failed to save update channel: ${message}`);
-      }
-    })();
+    void saveWizardChange({ updateChannel: value }, 'Failed to save update channel');
   });
 
   overlay.querySelector('#wizardChooseOutputBtn')?.addEventListener('click', () => {
     void (async () => {
       const dir = await deps?.selectOutputDirectory();
       if (dir) {
-        deps?.patchSettings({ outputDirectory: dir });
-        await deps?.saveSettings({ outputDirectory: dir });
-        syncWizardControlsFromSettings();
+        await saveWizardChange({ outputDirectory: dir }, 'Failed to save output directory');
       }
     })();
   });
 
   overlay.querySelector('#wizardClearOutputBtn')?.addEventListener('click', () => {
-    deps?.patchSettings({ outputDirectory: '' });
-    void deps?.saveSettings({ outputDirectory: '' });
-    syncWizardControlsFromSettings();
+    void saveWizardChange({ outputDirectory: '' }, 'Failed to reset output directory');
   });
 
   overlay.addEventListener('click', (event) => {
@@ -534,8 +550,7 @@ const goNext = (): void => {
       updateStepUi();
       focusActiveWizardSurface();
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      deps?.reportError(`Failed to save setup wizard settings: ${message}`);
+      deps?.reportError(`Failed to save setup wizard settings: ${errorMessage(error)}`);
     } finally {
       stepTransitionBusy = false;
     }

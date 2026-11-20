@@ -1,18 +1,23 @@
 //! Window lifecycle: the hidden main window built from tauri.conf.json, the
 //! deferred reveal on renderer readiness, the close flow (confirm while a
-//! conversion is active, then destroy), and restart.
+//! conversion is active, renderer settings flush, then destroy), and restart.
 
 use crate::app_state::MAIN_WINDOW;
 use crate::constants::{CLOSE_GENERATION, MAIN_READY};
 use crate::ipc::{FalliblePayload, JsonObject, VALIDATION_ERROR};
 use crate::types::ConversionMenuStatePayload;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Mutex;
+use std::sync::{Mutex, MutexGuard};
+use std::time::Duration;
 use tauri::{AppHandle, Manager, WebviewWindow, WebviewWindowBuilder};
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
 
 static CLOSE_IN_PROGRESS: AtomicBool = AtomicBool::new(false);
 static CLOSE_CONFIRMING: AtomicBool = AtomicBool::new(false);
+/// Serializes close-token changes (begin, ack, timeout, cancel).
+static CLOSE_STATE_LOCK: Mutex<()> = Mutex::new(());
+/// How long the renderer gets to flush settings before the close proceeds.
+const SETTINGS_FLUSH_TIMEOUT: Duration = Duration::from_millis(1500);
 pub static APP_QUITTING: AtomicBool = AtomicBool::new(false);
 /// The renderer's last reported menu enablement (v1's conversion-menu-state).
 static CONVERSION_MENU_STATE: Mutex<ConversionMenuStatePayload> =
@@ -56,6 +61,37 @@ fn open_blocked_url(app: &AppHandle, url: &tauri::Url) {
     });
 }
 
+/// Injected into every frame of the main window before page scripts run.
+/// WebView2 honours F5 / Ctrl+R / Ctrl+P and every engine offers Reload in its
+/// default context menu; a reload would drop the renderer's view of a running
+/// batch while FFmpeg keeps going. Editable fields and text selections keep
+/// their native menu so right-click Paste and Copy still work.
+const WEBVIEW_GUARD_SCRIPT: &str = r#"
+(function () {
+  if (window.__CONV2_WEBVIEW_GUARD__) return;
+  window.__CONV2_WEBVIEW_GUARD__ = true;
+  function editable(target) {
+    var el = target instanceof Element ? target : null;
+    if (!el) return false;
+    if (el.closest("textarea, [contenteditable=''], [contenteditable='true']")) return true;
+    var input = el.closest("input");
+    return !!input && !/^(button|checkbox|radio|range|color|file|submit|reset|image)$/i.test(input.type);
+  }
+  document.addEventListener("contextmenu", function (event) {
+    var selection = window.getSelection && window.getSelection();
+    var hasSelection = !!selection && !selection.isCollapsed && String(selection).trim() !== "";
+    if (!editable(event.target) && !hasSelection) event.preventDefault();
+  }, true);
+  window.addEventListener("keydown", function (event) {
+    var key = String(event.key || "").toLowerCase();
+    var mod = event.ctrlKey || event.metaKey;
+    if (key === "f5" || (mod && !event.altKey && (key === "r" || key === "p"))) {
+      event.preventDefault();
+    }
+  }, true);
+})();
+"#;
+
 fn build_main(app: &AppHandle) -> Result<WebviewWindow, String> {
     let config = app
         .config()
@@ -82,6 +118,7 @@ fn build_main(app: &AppHandle) -> Result<WebviewWindow, String> {
     #[cfg(target_os = "windows")]
     let builder = builder.decorations(false);
     builder
+        .initialization_script_for_all_frames(WEBVIEW_GUARD_SCRIPT)
         .on_navigation(move |url| {
             if is_app_url(url) {
                 return true;
@@ -302,6 +339,8 @@ pub fn mark_main_window_ready(app: AppHandle, window: WebviewWindow) {
     });
 }
 
+// Only the macOS app menu reads this.
+#[cfg(target_os = "macos")]
 pub fn conversion_menu_state() -> ConversionMenuStatePayload {
     CONVERSION_MENU_STATE
         .lock()
@@ -338,21 +377,74 @@ fn destroy_main(app: &AppHandle) -> Result<(), String> {
         .map_err(|error| format!("Could not close the main window: {error}"))
 }
 
+fn lock_close_state() -> MutexGuard<'static, ()> {
+    CLOSE_STATE_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+/// Reset close state so the user can retry; the token is retired.
+fn cancel_close_locked() {
+    CLOSE_IN_PROGRESS.store(false, Ordering::SeqCst);
+    CLOSE_CONFIRMING.store(false, Ordering::SeqCst);
+    CLOSE_GENERATION.fetch_add(1, Ordering::SeqCst);
+    APP_QUITTING.store(false, Ordering::SeqCst);
+}
+
+/// Take the close token for `generation` and retire it, so a late ack or a
+/// late timeout cannot run a second close.
+fn consume_close_generation(generation: u64) -> bool {
+    let _state = lock_close_state();
+    if !CLOSE_IN_PROGRESS.load(Ordering::SeqCst)
+        || CLOSE_GENERATION.load(Ordering::SeqCst) != generation
+    {
+        return false;
+    }
+    CLOSE_GENERATION.fetch_add(1, Ordering::SeqCst);
+    true
+}
+
+/// Save bounds, then destroy the window. A failed destroy reopens the close
+/// flow instead of leaving it stuck in progress.
+fn finish_close(app: &AppHandle) -> Result<(), String> {
+    crate::window_state::save(app);
+    destroy_main(app).inspect_err(|_| {
+        let _state = lock_close_state();
+        cancel_close_locked();
+    })
+}
+
+/// Ask the renderer to flush pending settings, then close. A hung or dead
+/// renderer that never acknowledges is closed anyway after the timeout.
+fn begin_flush_and_close(app: AppHandle) {
+    let generation = {
+        let _state = lock_close_state();
+        CLOSE_IN_PROGRESS.store(true, Ordering::SeqCst);
+        CLOSE_GENERATION.fetch_add(1, Ordering::SeqCst) + 1
+    };
+    crate::app_state::emit("prepare-for-close", generation);
+    std::thread::spawn(move || {
+        std::thread::sleep(SETTINGS_FLUSH_TIMEOUT);
+        if consume_close_generation(generation) {
+            crate::logging::warn("Renderer did not confirm its settings flush; closing anyway.");
+            if let Err(error) = finish_close(&app) {
+                crate::logging::error(&format!("Could not close the main window: {error}"));
+            }
+        }
+    });
+}
+
 /// Main window close: confirm while a conversion is active (v1's quit
-/// guard), then destroy the window. The settings-flush acknowledgement
-/// lands with the settings port.
+/// guard), ask the renderer to flush settings, then destroy the window.
 pub fn on_main_close_requested(app: &AppHandle, api: &tauri::CloseRequestApi) {
     api.prevent_close();
-    crate::window_state::save(app);
     if CLOSE_IN_PROGRESS.load(Ordering::SeqCst) || CLOSE_CONFIRMING.swap(true, Ordering::SeqCst) {
         return;
     }
     let handle = app.clone();
     if !crate::conversion::is_active() {
         CLOSE_CONFIRMING.store(false, Ordering::SeqCst);
-        if let Err(error) = destroy_main(&handle) {
-            crate::logging::error(&format!("Could not close the main window: {error}"));
-        }
+        begin_flush_and_close(handle);
         return;
     }
     std::thread::spawn(move || {
@@ -373,19 +465,38 @@ pub fn on_main_close_requested(app: &AppHandle, api: &tauri::CloseRequestApi) {
         let confirmed = dialog.blocking_show();
         CLOSE_CONFIRMING.store(false, Ordering::SeqCst);
         if confirmed {
-            if let Err(error) = destroy_main(&handle) {
-                crate::logging::error(&format!("Could not close the main window: {error}"));
-            }
+            begin_flush_and_close(handle);
         } else {
             APP_QUITTING.store(false, Ordering::SeqCst);
         }
     });
 }
 
+/// The renderer's answer to `prepare-for-close`: its pending settings are
+/// saved. `generation` is the event payload; stale tokens are rejected.
+#[tauri::command]
+pub async fn notify_settings_flushed(
+    app: AppHandle,
+    window: WebviewWindow,
+    generation: u64,
+) -> Result<(), String> {
+    if window.label() != MAIN_WINDOW {
+        return Err("Only the main window can complete a close request.".into());
+    }
+    if !consume_close_generation(generation) {
+        return Err("The close request expired before its settings flush completed.".into());
+    }
+    // Logged first: closing the window can end the process.
+    crate::logging::info("Settings flushed; closing main window.");
+    finish_close(&app)?;
+    Ok(())
+}
+
 pub fn on_main_destroyed(app: &AppHandle) {
     crate::logging::info("Main window closed.");
     MAIN_READY.store(false, Ordering::SeqCst);
     {
+        let _state = lock_close_state();
         CLOSE_IN_PROGRESS.store(false, Ordering::SeqCst);
         CLOSE_CONFIRMING.store(false, Ordering::SeqCst);
         CLOSE_GENERATION.fetch_add(1, Ordering::SeqCst);
@@ -406,15 +517,13 @@ pub fn e2e_cancel_close_request(window: WebviewWindow, generation: u64) -> Resul
     if window.label() != MAIN_WINDOW {
         return Err("Only the main window may cancel an E2E close request.".into());
     }
+    let _state = lock_close_state();
     if CLOSE_GENERATION.load(Ordering::SeqCst) != generation
         || !CLOSE_IN_PROGRESS.load(Ordering::SeqCst)
     {
         return Err("The E2E close request is no longer current.".into());
     }
-    CLOSE_IN_PROGRESS.store(false, Ordering::SeqCst);
-    CLOSE_CONFIRMING.store(false, Ordering::SeqCst);
-    CLOSE_GENERATION.fetch_add(1, Ordering::SeqCst);
-    APP_QUITTING.store(false, Ordering::SeqCst);
+    cancel_close_locked();
     crate::logging::info("E2E close request retired.");
     Ok(())
 }
@@ -443,9 +552,12 @@ pub fn stop_active_work() {
 
 /// Stop background work before an update install or restart. v1 noted that
 /// `app.exit` skips before-quit, so FFmpeg must stop here or it outlives the
-/// app (it was detached on POSIX). Durable-state writes land with the queue
-/// port.
+/// app (it was detached on POSIX). Also saves the window bounds, since these
+/// paths skip the close flow.
 pub fn shutdown() -> Result<(), String> {
+    if let Some(app) = crate::app_state::app() {
+        crate::window_state::save(app);
+    }
     stop_active_work();
     Ok(())
 }
@@ -460,6 +572,9 @@ pub async fn restart_app(app: AppHandle) -> Result<(), String> {
 
 pub fn restart(app: &AppHandle) -> Result<(), String> {
     APP_QUITTING.store(true, Ordering::SeqCst);
-    shutdown()?;
+    if let Err(error) = shutdown() {
+        APP_QUITTING.store(false, Ordering::SeqCst);
+        return Err(error);
+    }
     app.restart()
 }

@@ -7,6 +7,8 @@ export interface LicenseCrawlerEntry {
   licenseUrl?: string;
   url?: string;
   license?: string;
+  licenseTextStatus?: string;
+  licenseReferences?: { identifier?: string; url?: string }[];
 }
 
 export interface LicenseDisplayEntry {
@@ -17,8 +19,44 @@ export interface LicenseDisplayEntry {
   isSpecial?: boolean;
 }
 
+const CARGO_PREFIX = 'cargo:';
+
+const toPackageEntry = (
+  key: string,
+  info: LicenseCrawlerEntry | string,
+  isCargo: boolean
+): LicenseDisplayEntry => {
+  const entryInfo: LicenseCrawlerEntry =
+    typeof info === 'object' && info !== null ? info : { licenses: String(info) };
+
+  const licenses = Array.isArray(entryInfo.licenses)
+    ? entryInfo.licenses.join(', ')
+    : entryInfo.licenses || entryInfo.license || 'Unknown';
+
+  const link =
+    entryInfo.repository ||
+    entryInfo.licenseUrl ||
+    entryInfo.url ||
+    entryInfo.licenseReferences?.find((ref) => ref?.url)?.url;
+
+  const entry: LicenseDisplayEntry = {
+    name: isCargo && key.startsWith(CARGO_PREFIX) ? key.slice(CARGO_PREFIX.length) : key,
+    license: licenses,
+    link,
+  };
+  if (isCargo) {
+    // Crates without a recovered license text keep only their SPDX references.
+    entry.note =
+      entryInfo.licenseTextStatus === 'not-packaged'
+        ? 'Rust crate. License text was not packaged upstream; see the SPDX reference.'
+        : 'Rust crate';
+  }
+  return entry;
+};
+
 export const buildLicenseEntries = (
-  data: Record<string, LicenseCrawlerEntry> | null
+  data: Record<string, LicenseCrawlerEntry> | null,
+  cargoData: Record<string, LicenseCrawlerEntry> | null = null
 ): LicenseDisplayEntry[] => {
   const entries: LicenseDisplayEntry[] = [
     {
@@ -70,31 +108,18 @@ export const buildLicenseEntries = (
     },
   ];
 
-  if (!data || typeof data !== 'object') {
-    return entries;
-  }
+  // Cargo keys carry a `cargo:` prefix, so keying by the original key keeps both sources distinct without duplicates.
+  const packages = new Map<string, LicenseDisplayEntry>();
+  const collect = (source: Record<string, LicenseCrawlerEntry> | null, isCargo: boolean): void => {
+    if (!source || typeof source !== 'object') return;
+    for (const [key, info] of Object.entries(source)) {
+      if (!packages.has(key)) packages.set(key, toPackageEntry(key, info, isCargo));
+    }
+  };
+  collect(data, false);
+  collect(cargoData, true);
 
-  const packageEntries = Object.entries(data)
-    .filter(([pkg]) => typeof pkg === 'string')
-    .map(([pkg, info]) => {
-      const entryInfo =
-        typeof info === 'object' && info !== null
-          ? (info as LicenseCrawlerEntry)
-          : { licenses: String(info) as string };
-
-      const licenses = Array.isArray(entryInfo.licenses)
-        ? entryInfo.licenses.join(', ')
-        : entryInfo.licenses || entryInfo.license || 'Unknown';
-
-      const link = entryInfo.repository || entryInfo.licenseUrl || entryInfo.url;
-
-      return {
-        name: pkg,
-        license: licenses,
-        link,
-      } as LicenseDisplayEntry;
-    })
-    .sort((a, b) => a.name.localeCompare(b.name));
+  const packageEntries = [...packages.values()].sort((a, b) => a.name.localeCompare(b.name));
 
   return [...entries, ...packageEntries];
 };

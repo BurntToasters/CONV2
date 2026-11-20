@@ -38,3 +38,12 @@ never let that run pass as full proof. These failures must be caught:
     ONLY run and fail it. Check: those passes stay empty in ONLY mode.
 14. **Stability runs carry the flag.** `--repeat` with ONLY set reports full
     coverage. Check: each repeated run uses the same ONLY rules.
+15. **Partial run replaces full-run evidence.** An ONLY or `--group` run writes
+    the canonical `e2e-report-<platform>-<arch>.json` or clears the canonical
+    screenshot folder, destroying the last full gate's proof. Check: only a
+    full run uses those paths; partial runs write under
+    `e2e/artifacts/adhoc/<platform>-<arch>/<run id>/` (core under `core/`), and
+    `writeEvidence` throws for a partial report without per-run paths.
+16. **Repeat reads the wrong report.** `--repeat` with ONLY or a group looks
+    for the canonical report and reports "refusing stale evidence". Check:
+    `gateReportFile` points partial repeats at the per-run `latest-report.json`.

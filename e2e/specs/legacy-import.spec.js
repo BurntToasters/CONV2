@@ -52,14 +52,21 @@ const CASES = {
 
     // The imported window state is used for the first window (logical units).
     assert.deepEqual(readJson(inData("windowState.json")), SEED.v1.windowState);
-    const size = await browser.getWindowSize();
+    // v1 saved frameless bounds and the app restores them as the inner size.
+    // getWindowSize() is the outer rect, which adds Windows' invisible resize
+    // borders, so measure the page's inner size (CSS px = logical px).
+    const [width, height] = await browser.execute(() => [
+      window.innerWidth,
+      window.innerHeight,
+    ]);
+    const size = { width, height };
     assert.ok(
-      Math.abs(size.width - SEED.v1.windowState.width) <= 4,
-      `window width ${size.width} should match the imported ${SEED.v1.windowState.width}`,
+      Math.abs(width - SEED.v1.windowState.width) <= 4,
+      `window inner width ${width} should match the imported ${SEED.v1.windowState.width}`,
     );
     assert.ok(
-      Math.abs(size.height - SEED.v1.windowState.height) <= 60,
-      `window height ${size.height} should match the imported ${SEED.v1.windowState.height}`,
+      Math.abs(height - SEED.v1.windowState.height) <= 8,
+      `window inner height ${height} should match the imported ${SEED.v1.windowState.height}`,
     );
     return {
       covers: ["settings-imported", "marker-written", "v1-folder-untouched"],

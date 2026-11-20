@@ -67,6 +67,18 @@
       "allowedSkips": []
     },
     {
+      "name": "stale-stage-sweep",
+      "feature": "conversion",
+      "owner": "main",
+      "allowedSkips": []
+    },
+    {
+      "name": "preset-tier-args",
+      "feature": "conversion",
+      "owner": "main",
+      "allowedSkips": []
+    },
+    {
       "name": "settings-patch",
       "feature": "settings",
       "owner": "main",
@@ -87,6 +99,18 @@
     {
       "name": "ui-screenshots",
       "feature": "ui",
+      "owner": "main",
+      "allowedSkips": []
+    },
+    {
+      "name": "reload-guard",
+      "feature": "ui",
+      "owner": "main",
+      "allowedSkips": []
+    },
+    {
+      "name": "close-settings-flush",
+      "feature": "settings",
       "owner": "main",
       "allowedSkips": []
     },

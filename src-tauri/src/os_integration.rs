@@ -17,8 +17,8 @@ pub struct ProgressScope {
 
 static QUEUE_SCOPE: Mutex<Option<ProgressScope>> = Mutex::new(None);
 static ACTIVE_SESSIONS: AtomicUsize = AtomicUsize::new(0);
-/// The last successful output, revealed when a completion notification is
-/// clicked.
+/// The current batch's last successful output, revealed when a completion
+/// notification is clicked. Cleared at batch start.
 static LAST_OUTPUT: Mutex<Option<String>> = Mutex::new(None);
 static POWER_BLOCKER: Mutex<Option<power::Blocker>> = Mutex::new(None);
 
@@ -102,6 +102,7 @@ fn clear_taskbar_progress() {
 
 /// A batch started: hold a sleep inhibitor when the setting asks for one.
 pub fn conversion_activity_started(settings: &AppSettings) {
+    set_last_output(None);
     let sessions = ACTIVE_SESSIONS.fetch_add(1, Ordering::SeqCst) + 1;
     if sessions != 1 || !settings.prevent_sleep_while_converting {
         return;
@@ -263,10 +264,29 @@ pub fn summarize_queue(total: usize, items: &[QueueItemSnapshot]) -> QueueSummar
     )
 }
 
+fn set_last_output(path: Option<String>) {
+    if let Ok(mut slot) = LAST_OUTPUT.lock() {
+        *slot = path;
+    }
+}
+
+/// v1 resolveRevealOutputPath: the batch's last `done` item with an output.
+fn reveal_output_path(items: &[QueueItemSnapshot]) -> Option<String> {
+    items
+        .iter()
+        .rev()
+        .filter(|item| item.status == QueueItemStatus::Done)
+        .find_map(|item| item.output_path.clone().filter(|path| !path.is_empty()))
+}
+
 /// Shows the completion toast when the setting is on and the window is in the
-/// background. Returns whether a notification was handed to the OS.
-pub fn notify_conversion_complete(summary: &QueueSummary, settings: &AppSettings) -> bool {
-    if !settings.notify_on_conversion_complete {
+/// background. The setting is read now, not at batch start, so turning it off
+/// mid-batch suppresses the toast. A click reveals only this batch's output.
+/// Returns whether a notification was handed to the OS.
+pub fn notify_conversion_complete(summary: &QueueSummary, items: &[QueueItemSnapshot]) -> bool {
+    let reveal = reveal_output_path(items);
+    set_last_output(reveal.clone());
+    if !crate::settings::current().notify_on_conversion_complete {
         return false;
     }
     let Some(window) = app_state::main_window() else {
@@ -278,12 +298,17 @@ pub fn notify_conversion_complete(summary: &QueueSummary, settings: &AppSettings
     let Some(app) = app_state::app() else {
         return false;
     };
+    let body = if reveal.is_some() {
+        format!("{}\nClick to show output in folder.", summary.body)
+    } else {
+        summary.body.clone()
+    };
     use tauri_plugin_notification::NotificationExt;
     match app
         .notification()
         .builder()
         .title(summary.title.clone())
-        .body(summary.body.clone())
+        .body(body)
         .show()
     {
         Ok(()) => true,
@@ -298,9 +323,7 @@ pub fn register_recent_output(output_path: &str) {
     if output_path.is_empty() {
         return;
     }
-    if let Ok(mut slot) = LAST_OUTPUT.lock() {
-        *slot = Some(output_path.to_string());
-    }
+    set_last_output(Some(output_path.to_string()));
 }
 
 mod power {
@@ -427,33 +450,35 @@ mod power {
 
     #[cfg(target_os = "linux")]
     mod inner {
-        use std::process::{Child, Command, Stdio};
+        use crate::process_util::{self, ManagedChild};
+        use std::process::Stdio;
+        use std::sync::Arc;
 
         /// Best effort: `systemd-inhibit` holds a block inhibitor for the
         /// lifetime of the sleep helper. Sandboxes without it silently skip.
-        pub struct Blocker(Child);
+        /// Spawned via process_util, so it gets a scrubbed env, its own
+        /// process group, and PDEATHSIG: it dies with CONV2.
+        pub struct Blocker(Arc<ManagedChild>);
 
         pub fn acquire() -> Option<Blocker> {
-            let child = Command::new("systemd-inhibit")
-                .args([
-                    "--what=idle:sleep",
-                    "--who=CONV2",
-                    "--why=Converting video",
-                    "--mode=block",
-                    "sleep",
-                    "2147483647",
-                ])
-                .stdin(Stdio::null())
-                .stdout(Stdio::null())
-                .stderr(Stdio::null())
-                .spawn()
-                .ok()?;
+            let args = [
+                "--what=idle:sleep",
+                "--who=CONV2",
+                "--why=Converting video",
+                "--mode=block",
+                "sleep",
+                "2147483647",
+            ]
+            .map(str::to_string);
+            let mut command = process_util::command("systemd-inhibit", &args, &[], true);
+            command.stdout(Stdio::null()).stderr(Stdio::null());
+            let child = process_util::spawn(&mut command).ok()?;
             Some(Blocker(child))
         }
 
-        pub fn release(mut blocker: Blocker) {
-            let _ = blocker.0.kill();
-            let _ = blocker.0.wait();
+        pub fn release(blocker: Blocker) {
+            // Waits for the group to exit, so the inhibitor is gone on return.
+            process_util::terminate_tree(&blocker.0);
         }
     }
 }

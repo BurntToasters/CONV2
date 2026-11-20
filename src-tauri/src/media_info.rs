@@ -113,6 +113,14 @@ fn stream_codec_type(stream: &Value) -> Option<&str> {
         .and_then(Value::as_str)
 }
 
+/// Cover art is a video-typed stream flagged `disposition.attached_pic`.
+fn is_attached_pic(stream: &Value) -> bool {
+    stream
+        .pointer("/disposition/attached_pic")
+        .and_then(Value::as_i64)
+        == Some(1)
+}
+
 /// v1 getVideoInfo's projection of the ffprobe JSON.
 pub fn parse_video_info(json: &str) -> Option<VideoInfo> {
     let parsed: Value = serde_json::from_str(json).ok()?;
@@ -126,7 +134,7 @@ pub fn parse_video_info(json: &str) -> Option<VideoInfo> {
     };
     let video_stream = streams
         .iter()
-        .find(|stream| stream_codec_type(stream) == Some("video"));
+        .find(|stream| stream_codec_type(stream) == Some("video") && !is_attached_pic(stream));
     let audio_stream = streams
         .iter()
         .find(|stream| stream_codec_type(stream) == Some("audio"));
@@ -253,14 +261,22 @@ fn probe_file(
 /// the file-list preview probe (and vice versa).
 static CONVERSION_PROBE: TrackedSlot = TrackedSlot::new();
 
-/// v1 `getVideoInfo` for a conversion, cancellable with the batch.
-pub(crate) fn probe_for_conversion(path: &str) -> Result<VideoInfo, ProbeError> {
+/// v1 `getVideoInfo` for a conversion, cancellable with the batch. `cancelled`
+/// is the run's own flag, re-checked after `reserve()` so a Cancel that landed
+/// before the reservation (and so missed the slot) is still honoured.
+pub(crate) fn probe_for_conversion(
+    path: &str,
+    cancelled: &dyn Fn() -> bool,
+) -> Result<VideoInfo, ProbeError> {
     // v1's runFFprobe gated on the FFmpeg status before spawning; the gate
     // returns the exact binary it accepted, so no bare-name spawn is possible.
     let Some(tools) = ffmpeg_status::effective_tools() else {
         return Err(ProbeError::Failed);
     };
     let reservation = CONVERSION_PROBE.reserve();
+    if cancelled() {
+        return Err(ProbeError::Cancelled);
+    }
     probe_file(&CONVERSION_PROBE, &tools.ffprobe, path, reservation)
 }
 
@@ -271,12 +287,15 @@ pub(crate) fn cancel_conversion_probe() {
 
 /// v1 `getVideoDuration`: a second probe for containers whose format
 /// duration is missing or zero.
-pub(crate) fn probe_duration_for_conversion(path: &str) -> Result<f64, ProbeError> {
+pub(crate) fn probe_duration_for_conversion(
+    path: &str,
+    cancelled: &dyn Fn() -> bool,
+) -> Result<f64, ProbeError> {
     let Some(tools) = ffmpeg_status::effective_tools() else {
         return Err(ProbeError::Failed);
     };
     let reservation = CONVERSION_PROBE.reserve();
-    if reservation.is_cancelled() {
+    if reservation.is_cancelled() || cancelled() {
         return Err(ProbeError::Cancelled);
     }
     let args = [
@@ -320,7 +339,8 @@ pub(crate) fn probe_duration_for_conversion(path: &str) -> Result<f64, ProbeErro
 
 fn fetch_file_info(path: String, reservation: TrackedReservation<'static>) -> Option<VideoInfo> {
     // Same admission as conversion inputs: absolute, existing regular file,
-    // never a network-namespace path. A bad path stays a null probe result.
+    // never a Windows device-namespace path (UNC shares are allowed). A bad
+    // path stays a null probe result.
     let path = crate::validation::existing_file(&path)?;
     // v1's runFFprobe gated on the FFmpeg status before spawning.
     let tools = ffmpeg_status::effective_tools()?;

@@ -13,10 +13,13 @@
 //! 6. settings.json missing or corrupt: channel `auto`, auto-check on.
 //! 7. Store, CONV2_DISABLE_UPDATES, or dev builds never hit the feed; Flatpak
 //!    refuses download and install with a manual-reinstall notice.
-//! 8. Conversions running at install: INTERNAL_ERROR; the UI offers restart
-//!    after the queue drains.
+//! 8. Conversions running at install: INTERNAL_ERROR plus a manual
+//!    `update-state` notice; the download stays installable once they finish.
 //! 9. Install fails: keep the download; a retry restarts without reinstalling.
 //! 10. A feed or download error never clobbers a downloaded update.
+//! 11. A check is refused (quietly) while a live download or install runs.
+//! 12. A fenced download result touches nothing: the channel switch already
+//!     cleared its offer, and a newer offer may exist.
 
 use crate::app_state;
 use crate::constants;
@@ -58,6 +61,8 @@ const CHANNEL_NOT_SAVED: &str =
     "The selected update channel could not be saved before revalidation.";
 const DEV_MODE_MESSAGE: &str = "Update checking is not available in development mode.";
 const BUSY_CONVERSIONS_MESSAGE: &str = "conversions still running";
+const BUSY_INSTALL_NOTICE: &str =
+    "Finish or cancel the running conversions, then install the update.";
 const FLATPAK_NOTICE: &str =
     "Flatpak builds cannot update in the app. Reinstall the latest version from the release page manually.";
 const FLATPAK_REFUSAL: &str =
@@ -327,6 +332,10 @@ enum Command {
         reply: Sender<()>,
     },
     CancelDownload,
+    /// Conversions blocked an install; tell the renderer.
+    InstallBusy {
+        reply: Sender<()>,
+    },
     ReserveChannelWrite {
         reply: Sender<bool>,
     },
@@ -422,9 +431,21 @@ impl Default for State {
 }
 
 impl State {
-    /// Tell the app menu whether Install Update is available, then refresh.
+    /// A download (not fenced or cancelled) or an install is in flight.
+    /// A fenced (old-epoch) download does not block a recheck.
+    fn busy(&self) -> bool {
+        let live_download = self
+            .download
+            .as_ref()
+            .is_some_and(|active| !active.cancelled && active.epoch == self.epoch);
+        self.installing || self.install_pending || live_download
+    }
+
+    /// Tell the app menu whether Install Update is available and whether
+    /// Check for Updates is blocked by a live download/install, then refresh.
     fn sync_menu(&self) {
         crate::app_menu::set_update_ready(self.downloaded.is_some() && !self.installing);
+        crate::app_menu::set_update_busy(self.busy());
         crate::app_menu::refresh();
     }
 
@@ -474,6 +495,11 @@ impl State {
             if manual {
                 self.send(UpdatePhase::AlreadyChecking, true, ALREADY_CHECKING_MESSAGE);
             }
+            return CheckStart::Terminal;
+        }
+        // Quiet refusal: any emit would overwrite the download/install phase.
+        // The disabled menu item is the feedback.
+        if self.busy() {
             return CheckStart::Terminal;
         }
         if self.channel_reserved {
@@ -628,6 +654,7 @@ impl State {
             started_at: Instant::now(),
             last_emit: None,
         });
+        self.sync_menu();
         // v1 sent the downloading phase with manual hard-set to true.
         self.send(UpdatePhase::Downloading, true, DOWNLOADING_MESSAGE);
         DownloadGate::Start { epoch }
@@ -684,8 +711,13 @@ impl State {
         let Some(active) = self.download.take() else {
             return FinishOutcome::Cancelled;
         };
+        self.sync_menu();
         if active.cancelled {
             return FinishOutcome::Cancelled;
+        }
+        // channel_changed already cleared the old offer; a newer one may exist.
+        if active.epoch != self.epoch {
+            return FinishOutcome::Fenced;
         }
         match result {
             Err(message) => {
@@ -697,12 +729,6 @@ impl State {
                 FinishOutcome::Failed
             }
             Ok((bytes, update)) => {
-                if active.epoch != self.epoch {
-                    self.offer = None;
-                    candidates.offer = None;
-                    self.sync_menu();
-                    return FinishOutcome::Fenced;
-                }
                 self.offer = None;
                 candidates.offer = None;
                 self.downloaded = Some(active.version.clone());
@@ -728,7 +754,20 @@ impl State {
             return;
         }
         active.cancelled = true;
+        self.sync_menu();
         self.send(UpdatePhase::NotAvailable, true, CANCELLED_MESSAGE);
+    }
+
+    /// Conversions blocked an install: keep the current phase, add a notice.
+    fn install_busy(&mut self) {
+        if self.installing || self.install_pending {
+            return;
+        }
+        if self.downloaded.is_some() {
+            self.send(UpdatePhase::Downloaded, true, BUSY_INSTALL_NOTICE);
+        } else {
+            self.send(UpdatePhase::Error, true, NO_DOWNLOADED_UPDATE);
+        }
     }
 
     /// v1 channel-changed: bump the epoch, drop the offer and any downloaded
@@ -760,8 +799,9 @@ impl State {
         candidates.offer = None;
         if self.downloaded.take().is_some() {
             candidates.downloaded = None;
-            self.sync_menu();
         }
+        // The epoch bump fences any in-flight download, so busy may change.
+        self.sync_menu();
         self.send(UpdatePhase::NotAvailable, false, CHANNEL_CHANGED_MESSAGE);
         if self.check.is_some() {
             if let Some(active) = self.check.as_mut() {
@@ -840,6 +880,7 @@ impl State {
     ) -> bool {
         if self.channel_reserved {
             self.install_pending = false;
+            self.sync_menu();
             self.send(UpdatePhase::Error, true, CHANNEL_WRITE_PENDING_MESSAGE);
             return false;
         }
@@ -847,6 +888,7 @@ impl State {
         if !matches {
             self.install_pending = false;
             self.discard_download(candidates);
+            self.sync_menu();
             self.send(UpdatePhase::Error, true, NO_DOWNLOADED_UPDATE);
             return false;
         }
@@ -938,6 +980,10 @@ impl State {
                 let _ = reply.send(());
             }
             Command::CancelDownload => self.cancel_download(),
+            Command::InstallBusy { reply } => {
+                self.install_busy();
+                let _ = reply.send(());
+            }
             Command::ReserveChannelWrite { reply } => {
                 let granted = !self.installing && !self.install_pending && !self.channel_reserved;
                 if granted {
@@ -974,6 +1020,7 @@ impl State {
                         match candidates.downloaded.as_ref() {
                             Some(downloaded) => {
                                 self.install_pending = true;
+                                self.sync_menu();
                                 InstallStartReply::Proceed {
                                     version,
                                     update: downloaded.update.clone(),
@@ -1468,7 +1515,7 @@ fn download_flow() {
 }
 
 enum InstallExit {
-    /// Conversions still run; the UI offers restart-after through restartApp.
+    /// Conversions still run; the engine already emitted a notice.
     Busy,
     Done(UpdateStatePayload),
 }
@@ -1480,6 +1527,7 @@ fn install_flow() -> InstallExit {
     // Held from BeginInstall through the restart so a queue claim cannot slip
     // between the busy check and the confirm transition.
     let Some(_reservation) = crate::conversion::reserve_install() else {
+        let _ = request(|reply| Command::InstallBusy { reply });
         return InstallExit::Busy;
     };
     let start = request(|reply| Command::BeginInstall { reply });
@@ -1511,6 +1559,11 @@ fn install_flow() -> InstallExit {
             reply,
         });
         if !written.unwrap_or(false) {
+            // Always clear `installing`, even if the download vanished.
+            submit_finish_install(
+                version,
+                InstallOutcome::Failed("The downloaded update changed during install.".into()),
+            );
             return InstallExit::Done(current_payload());
         }
     }
@@ -1620,10 +1673,10 @@ pub async fn download_update() -> IpcResult<UpdateStatePayload> {
 }
 
 /// `install-update`: installs the downloaded update, then restarts (v1's
-/// quitAndInstall path). When conversions still run it answers
-/// INTERNAL_ERROR; the UI then offers restart-after through api.restartApp
-/// once the queue drains. Not busy: the vendored plugin's install runs behind
-/// the main.rs on_before_exit hook, which flushes app state.
+/// quitAndInstall path). When conversions still run it emits a manual
+/// `update-state` notice and answers INTERNAL_ERROR; nothing restarts later,
+/// the user retries once they finish. Not busy: the vendored plugin's install
+/// runs behind the main.rs on_before_exit hook, which flushes app state.
 #[tauri::command]
 pub async fn install_update() -> IpcResult<UpdateStatePayload> {
     match tauri::async_runtime::spawn_blocking(install_flow).await {
